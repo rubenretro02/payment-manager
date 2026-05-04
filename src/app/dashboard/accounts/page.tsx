@@ -52,6 +52,7 @@ import {
   Briefcase,
   AlertTriangle,
   XCircle,
+  X,
   Calendar,
   Clock,
   CreditCard,
@@ -639,9 +640,14 @@ export default function AccountsPage() {
         </Dialog>
       </div>
 
-      {/* Stats */}
+      {/* Stats - Clickable Cards */}
       <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-6">
-        <Card>
+        <Card
+          className={`cursor-pointer transition-all hover:border-primary/50 active:scale-[0.98] ${
+            filterStatus === 'all' && !searchQuery ? 'ring-2 ring-primary border-primary' : ''
+          }`}
+          onClick={() => { setFilterStatus('all'); setSearchQuery(''); }}
+        >
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
@@ -652,7 +658,12 @@ export default function AccountsPage() {
             </div>
           </CardContent>
         </Card>
-        <Card>
+        <Card
+          className={`cursor-pointer transition-all hover:border-green-500/50 active:scale-[0.98] ${
+            filterStatus === 'production' ? 'ring-2 ring-green-500 border-green-500' : ''
+          }`}
+          onClick={() => setFilterStatus(filterStatus === 'production' ? 'all' : 'production')}
+        >
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
@@ -663,7 +674,12 @@ export default function AccountsPage() {
             </div>
           </CardContent>
         </Card>
-        <Card>
+        <Card
+          className={`cursor-pointer transition-all hover:border-yellow-500/50 active:scale-[0.98] ${
+            filterStatus === 'nesting' ? 'ring-2 ring-yellow-500 border-yellow-500' : ''
+          }`}
+          onClick={() => setFilterStatus(filterStatus === 'nesting' ? 'all' : 'nesting')}
+        >
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
@@ -674,7 +690,12 @@ export default function AccountsPage() {
             </div>
           </CardContent>
         </Card>
-        <Card>
+        <Card
+          className={`cursor-pointer transition-all hover:border-blue-500/50 active:scale-[0.98] ${
+            filterStatus === 'active' ? 'ring-2 ring-blue-500 border-blue-500' : ''
+          }`}
+          onClick={() => setFilterStatus(filterStatus === 'active' ? 'all' : 'active')}
+        >
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
@@ -685,7 +706,12 @@ export default function AccountsPage() {
             </div>
           </CardContent>
         </Card>
-        <Card>
+        <Card
+          className={`cursor-pointer transition-all hover:border-red-500/50 active:scale-[0.98] ${
+            filterStatus === 'drop' ? 'ring-2 ring-red-500 border-red-500' : ''
+          }`}
+          onClick={() => setFilterStatus(filterStatus === 'drop' ? 'all' : 'drop')}
+        >
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
@@ -696,7 +722,17 @@ export default function AccountsPage() {
             </div>
           </CardContent>
         </Card>
-        <Card className="border-primary/50">
+        <Card
+          className={`cursor-pointer transition-all hover:border-primary/50 active:scale-[0.98] border-primary/50`}
+          onClick={() => {
+            // Toggle between production+nesting (payment required) and all
+            if (filterStatus === 'production' || filterStatus === 'nesting') {
+              setFilterStatus('all');
+            } else {
+              setFilterStatus('production');
+            }
+          }}
+        >
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
@@ -764,14 +800,64 @@ export default function AccountsPage() {
         </CardContent>
       </Card>
 
+      {/* Results Counter */}
+      {(searchQuery || filterStatus !== 'all' || filterPlatform !== 'all' || filterProject !== 'all') && (
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Badge variant="secondary" className="text-sm font-medium">
+              {filteredAccounts.length} {filteredAccounts.length === 1 ? 'account' : 'accounts'} found
+            </Badge>
+            {searchQuery && (
+              <span className="text-sm text-muted-foreground">
+                for "{searchQuery}"
+              </span>
+            )}
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setSearchQuery('');
+              setFilterStatus('all');
+              setFilterPlatform('all');
+              setFilterProject('all');
+            }}
+          >
+            Clear filters
+          </Button>
+        </div>
+      )}
+
       {/* Table */}
       <Card>
         <CardContent className="p-0">
           {filteredAccounts.length === 0 ? (
             <div className="p-8 text-center text-muted-foreground">
               <Building2 className="h-12 w-12 mx-auto mb-4 opacity-50" />
-              <p className="font-medium">No accounts registered</p>
-              <p className="text-sm">Add a new account to get started</p>
+              {searchQuery || filterStatus !== 'all' ? (
+                <>
+                  <p className="font-medium">No accounts match your filters</p>
+                  <p className="text-sm">Try adjusting your search or filters</p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="mt-4"
+                    onClick={() => {
+                      setSearchQuery('');
+                      setFilterStatus('all');
+                      setFilterPlatform('all');
+                      setFilterProject('all');
+                    }}
+                  >
+                    Clear all filters
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <p className="font-medium">No accounts registered</p>
+                  <p className="text-sm">Add a new account to get started</p>
+                </>
+              )}
             </div>
           ) : (
             <Table>

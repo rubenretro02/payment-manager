@@ -118,6 +118,7 @@ export default function MyAccountsPage() {
   const [selectedAccount, setSelectedAccount] = useState<Account | null>(null);
   const [isPaymentDialogOpen, setIsPaymentDialogOpen] = useState(false);
   const [isScheduleDialogOpen, setIsScheduleDialogOpen] = useState(false);
+  const [isNoPaymentDialogOpen, setIsNoPaymentDialogOpen] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
 
@@ -134,6 +135,11 @@ export default function MyAccountsPage() {
     payment_method: '',
     payment_reference: '',
     notes: '',
+  });
+
+  // No Payment / Issue form state
+  const [noPaymentForm, setNoPaymentForm] = useState({
+    reason: '',
   });
 
   // Two separate image states
@@ -244,9 +250,23 @@ export default function MyAccountsPage() {
 
       // Try to upload to Telegram (optional - will use base64 if fails)
       try {
+        // For camera captures, we may need to convert the file properly
+        // Create a new blob with proper MIME type
+        const arrayBuffer = await file.arrayBuffer();
+        const mimeType = file.type || 'image/jpeg';
+        const fileName = file.name || `photo_${Date.now()}.jpg`;
+        const blob = new Blob([arrayBuffer], { type: mimeType });
+        const properFile = new File([blob], fileName, { type: mimeType });
+
         const formData = new FormData();
-        formData.append('file', file);
+        formData.append('file', properFile);
         formData.append('caption', caption);
+
+        console.log('Uploading to Telegram:', {
+          fileName: properFile.name,
+          mimeType: properFile.type,
+          size: properFile.size
+        });
 
         const response = await fetch('/api/upload-to-telegram', {
           method: 'POST',
@@ -254,6 +274,7 @@ export default function MyAccountsPage() {
         });
 
         const data = await response.json();
+        console.log('Telegram upload response:', data);
 
         if (data.success && data.data?.url) {
           setImage(prev => prev ? {
@@ -265,14 +286,16 @@ export default function MyAccountsPage() {
           } : null);
         } else {
           // Telegram upload failed, but we have base64 - that's OK
+          console.warn('Telegram upload failed, using base64:', data.error || 'Unknown error');
           setImage(prev => prev ? {
             ...prev,
             uploading: false,
             error: null, // Don't show error - base64 works fine
           } : null);
         }
-      } catch {
+      } catch (uploadError) {
         // Telegram upload failed, but we have base64 - that's OK
+        console.warn('Telegram upload exception, using base64:', uploadError);
         setImage(prev => prev ? {
           ...prev,
           uploading: false,
@@ -718,28 +741,60 @@ export default function MyAccountsPage() {
                     </div>
                   </div>
 
-                  {/* Actions */}
-                  <div className="flex gap-2">
-                    <Button
-                      className="flex-1"
-                      onClick={() => {
-                        setSelectedAccount(account);
-                        setIsPaymentDialogOpen(true);
-                      }}
-                    >
-                      <DollarSign className="h-4 w-4 mr-2" />
-                      Report Payment
-                    </Button>
+                  {/* Actions - Only show Report Payment for production/nesting accounts */}
+                  {(account.status === 'production' || account.status === 'nesting') && (
+                    <div className="space-y-2">
+                      <div className="flex gap-2">
+                        <Button
+                          className="flex-1"
+                          onClick={() => {
+                            setSelectedAccount(account);
+                            setIsPaymentDialogOpen(true);
+                          }}
+                        >
+                          <DollarSign className="h-4 w-4 mr-2" />
+                          Report Payment
+                        </Button>
+                        <Button
+                          variant="outline"
+                          onClick={() => {
+                            setSelectedAccount(account);
+                            setIsScheduleDialogOpen(true);
+                          }}
+                        >
+                          <Calendar className="h-4 w-4" />
+                        </Button>
+                      </div>
+                      {/* No Payment / Issue Button */}
+                      <Button
+                        variant="outline"
+                        className="w-full border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950"
+                        onClick={() => {
+                          setSelectedAccount(account);
+                          setNoPaymentForm({ reason: '' });
+                          setIsNoPaymentDialogOpen(true);
+                        }}
+                      >
+                        <AlertTriangle className="h-4 w-4 mr-2" />
+                        No Payment / Issue
+                      </Button>
+                    </div>
+                  )}
+
+                  {/* For non-production/nesting accounts, only show schedule */}
+                  {account.status !== 'production' && account.status !== 'nesting' && (
                     <Button
                       variant="outline"
+                      className="w-full"
                       onClick={() => {
                         setSelectedAccount(account);
                         setIsScheduleDialogOpen(true);
                       }}
                     >
-                      <Calendar className="h-4 w-4" />
+                      <Calendar className="h-4 w-4 mr-2" />
+                      View Schedule
                     </Button>
-                  </div>
+                  )}
                 </CardContent>
               </Card>
             );
@@ -838,7 +893,7 @@ export default function MyAccountsPage() {
 
             {/* Payment Method Selection */}
             <div className="grid gap-2">
-              <Label>Payment Method *</Label>
+              <Label>Payment Method Used *</Label>
               {adminPaymentMethods.length > 0 ? (
                 <Select
                   value={paymentForm.payment_method}
@@ -1043,6 +1098,121 @@ export default function MyAccountsPage() {
           <DialogFooter>
             <Button onClick={() => setIsScheduleDialogOpen(false)}>
               Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* No Payment / Issue Dialog */}
+      <Dialog open={isNoPaymentDialogOpen} onOpenChange={(open) => {
+        setIsNoPaymentDialogOpen(open);
+        if (!open) setNoPaymentForm({ reason: '' });
+      }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-600">
+              <AlertTriangle className="h-5 w-5" />
+              Report No Payment / Issue
+            </DialogTitle>
+            <DialogDescription>
+              Report that you did not receive payment for {selectedAccount?.full_name}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            {/* Account Info */}
+            <div className="rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 p-3">
+              <div className="grid grid-cols-2 gap-2 text-sm">
+                <span className="text-muted-foreground">Account:</span>
+                <span className="font-medium">{selectedAccount?.full_name}</span>
+                <span className="text-muted-foreground">Platform:</span>
+                <span>{selectedAccount?.platform?.display_name}</span>
+                <span className="text-muted-foreground">Expected payment:</span>
+                <span>{selectedAccount && format(getNextPayment(selectedAccount), "MMM d, yyyy", { locale: enUS })}</span>
+              </div>
+            </div>
+
+            {/* Reason/Explanation */}
+            <div className="grid gap-2">
+              <Label htmlFor="no_payment_reason" className="text-red-600">
+                Explanation *
+              </Label>
+              <Textarea
+                id="no_payment_reason"
+                placeholder="Explain why you didn't receive payment (e.g., company didn't pay, payment delayed, account issue, etc.)"
+                value={noPaymentForm.reason}
+                onChange={(e) => setNoPaymentForm({ reason: e.target.value })}
+                className="min-h-[100px] border-red-200 focus:border-red-400 dark:border-red-800"
+              />
+              <p className="text-xs text-muted-foreground">
+                This will be sent to admin for review
+              </p>
+            </div>
+          </div>
+          <DialogFooter className="flex-col sm:flex-row gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setIsNoPaymentDialogOpen(false);
+                setNoPaymentForm({ reason: '' });
+              }}
+              className="w-full sm:w-auto"
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={async () => {
+                if (!noPaymentForm.reason.trim()) {
+                  alert('Please provide an explanation');
+                  return;
+                }
+
+                setIsSubmitting(true);
+                try {
+                  // Create a payment record with status 'rejected' or special handling
+                  const paymentData = {
+                    user_id: user?.id,
+                    account_id: selectedAccount?.id,
+                    platform_amount: 0,
+                    percentage_applied: selectedAccount?.percentage || 0,
+                    amount_owed: 0,
+                    amount_paid: 0,
+                    payment_method: 'other',
+                    user_notes: `NO PAYMENT RECEIVED: ${noPaymentForm.reason}`,
+                    status: 'pending', // Admin will review this
+                  };
+
+                  const response = await fetch('/api/payments', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(paymentData),
+                  });
+
+                  const data = await response.json();
+
+                  if (data.success) {
+                    setIsNoPaymentDialogOpen(false);
+                    setNoPaymentForm({ reason: '' });
+                    alert('Issue reported successfully! Admin will review it.');
+                  } else {
+                    alert('Error: ' + (data.error || 'Failed to report issue'));
+                  }
+                } catch (error) {
+                  console.error('Error reporting issue:', error);
+                  alert('Error reporting issue. Please try again.');
+                } finally {
+                  setIsSubmitting(false);
+                }
+              }}
+              disabled={!noPaymentForm.reason.trim() || isSubmitting}
+              className="w-full sm:w-auto"
+            >
+              {isSubmitting ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <AlertTriangle className="h-4 w-4 mr-2" />
+              )}
+              Report Issue
             </Button>
           </DialogFooter>
         </DialogContent>

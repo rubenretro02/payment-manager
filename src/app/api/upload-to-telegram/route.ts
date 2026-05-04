@@ -6,6 +6,7 @@ const STORAGE_CHAT_ID = process.env.TELEGRAM_STORAGE_CHAT_ID; // A private chann
 export async function POST(request: NextRequest) {
   try {
     if (!BOT_TOKEN) {
+      console.error('TELEGRAM_BOT_TOKEN not configured');
       return NextResponse.json(
         { success: false, error: 'Telegram bot not configured' },
         { status: 500 }
@@ -13,6 +14,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (!STORAGE_CHAT_ID) {
+      console.error('TELEGRAM_STORAGE_CHAT_ID not configured');
       return NextResponse.json(
         { success: false, error: 'Telegram storage chat not configured' },
         { status: 500 }
@@ -30,14 +32,30 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    console.log('Uploading file:', {
+      name: file.name,
+      type: file.type,
+      size: file.size,
+      chatId: STORAGE_CHAT_ID
+    });
+
     // Convert file to buffer
     const bytes = await file.arrayBuffer();
     const buffer = Buffer.from(bytes);
 
+    // Ensure proper file type - camera captures might not have correct MIME type
+    let mimeType = file.type;
+    if (!mimeType || mimeType === 'application/octet-stream') {
+      mimeType = 'image/jpeg'; // Default to jpeg for camera captures
+    }
+
+    // Generate a proper filename if missing
+    const fileName = file.name || `photo_${Date.now()}.jpg`;
+
     // Create form data for Telegram API
     const telegramFormData = new FormData();
     telegramFormData.append('chat_id', STORAGE_CHAT_ID);
-    telegramFormData.append('photo', new Blob([buffer], { type: file.type }), file.name);
+    telegramFormData.append('photo', new Blob([buffer], { type: mimeType }), fileName);
     if (caption) {
       telegramFormData.append('caption', caption);
     }
@@ -52,9 +70,14 @@ export async function POST(request: NextRequest) {
     );
 
     const telegramData = await telegramResponse.json();
+    console.log('Telegram response:', JSON.stringify(telegramData, null, 2));
 
     if (!telegramData.ok) {
-      console.error('Telegram API error:', telegramData);
+      console.error('Telegram API error:', {
+        error_code: telegramData.error_code,
+        description: telegramData.description,
+        chat_id: STORAGE_CHAT_ID,
+      });
       return NextResponse.json(
         { success: false, error: 'Failed to upload to Telegram', details: telegramData.description },
         { status: 500 }
