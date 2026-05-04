@@ -29,8 +29,32 @@ export async function GET() {
       );
     }
 
+    // Define types for Telegram updates
+    interface TelegramChat {
+      id: number;
+      type: string;
+      title?: string;
+      username?: string;
+      first_name?: string;
+    }
+
+    interface TelegramUpdate {
+      message?: { chat: TelegramChat; date?: number };
+      channel_post?: { chat: TelegramChat; date?: number };
+      my_chat_member?: { chat: TelegramChat; date?: number };
+    }
+
+    interface ChatInfo {
+      chat_id: number;
+      type: string;
+      title: string | null;
+      username: string | null;
+      first_name: string | null;
+      date: string | null;
+    }
+
     // Extract chat information from updates
-    const chats = data.result.map((update: any) => {
+    const chats: ChatInfo[] = data.result.map((update: TelegramUpdate) => {
       const message = update.message || update.channel_post || update.my_chat_member;
       if (!message) return null;
 
@@ -43,10 +67,10 @@ export async function GET() {
         first_name: chat.first_name || null,
         date: message.date ? new Date(message.date * 1000).toISOString() : null,
       };
-    }).filter(Boolean);
+    }).filter(Boolean) as ChatInfo[];
 
     // Remove duplicates
-    const uniqueChats = chats.filter((chat: any, index: number, self: any[]) =>
+    const uniqueChats = chats.filter((chat: ChatInfo, index: number, self: ChatInfo[]) =>
       index === self.findIndex((c) => c.chat_id === chat.chat_id)
     );
 
