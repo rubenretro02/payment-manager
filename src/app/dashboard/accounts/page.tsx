@@ -167,26 +167,45 @@ export default function AccountsPage() {
     }
   }
 
-  const filteredAccounts = accounts.filter((account) => {
-    const matchesSearch =
+  // First filter by search, platform, and project (but NOT status - that's for clicking cards)
+  const searchFilteredAccounts = accounts.filter((account) => {
+    const matchesSearch = !searchQuery ||
       account.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       account.account_email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       account.user?.telegram_first_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       account.project?.display_name?.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesPlatform = filterPlatform === 'all' || account.platform?.id === filterPlatform;
     const matchesProject = filterProject === 'all' || account.project?.id === filterProject || (filterProject === 'none' && !account.project_id);
-    const matchesStatus = filterStatus === 'all' || account.status === filterStatus;
-    return matchesSearch && matchesPlatform && matchesProject && matchesStatus;
+    return matchesSearch && matchesPlatform && matchesProject;
   });
 
+  // Then apply status filter for the final list
+  const filteredAccounts = searchFilteredAccounts.filter((account) => {
+    return filterStatus === 'all' || account.status === filterStatus;
+  });
+
+  // Check if any filter is active (for showing filtered vs total stats)
+  const hasActiveFilter = searchQuery || filterPlatform !== 'all' || filterProject !== 'all';
+
+  // Stats based on search-filtered accounts (so clicking cards filters within the search)
   const stats = {
+    total: searchFilteredAccounts.length,
+    production: searchFilteredAccounts.filter(a => a.status === 'production').length,
+    nesting: searchFilteredAccounts.filter(a => a.status === 'nesting').length,
+    active: searchFilteredAccounts.filter(a => a.status === 'active').length,
+    drop: searchFilteredAccounts.filter(a => a.status === 'drop').length,
+    not_in_project: searchFilteredAccounts.filter(a => a.status === 'not_in_project').length,
+    assigned: searchFilteredAccounts.filter(a => a.user_id).length,
+    requiresPayment: searchFilteredAccounts.filter(a => PAYMENT_REQUIRED_STATUSES.includes(a.status)).length,
+  };
+
+  // Total stats (always show totals somewhere for reference)
+  const totalStats = {
     total: accounts.length,
     production: accounts.filter(a => a.status === 'production').length,
     nesting: accounts.filter(a => a.status === 'nesting').length,
     active: accounts.filter(a => a.status === 'active').length,
     drop: accounts.filter(a => a.status === 'drop').length,
-    not_in_project: accounts.filter(a => a.status === 'not_in_project').length,
-    assigned: accounts.filter(a => a.user_id).length,
     requiresPayment: accounts.filter(a => PAYMENT_REQUIRED_STATUSES.includes(a.status)).length,
   };
 
@@ -641,18 +660,33 @@ export default function AccountsPage() {
       </div>
 
       {/* Stats - Clickable Cards */}
+      {hasActiveFilter && (
+        <div className="flex items-center gap-2 text-sm">
+          <Badge variant="outline" className="bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300">
+            Showing filtered results for "{searchQuery || (filterPlatform !== 'all' ? 'platform' : 'project')}"
+          </Badge>
+          <span className="text-muted-foreground">
+            ({stats.total} of {totalStats.total} accounts)
+          </span>
+        </div>
+      )}
       <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-6">
         <Card
           className={`cursor-pointer transition-all hover:border-primary/50 active:scale-[0.98] ${
-            filterStatus === 'all' && !searchQuery ? 'ring-2 ring-primary border-primary' : ''
+            filterStatus === 'all' && !hasActiveFilter ? 'ring-2 ring-primary border-primary' : ''
           }`}
-          onClick={() => { setFilterStatus('all'); setSearchQuery(''); }}
+          onClick={() => { setFilterStatus('all'); setSearchQuery(''); setFilterPlatform('all'); setFilterProject('all'); }}
         >
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">Total</p>
-                <p className="text-2xl font-bold">{stats.total}</p>
+                <div className="flex items-baseline gap-2">
+                  <p className="text-2xl font-bold">{stats.total}</p>
+                  {hasActiveFilter && stats.total !== totalStats.total && (
+                    <span className="text-sm text-muted-foreground">/ {totalStats.total}</span>
+                  )}
+                </div>
               </div>
               <Building2 className="h-8 w-8 text-muted-foreground/20" />
             </div>
@@ -668,7 +702,12 @@ export default function AccountsPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">Production</p>
-                <p className="text-2xl font-bold text-green-600">{stats.production}</p>
+                <div className="flex items-baseline gap-2">
+                  <p className="text-2xl font-bold text-green-600">{stats.production}</p>
+                  {hasActiveFilter && stats.production !== totalStats.production && (
+                    <span className="text-sm text-muted-foreground">/ {totalStats.production}</span>
+                  )}
+                </div>
               </div>
               <Briefcase className="h-8 w-8 text-green-600/20" />
             </div>
@@ -684,7 +723,12 @@ export default function AccountsPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">Nesting</p>
-                <p className="text-2xl font-bold text-yellow-600">{stats.nesting}</p>
+                <div className="flex items-baseline gap-2">
+                  <p className="text-2xl font-bold text-yellow-600">{stats.nesting}</p>
+                  {hasActiveFilter && stats.nesting !== totalStats.nesting && (
+                    <span className="text-sm text-muted-foreground">/ {totalStats.nesting}</span>
+                  )}
+                </div>
               </div>
               <Clock className="h-8 w-8 text-yellow-600/20" />
             </div>
@@ -700,7 +744,12 @@ export default function AccountsPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">Active</p>
-                <p className="text-2xl font-bold text-blue-600">{stats.active}</p>
+                <div className="flex items-baseline gap-2">
+                  <p className="text-2xl font-bold text-blue-600">{stats.active}</p>
+                  {hasActiveFilter && stats.active !== totalStats.active && (
+                    <span className="text-sm text-muted-foreground">/ {totalStats.active}</span>
+                  )}
+                </div>
               </div>
               <Briefcase className="h-8 w-8 text-blue-600/20" />
             </div>
@@ -716,7 +765,12 @@ export default function AccountsPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">Drop</p>
-                <p className="text-2xl font-bold text-red-600">{stats.drop}</p>
+                <div className="flex items-baseline gap-2">
+                  <p className="text-2xl font-bold text-red-600">{stats.drop}</p>
+                  {hasActiveFilter && stats.drop !== totalStats.drop && (
+                    <span className="text-sm text-muted-foreground">/ {totalStats.drop}</span>
+                  )}
+                </div>
               </div>
               <AlertTriangle className="h-8 w-8 text-red-600/20" />
             </div>
@@ -737,7 +791,12 @@ export default function AccountsPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">Requires Payment</p>
-                <p className="text-2xl font-bold text-primary">{stats.requiresPayment}</p>
+                <div className="flex items-baseline gap-2">
+                  <p className="text-2xl font-bold text-primary">{stats.requiresPayment}</p>
+                  {hasActiveFilter && stats.requiresPayment !== totalStats.requiresPayment && (
+                    <span className="text-sm text-muted-foreground">/ {totalStats.requiresPayment}</span>
+                  )}
+                </div>
               </div>
               <CreditCard className="h-8 w-8 text-primary/20" />
             </div>
