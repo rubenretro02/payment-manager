@@ -8,19 +8,35 @@ export async function POST(
 ) {
   try {
     const { id } = await params;
+
+    if (!id) {
+      return NextResponse.json(
+        { success: false, error: 'Payment ID is required' },
+        { status: 400 }
+      );
+    }
+
     const body = await request.json();
     const { admin_notes } = body;
 
     const supabase = createAdminClient();
 
-    // Get the payment with user info
+    // First, just get the payment
     const { data: payment, error: fetchError } = await supabase
       .from('payments')
-      .select('*, user:users(*), account:accounts(*, platform:platforms(*))')
+      .select('*')
       .eq('id', id)
       .single();
 
-    if (fetchError || !payment) {
+    if (fetchError) {
+      console.error('Error fetching payment:', fetchError);
+      return NextResponse.json(
+        { success: false, error: 'Payment not found', details: fetchError.message },
+        { status: 404 }
+      );
+    }
+
+    if (!payment) {
       return NextResponse.json(
         { success: false, error: 'Payment not found' },
         { status: 404 }
@@ -45,13 +61,33 @@ export async function POST(
       );
     }
 
-    // Send Telegram notification to user
-    if (payment.user?.telegram_id) {
-      await sendUserNotification(payment.user.telegram_id, 'payment_confirmed', {
-        amount: payment.amount_paid || payment.amount_owed,
-        accountName: payment.account?.full_name || 'Account',
-        platformName: payment.account?.platform?.display_name || 'Platform',
-      });
+    // Try to send notification (don't fail if this fails)
+    try {
+      if (payment.user_id) {
+        const { data: user } = await supabase
+          .from('users')
+          .select('telegram_id')
+          .eq('id', payment.user_id)
+          .single();
+
+        const { data: account } = await supabase
+          .from('accounts')
+          .select('full_name, platform:platforms(display_name)')
+          .eq('id', payment.account_id)
+          .single();
+
+        if (user?.telegram_id) {
+          const accountData = account as { full_name: string; platform: { display_name: string } | null } | null;
+          await sendUserNotification(user.telegram_id, 'payment_confirmed', {
+            amount: payment.amount_paid || payment.amount_owed,
+            accountName: accountData?.full_name || 'Account',
+            platformName: accountData?.platform?.display_name || 'Platform',
+          });
+        }
+      }
+    } catch (notifError) {
+      console.error('Error sending notification:', notifError);
+      // Don't fail the request
     }
 
     return NextResponse.json({ success: true });
