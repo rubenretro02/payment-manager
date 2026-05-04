@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -44,10 +45,13 @@ const statusConfig: Record<string, { label: string; color: string; icon: typeof 
 
 export default function PaymentsPage() {
   const { user } = useAuth();
+  const searchParams = useSearchParams();
+  const statusFromUrl = searchParams.get('status');
+
   const [payments, setPayments] = useState<Payment[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedTab, setSelectedTab] = useState('submitted');
+  const [selectedTab, setSelectedTab] = useState(statusFromUrl || 'submitted');
   const [selectedPayment, setSelectedPayment] = useState<Payment | null>(null);
   const [showDetails, setShowDetails] = useState(false);
   const [showScreenshot, setShowScreenshot] = useState(false);
@@ -58,6 +62,13 @@ export default function PaymentsPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const isAdmin = user?.role === 'admin';
+
+  // Update tab when URL changes
+  useEffect(() => {
+    if (statusFromUrl) {
+      setSelectedTab(statusFromUrl);
+    }
+  }, [statusFromUrl]);
 
   useEffect(() => {
     fetchPayments();

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -40,6 +41,7 @@ import type { Payment } from '@/lib/types';
 type DateRange = 'today' | 'week' | 'month' | 'year' | 'all';
 
 export default function ReportsPage() {
+  const router = useRouter();
   const [payments, setPayments] = useState<Payment[]>([]);
   const [loading, setLoading] = useState(true);
   const [dateRange, setDateRange] = useState<DateRange>('month');
@@ -236,7 +238,10 @@ export default function ReportsPage() {
 
       {/* Summary Cards */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <Card className="border-green-200 dark:border-green-800">
+        <Card
+          className="border-green-200 dark:border-green-800 cursor-pointer transition-all hover:shadow-md hover:border-green-400 active:scale-[0.98]"
+          onClick={() => router.push('/dashboard/payments?status=confirmed')}
+        >
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
               <TrendingUp className="h-4 w-4 text-green-600" />
@@ -248,12 +253,15 @@ export default function ReportsPage() {
               ${stats.totalReceived.toFixed(2)}
             </div>
             <p className="text-xs text-muted-foreground">
-              From {stats.paymentsCount.confirmed} confirmed payments
+              From {stats.paymentsCount.confirmed} confirmed payments →
             </p>
           </CardContent>
         </Card>
 
-        <Card className="border-yellow-200 dark:border-yellow-800">
+        <Card
+          className="border-yellow-200 dark:border-yellow-800 cursor-pointer transition-all hover:shadow-md hover:border-yellow-400 active:scale-[0.98]"
+          onClick={() => router.push('/dashboard/payments?status=submitted')}
+        >
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
               <Clock className="h-4 w-4 text-yellow-600" />
@@ -265,12 +273,15 @@ export default function ReportsPage() {
               ${stats.totalPending.toFixed(2)}
             </div>
             <p className="text-xs text-muted-foreground">
-              {stats.paymentsCount.pending} payments awaiting
+              {stats.paymentsCount.pending} payments awaiting →
             </p>
           </CardContent>
         </Card>
 
-        <Card className="border-red-200 dark:border-red-800">
+        <Card
+          className="border-red-200 dark:border-red-800 cursor-pointer transition-all hover:shadow-md hover:border-red-400 active:scale-[0.98]"
+          onClick={() => router.push('/dashboard/payments')}
+        >
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
               <TrendingDown className="h-4 w-4 text-red-600" />
@@ -282,12 +293,15 @@ export default function ReportsPage() {
               ${stats.totalLoss.toFixed(2)}
             </div>
             <p className="text-xs text-muted-foreground">
-              Difference between owed & paid
+              Difference between owed & paid →
             </p>
           </CardContent>
         </Card>
 
-        <Card>
+        <Card
+          className="cursor-pointer transition-all hover:shadow-md hover:border-primary/50 active:scale-[0.98]"
+          onClick={() => router.push('/dashboard/payments')}
+        >
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
               <PieChart className="h-4 w-4" />
@@ -340,10 +354,13 @@ export default function ReportsPage() {
         <Card>
           <CardHeader>
             <CardTitle className="text-lg">Payment Status</CardTitle>
-            <CardDescription>Breakdown by status</CardDescription>
+            <CardDescription>Breakdown by status - click to filter</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="flex items-center justify-between p-3 rounded-lg border">
+            <div
+              className="flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-all hover:bg-green-50 hover:border-green-300 dark:hover:bg-green-900/20 active:scale-[0.98]"
+              onClick={() => router.push('/dashboard/payments?status=confirmed')}
+            >
               <div className="flex items-center gap-3">
                 <CheckCircle2 className="h-5 w-5 text-green-600" />
                 <span>Confirmed</span>
@@ -352,7 +369,10 @@ export default function ReportsPage() {
                 <Badge className="bg-green-100 text-green-800">{stats.paymentsCount.confirmed}</Badge>
               </div>
             </div>
-            <div className="flex items-center justify-between p-3 rounded-lg border">
+            <div
+              className="flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-all hover:bg-yellow-50 hover:border-yellow-300 dark:hover:bg-yellow-900/20 active:scale-[0.98]"
+              onClick={() => router.push('/dashboard/payments?status=submitted')}
+            >
               <div className="flex items-center gap-3">
                 <Clock className="h-5 w-5 text-yellow-600" />
                 <span>Pending / To Confirm</span>
@@ -361,7 +381,10 @@ export default function ReportsPage() {
                 <Badge className="bg-yellow-100 text-yellow-800">{stats.paymentsCount.pending}</Badge>
               </div>
             </div>
-            <div className="flex items-center justify-between p-3 rounded-lg border">
+            <div
+              className="flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-all hover:bg-red-50 hover:border-red-300 dark:hover:bg-red-900/20 active:scale-[0.98]"
+              onClick={() => router.push('/dashboard/payments?status=rejected')}
+            >
               <div className="flex items-center gap-3">
                 <XCircle className="h-5 w-5 text-red-600" />
                 <span>Rejected</span>
@@ -370,9 +393,12 @@ export default function ReportsPage() {
                 <Badge className="bg-red-100 text-red-800">{stats.paymentsCount.rejected}</Badge>
               </div>
             </div>
-            <div className="flex items-center justify-between p-3 rounded-lg bg-muted">
+            <div
+              className="flex items-center justify-between p-3 rounded-lg bg-muted cursor-pointer transition-all hover:bg-muted/80 active:scale-[0.98]"
+              onClick={() => router.push('/dashboard/payments?status=all')}
+            >
               <span className="font-medium">Total Payments</span>
-              <span className="font-bold">{stats.paymentsCount.total}</span>
+              <span className="font-bold">{stats.paymentsCount.total} →</span>
             </div>
           </CardContent>
         </Card>
