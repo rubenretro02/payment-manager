@@ -47,6 +47,7 @@ export default function PaymentsPage() {
   const { user } = useAuth();
   const searchParams = useSearchParams();
   const statusFromUrl = searchParams.get('status');
+  const paymentIdFromUrl = searchParams.get('payment');
 
   const [payments, setPayments] = useState<Payment[]>([]);
   const [loading, setLoading] = useState(true);
@@ -73,6 +74,19 @@ export default function PaymentsPage() {
   useEffect(() => {
     fetchPayments();
   }, []);
+
+  // Open payment from URL parameter (deep link from notifications)
+  useEffect(() => {
+    if (paymentIdFromUrl && payments.length > 0) {
+      const payment = payments.find(p => p.id === paymentIdFromUrl);
+      if (payment) {
+        setSelectedPayment(payment);
+        setShowDetails(true);
+        // Switch to the appropriate tab
+        setSelectedTab(payment.status === 'submitted' ? 'submitted' : 'all');
+      }
+    }
+  }, [paymentIdFromUrl, payments]);
 
   async function fetchPayments() {
     try {

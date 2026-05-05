@@ -60,7 +60,7 @@ export async function POST(request: NextRequest) {
         });
       }
 
-      // Notify all admins
+      // Notify all admins with link to review the payment
       if (user) {
         await notifyAdminsNewPayment({
           userName: user.telegram_first_name || 'User',
@@ -68,6 +68,7 @@ export async function POST(request: NextRequest) {
           amount: body.amount_paid || body.amount_owed,
           accountName: accountData?.full_name || 'Account',
           platformName: accountData?.platform?.display_name || 'Platform',
+          paymentId: result.data.id,
         });
       }
     } catch (notifError) {

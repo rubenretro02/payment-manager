@@ -146,6 +146,7 @@ interface AdminNotificationData {
   overdueCount?: number;
   overdueUsers?: string[];
   totalUsers?: number;
+  paymentId?: string;
 }
 
 const adminNotificationTemplates: Record<AdminNotificationType, (data: AdminNotificationData) => string> = {
@@ -153,11 +154,11 @@ const adminNotificationTemplates: Record<AdminNotificationType, (data: AdminNoti
 💰 <b>New Payment Submitted!</b>
 
 From: <b>${data.userName}</b> ${data.userUsername ? `(@${data.userUsername})` : ''}
-Amount: <b>$${data.amount?.toFixed(2)}</b>
+Amount: <b>${data.amount?.toFixed(2)}</b>
 Account: ${data.accountName}
 Platform: ${data.platformName}
 
-Open the app to review and confirm. ✅`,
+Tap the button below to review! ✅`,
 
   daily_summary: (data) => `
 📊 <b>Daily Payment Summary</b>
@@ -238,9 +239,26 @@ export async function sendAdminNotification(
 
   try {
     const message = adminNotificationTemplates[type](data);
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://payment-manager.vercel.app';
+
+    // Build inline keyboard for new payment notifications
+    let reply_markup: unknown = undefined;
+    if (type === 'new_payment_received' && data.paymentId) {
+      reply_markup = {
+        inline_keyboard: [
+          [
+            {
+              text: '📱 Review Payment',
+              url: `${appUrl}/dashboard/payments?payment=${data.paymentId}`,
+            },
+          ],
+        ],
+      };
+    }
 
     const result = await sendTelegramMessage(BOT_TOKEN, telegramId, message, {
       parse_mode: 'HTML',
+      reply_markup,
     });
 
     if (!result.ok) {
@@ -284,6 +302,7 @@ export async function notifyAdminsNewPayment(data: {
   amount: number;
   accountName: string;
   platformName: string;
+  paymentId?: string;
 }): Promise<void> {
   const adminIds = await getAdminTelegramIds();
 

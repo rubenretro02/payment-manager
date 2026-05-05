@@ -561,7 +561,7 @@ export default function MyAccountsPage() {
       </div>
 
       {/* Stats - Clickable Cards */}
-      <div className="grid gap-4 grid-cols-2 md:grid-cols-4">
+      <div className="grid gap-4 grid-cols-3">
         <Card
           className={`cursor-pointer transition-all hover:border-primary/50 active:scale-[0.98] ${
             statusFilter === null ? 'ring-2 ring-primary border-primary' : ''
@@ -571,7 +571,7 @@ export default function MyAccountsPage() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-muted-foreground">Total Accounts</p>
+                <p className="text-sm text-muted-foreground">Total</p>
                 <p className="text-2xl font-bold">{accounts.length}</p>
               </div>
               <Building2 className="h-8 w-8 text-muted-foreground/20" />
@@ -587,7 +587,7 @@ export default function MyAccountsPage() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-muted-foreground">In Production</p>
+                <p className="text-sm text-muted-foreground">Production</p>
                 <p className="text-2xl font-bold text-green-600">
                   {accounts.filter(a => a.status === 'production').length}
                 </p>
@@ -611,21 +611,6 @@ export default function MyAccountsPage() {
                 </p>
               </div>
               <Clock className="h-8 w-8 text-yellow-600/20" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="cursor-default">
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">Avg. Percentage</p>
-                <p className="text-2xl font-bold text-primary">
-                  {accounts.length > 0
-                    ? Math.round(accounts.reduce((sum, a) => sum + (a.percentage || 0), 0) / accounts.length)
-                    : 0}%
-                </p>
-              </div>
-              <DollarSign className="h-8 w-8 text-primary/20" />
             </div>
           </CardContent>
         </Card>
