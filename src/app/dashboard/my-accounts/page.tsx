@@ -394,13 +394,20 @@ export default function MyAccountsPage() {
       return;
     }
 
-    if (!companyProofImage || !paymentProofImage) {
-      alert('Please upload both screenshots (company payment and payment sent)');
+    // Company screenshot is always required (verifies what the platform paid)
+    if (!companyProofImage) {
+      alert('Please upload the Company Payment screenshot');
+      return;
+    }
+
+    // Payment screenshot is required UNLESS we have a verified TX on Base
+    if (!paymentProofImage && !txVerification?.success) {
+      alert('Please upload the Payment Sent screenshot, or verify your transaction on Base');
       return;
     }
 
     // Check if images are still uploading
-    if (companyProofImage.uploading || paymentProofImage.uploading) {
+    if (companyProofImage.uploading || paymentProofImage?.uploading) {
       alert('Please wait for images to finish uploading');
       return;
     }
@@ -420,7 +427,7 @@ export default function MyAccountsPage() {
 
     try {
       // Only include fields that are safe for the database
-      const paymentData = {
+      const paymentData: Record<string, unknown> = {
         user_id: user?.id,
         account_id: selectedAccount.id,
         platform_amount: platformAmount,
@@ -432,8 +439,17 @@ export default function MyAccountsPage() {
         user_notes: combinedNotes,
         // Use Telegram URLs if available, otherwise use base64 preview
         company_screenshot_url: companyProofImage.telegramUrl || companyProofImage.preview,
-        payment_screenshot_url: paymentProofImage.telegramUrl || paymentProofImage.preview,
       };
+
+      // Payment screenshot only if user uploaded one
+      if (paymentProofImage) {
+        paymentData.payment_screenshot_url = paymentProofImage.telegramUrl || paymentProofImage.preview;
+      }
+
+      // Pass tx hash for server-side re-verification + auto-confirm
+      if (txVerification?.success && txHash.trim()) {
+        paymentData.verified_tx_hash = txHash.trim();
+      }
 
       console.log('Submitting payment:', paymentData);
 
@@ -449,7 +465,13 @@ export default function MyAccountsPage() {
       if (data.success) {
         setIsPaymentDialogOpen(false);
         resetForm();
-        alert('Payment submitted successfully! Admin will review it. You will receive a notification when it is confirmed.');
+        const wasAutoConfirmed = data.data?.status === 'confirmed';
+        alert(
+          wasAutoConfirmed
+            ? '✓ Payment auto-confirmed via blockchain verification! Thank you.'
+            : 'Payment submitted successfully! Admin will review it. You will receive a notification when it is confirmed.'
+        );
+        await fetchData();
       } else {
         console.error('Payment error:', data.error);
         alert('Error: ' + (data.error || 'Failed to submit payment'));
@@ -1234,10 +1256,10 @@ export default function MyAccountsPage() {
               </div>
             )}
 
-            {/* Screenshot 2: Payment Sent Proof */}
+            {/* Screenshot 2: Payment Sent Proof — optional when TX verified */}
             <ImageUploadBox
               type="payment"
-              label="Payment Sent Screenshot"
+              label={txVerification?.success ? 'Payment Sent Screenshot (optional — TX verified)' : 'Payment Sent Screenshot'}
               image={paymentProofImage}
               inputRef={paymentProofInputRef}
               cameraRef={paymentCameraInputRef}
@@ -1282,7 +1304,7 @@ export default function MyAccountsPage() {
                 !paymentForm.platform_amount ||
                 !paymentForm.amount_sent ||
                 !companyProofImage ||
-                !paymentProofImage ||
+                (!paymentProofImage && !txVerification?.success) ||
                 companyProofImage?.uploading ||
                 paymentProofImage?.uploading ||
                 isSubmitting ||
@@ -1295,7 +1317,7 @@ export default function MyAccountsPage() {
               ) : (
                 <CheckCircle2 className="h-4 w-4 mr-2" />
               )}
-              Submit Payment
+              {txVerification?.success ? 'Submit & Auto-Confirm' : 'Submit Payment'}
             </Button>
           </DialogFooter>
         </DialogContent>

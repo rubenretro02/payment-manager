@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAllPayments, createPayment } from '@/lib/supabase/db';
 import { sendUserNotification, notifyAdminsNewPayment } from '@/lib/notifications';
 import { createAdminClient } from '@/lib/supabase/server';
+import { matchTransactionToPayment } from '@/lib/basescan';
 
 export async function GET(request: NextRequest) {
   try {
@@ -19,6 +20,45 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     console.log('Creating payment with data:', JSON.stringify(body, null, 2));
+
+    // SERVER-SIDE TX verification — never trust client claims of verification.
+    // If the client says they have a verified Base tx, we re-verify here.
+    let autoConfirmed = false;
+    if (body.verified_tx_hash && body.account_id) {
+      try {
+        const supabase = createAdminClient();
+        const { data: account } = await supabase
+          .from('accounts')
+          .select('wallet_address, wallet_network')
+          .eq('id', body.account_id)
+          .single();
+
+        if (account?.wallet_address && (account.wallet_network || 'base') === 'base') {
+          const verification = await matchTransactionToPayment({
+            txHash: body.verified_tx_hash,
+            expectedWallet: account.wallet_address,
+            expectedAmountUsd: body.amount_paid ? Number(body.amount_paid) : undefined,
+          });
+
+          if (verification.found && verification.confirmed && verification.wallet_match) {
+            // Blockchain confirmed: auto-confirm the payment
+            body.status = 'confirmed';
+            body.confirmed_at = new Date().toISOString();
+            body.payment_reference = body.verified_tx_hash;
+            const tokenInfo = verification.matched_transfer
+              ? `${verification.matched_amount_usd?.toFixed(2)} ${verification.matched_transfer.token_symbol}`
+              : 'native ETH';
+            body.admin_notes = `[AUTO-CONFIRMED via Basescan] Verified ${tokenInfo} sent to ${account.wallet_address.slice(0, 10)}...${account.wallet_address.slice(-6)}`;
+            autoConfirmed = true;
+            console.log('Payment auto-confirmed via Basescan:', body.verified_tx_hash);
+          } else {
+            console.log('Basescan verification did not match, keeping as submitted:', verification);
+          }
+        }
+      } catch (verifyError) {
+        console.error('Server-side verification error (non-fatal):', verifyError);
+      }
+    }
 
     const result = await createPayment(body);
 
@@ -51,17 +91,22 @@ export async function POST(request: NextRequest) {
 
       const accountData = account as { full_name: string; platform: { display_name: string } | null } | null;
 
-      // Send confirmation notification to user
+      // Send notification to user — confirmed if auto-verified, submitted otherwise
       if (user?.telegram_id) {
-        await sendUserNotification(user.telegram_id, 'payment_submitted', {
-          amount: body.amount_paid || body.amount_owed,
-          accountName: accountData?.full_name || 'Account',
-          platformName: accountData?.platform?.display_name || 'Platform',
-        });
+        await sendUserNotification(
+          user.telegram_id,
+          autoConfirmed ? 'payment_confirmed' : 'payment_submitted',
+          {
+            amount: body.amount_paid || body.amount_owed,
+            accountName: accountData?.full_name || 'Account',
+            platformName: accountData?.platform?.display_name || 'Platform',
+          }
+        );
       }
 
-      // Notify all admins with link to review the payment
-      if (user) {
+      // Notify all admins — only ping for new payments needing review,
+      // not for ones already auto-confirmed by the blockchain.
+      if (user && !autoConfirmed) {
         await notifyAdminsNewPayment({
           userName: user.telegram_first_name || 'User',
           userUsername: user.telegram_username || undefined,

@@ -107,9 +107,15 @@ export async function createPayment(paymentData: Partial<Payment>): Promise<{ da
     amount_owed: paymentData.amount_owed,
     amount_paid: paymentData.amount_paid,
     payment_method: paymentData.payment_method || 'other',
-    status: 'submitted',
+    status: paymentData.status || 'submitted',
     submitted_at: new Date().toISOString(),
   };
+
+  // Auto-confirm fields if status is 'confirmed'
+  if (paymentData.status === 'confirmed') {
+    basicData.confirmed_at = paymentData.confirmed_at || new Date().toISOString();
+    if (paymentData.confirmed_by) basicData.confirmed_by = paymentData.confirmed_by;
+  }
 
   // Add optional fields only if they have values
   if (paymentData.payment_reference) {
@@ -117,6 +123,9 @@ export async function createPayment(paymentData: Partial<Payment>): Promise<{ da
   }
   if (paymentData.user_notes) {
     basicData.user_notes = paymentData.user_notes;
+  }
+  if (paymentData.admin_notes) {
+    basicData.admin_notes = paymentData.admin_notes;
   }
 
   console.log('Creating payment with basic data:', basicData);
