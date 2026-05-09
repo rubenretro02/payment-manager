@@ -15,6 +15,14 @@ import {
 } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
   Table,
   TableBody,
   TableCell,
@@ -38,6 +46,9 @@ import {
   Search,
   Users,
   Building2,
+  ImageIcon,
+  ExternalLink,
+  Send,
 } from 'lucide-react';
 import { format, startOfDay, startOfWeek, startOfMonth, startOfYear, isAfter } from 'date-fns';
 import type { Payment } from '@/lib/types';
@@ -85,6 +96,26 @@ export default function ReportsPage() {
   const [selectedMonth, setSelectedMonth] = useState((new Date().getMonth() + 1).toString());
   const [activeView, setActiveView] = useState<'overview' | 'by-account' | 'by-user' | 'all'>('overview');
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedPayment, setSelectedPayment] = useState<Payment | null>(null);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+
+  const openPaymentDetails = (payment: Payment) => {
+    setSelectedPayment(payment);
+    setDetailsOpen(true);
+  };
+
+  const openImageInNewTab = (url: string) => {
+    if (!url) return;
+    if (url.startsWith('data:')) {
+      const w = window.open('', '_blank');
+      if (w) {
+        w.document.write(`<!DOCTYPE html><html><head><title>Screenshot</title><style>body{margin:0;display:flex;justify-content:center;align-items:center;min-height:100vh;background:#1a1a1a}img{max-width:100%;max-height:100vh;object-fit:contain}</style></head><body><img src="${url}"/></body></html>`);
+        w.document.close();
+      }
+    } else {
+      window.open(url, '_blank');
+    }
+  };
 
   useEffect(() => {
     fetchPayments();
@@ -233,6 +264,31 @@ export default function ReportsPage() {
       .slice(0, 10);
   }, [userSummaries]);
 
+  // Underpaid individual payments (clickable for screenshots)
+  const underpaidPayments = useMemo(() => {
+    return filteredPayments
+      .filter(p => p.status === 'confirmed' && (Number(p.amount_owed) || 0) > (Number(p.amount_paid) || 0))
+      .sort((a, b) => {
+        const lossA = (Number(a.amount_owed) || 0) - (Number(a.amount_paid) || 0);
+        const lossB = (Number(b.amount_owed) || 0) - (Number(b.amount_paid) || 0);
+        return lossB - lossA;
+      });
+  }, [filteredPayments]);
+
+  // Pending individual payments (awaiting confirmation)
+  const pendingPayments = useMemo(() => {
+    return filteredPayments
+      .filter(p => p.status === 'submitted' || p.status === 'pending')
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  }, [filteredPayments]);
+
+  // Recent received individual payments (confirmed)
+  const recentReceivedPayments = useMemo(() => {
+    return filteredPayments
+      .filter(p => p.status === 'confirmed')
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  }, [filteredPayments]);
+
   // Search filter
   const filteredAccountSummaries = accountSummaries.filter(s => {
     if (!searchQuery) return true;
@@ -349,7 +405,7 @@ export default function ReportsPage() {
 
       {/* Summary Cards */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <Card className="border-green-200 dark:border-green-800 cursor-pointer transition-all hover:shadow-md hover:border-green-400" onClick={() => router.push('/dashboard/payments?status=confirmed')}>
+        <Card className="border-green-200 dark:border-green-800 cursor-pointer transition-all hover:shadow-md hover:border-green-400" onClick={() => setActiveView('overview')}>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
               <TrendingUp className="h-4 w-4 text-green-600" />
@@ -361,7 +417,7 @@ export default function ReportsPage() {
             <p className="text-xs text-muted-foreground">From {stats.paymentsCount.confirmed} confirmed payments →</p>
           </CardContent>
         </Card>
-        <Card className="border-yellow-200 dark:border-yellow-800 cursor-pointer transition-all hover:shadow-md hover:border-yellow-400" onClick={() => router.push('/dashboard/payments?status=submitted')}>
+        <Card className="border-yellow-200 dark:border-yellow-800 cursor-pointer transition-all hover:shadow-md hover:border-yellow-400" onClick={() => setActiveView('overview')}>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
               <Clock className="h-4 w-4 text-yellow-600" />
@@ -373,7 +429,7 @@ export default function ReportsPage() {
             <p className="text-xs text-muted-foreground">{stats.paymentsCount.pending} payments awaiting →</p>
           </CardContent>
         </Card>
-        <Card className="border-red-200 dark:border-red-800 cursor-pointer transition-all hover:shadow-md hover:border-red-400" onClick={() => setActiveView('by-user')}>
+        <Card className="border-red-200 dark:border-red-800 cursor-pointer transition-all hover:shadow-md hover:border-red-400" onClick={() => setActiveView('overview')}>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
               <TrendingDown className="h-4 w-4 text-red-600" />
@@ -382,7 +438,7 @@ export default function ReportsPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-red-600">${stats.totalLoss.toFixed(2)}</div>
-            <p className="text-xs text-muted-foreground">View top underpayers →</p>
+            <p className="text-xs text-muted-foreground">View underpaid payments →</p>
           </CardContent>
         </Card>
         <Card>
@@ -472,7 +528,7 @@ export default function ReportsPage() {
             </Card>
           </div>
 
-          {/* Top Underpayers */}
+          {/* Top Underpayers (by user) */}
           {topUnderpayers.length > 0 && (
             <Card className="border-red-200 dark:border-red-800">
               <CardHeader>
@@ -512,6 +568,163 @@ export default function ReportsPage() {
                         </TableCell>
                       </TableRow>
                     ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Underpaid Payments (individual, clickable) */}
+          {underpaidPayments.length > 0 && (
+            <Card className="border-red-200 dark:border-red-800">
+              <CardHeader>
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <TrendingDown className="h-5 w-5 text-red-600" />
+                  Underpaid Payments
+                </CardTitle>
+                <CardDescription>Click any row to see screenshots and full details</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Date</TableHead>
+                      <TableHead>Account</TableHead>
+                      <TableHead>User</TableHead>
+                      <TableHead className="text-right">Owed</TableHead>
+                      <TableHead className="text-right">Paid</TableHead>
+                      <TableHead className="text-right">Loss</TableHead>
+                      <TableHead className="w-10"></TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {underpaidPayments.map(p => {
+                      const owed = Number(p.amount_owed) || 0;
+                      const paid = Number(p.amount_paid) || 0;
+                      const loss = owed - paid;
+                      const hasScreenshots = p.company_screenshot_url || p.payment_screenshot_url || p.screenshot_url;
+                      return (
+                        <TableRow key={p.id} className="cursor-pointer hover:bg-muted/50" onClick={() => openPaymentDetails(p)}>
+                          <TableCell className="text-xs">{format(new Date(p.created_at), 'MMM d, HH:mm')}</TableCell>
+                          <TableCell>
+                            <div>
+                              <p className="font-medium">{p.account?.full_name || '-'}</p>
+                              <p className="text-xs text-muted-foreground">{p.account?.platform?.display_name || ''}</p>
+                            </div>
+                          </TableCell>
+                          <TableCell>{p.user?.telegram_first_name || '-'}</TableCell>
+                          <TableCell className="text-right">${owed.toFixed(2)}</TableCell>
+                          <TableCell className="text-right">${paid.toFixed(2)}</TableCell>
+                          <TableCell className="text-right text-red-600 font-semibold">-${loss.toFixed(2)}</TableCell>
+                          <TableCell>{hasScreenshots && <ImageIcon className="h-4 w-4 text-muted-foreground" />}</TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Pending Payments (clickable) */}
+          {pendingPayments.length > 0 && (
+            <Card className="border-yellow-200 dark:border-yellow-800">
+              <CardHeader>
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <Clock className="h-5 w-5 text-yellow-600" />
+                  Pending Payments
+                </CardTitle>
+                <CardDescription>Awaiting your confirmation — click any row for details</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Date</TableHead>
+                      <TableHead>Account</TableHead>
+                      <TableHead>User</TableHead>
+                      <TableHead>Method</TableHead>
+                      <TableHead className="text-right">Owed</TableHead>
+                      <TableHead className="text-right">Paid</TableHead>
+                      <TableHead className="w-10"></TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {pendingPayments.map(p => {
+                      const hasScreenshots = p.company_screenshot_url || p.payment_screenshot_url || p.screenshot_url;
+                      return (
+                        <TableRow key={p.id} className="cursor-pointer hover:bg-muted/50" onClick={() => openPaymentDetails(p)}>
+                          <TableCell className="text-xs">{format(new Date(p.created_at), 'MMM d, HH:mm')}</TableCell>
+                          <TableCell>
+                            <div>
+                              <p className="font-medium">{p.account?.full_name || '-'}</p>
+                              <p className="text-xs text-muted-foreground">{p.account?.platform?.display_name || ''}</p>
+                            </div>
+                          </TableCell>
+                          <TableCell>{p.user?.telegram_first_name || '-'}</TableCell>
+                          <TableCell><span className="text-xs capitalize">{p.payment_method || '-'}</span></TableCell>
+                          <TableCell className="text-right">${(Number(p.amount_owed) || 0).toFixed(2)}</TableCell>
+                          <TableCell className="text-right font-medium">${(Number(p.amount_paid) || 0).toFixed(2)}</TableCell>
+                          <TableCell>{hasScreenshots && <ImageIcon className="h-4 w-4 text-muted-foreground" />}</TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Recent Received Payments (clickable) */}
+          {recentReceivedPayments.length > 0 && (
+            <Card className="border-green-200 dark:border-green-800">
+              <CardHeader>
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <CheckCircle2 className="h-5 w-5 text-green-600" />
+                  Total Received
+                </CardTitle>
+                <CardDescription>Confirmed payments — click any row for details and screenshots</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Date</TableHead>
+                      <TableHead>Account</TableHead>
+                      <TableHead>User</TableHead>
+                      <TableHead>Method</TableHead>
+                      <TableHead className="text-right">Owed</TableHead>
+                      <TableHead className="text-right">Received</TableHead>
+                      <TableHead className="text-right">Diff</TableHead>
+                      <TableHead className="w-10"></TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {recentReceivedPayments.map(p => {
+                      const owed = Number(p.amount_owed) || 0;
+                      const paid = Number(p.amount_paid) || 0;
+                      const diff = paid - owed;
+                      const hasScreenshots = p.company_screenshot_url || p.payment_screenshot_url || p.screenshot_url;
+                      return (
+                        <TableRow key={p.id} className="cursor-pointer hover:bg-muted/50" onClick={() => openPaymentDetails(p)}>
+                          <TableCell className="text-xs">{format(new Date(p.created_at), 'MMM d, HH:mm')}</TableCell>
+                          <TableCell>
+                            <div>
+                              <p className="font-medium">{p.account?.full_name || '-'}</p>
+                              <p className="text-xs text-muted-foreground">{p.account?.platform?.display_name || ''}</p>
+                            </div>
+                          </TableCell>
+                          <TableCell>{p.user?.telegram_first_name || '-'}</TableCell>
+                          <TableCell><span className="text-xs capitalize">{p.payment_method || '-'}</span></TableCell>
+                          <TableCell className="text-right">${owed.toFixed(2)}</TableCell>
+                          <TableCell className="text-right font-medium text-green-600">${paid.toFixed(2)}</TableCell>
+                          <TableCell className={`text-right text-xs font-semibold ${diff < 0 ? 'text-red-600' : diff > 0 ? 'text-blue-600' : 'text-muted-foreground'}`}>
+                            {diff >= 0 ? '+' : ''}${diff.toFixed(2)}
+                          </TableCell>
+                          <TableCell>{hasScreenshots && <ImageIcon className="h-4 w-4 text-muted-foreground" />}</TableCell>
+                        </TableRow>
+                      );
+                    })}
                   </TableBody>
                 </Table>
               </CardContent>
@@ -694,7 +907,7 @@ export default function ReportsPage() {
                       .map(p => {
                         const diff = (Number(p.amount_paid) || 0) - (Number(p.amount_owed) || 0);
                         return (
-                          <TableRow key={p.id}>
+                          <TableRow key={p.id} className="cursor-pointer hover:bg-muted/50" onClick={() => openPaymentDetails(p)}>
                             <TableCell className="text-xs">{format(new Date(p.created_at), 'MMM d, HH:mm')}</TableCell>
                             <TableCell>
                               <div>
@@ -730,6 +943,133 @@ export default function ReportsPage() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Payment Details Dialog */}
+      <Dialog open={detailsOpen} onOpenChange={setDetailsOpen}>
+        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Payment Details</DialogTitle>
+            <DialogDescription>
+              {selectedPayment?.account?.full_name || 'Account'} - {selectedPayment?.account?.platform?.display_name || 'Platform'}
+            </DialogDescription>
+          </DialogHeader>
+
+          {selectedPayment && (
+            <div className="space-y-4">
+              {/* Status */}
+              <div className="flex justify-center">
+                <Badge className={`text-sm px-4 py-1 ${
+                  selectedPayment.status === 'confirmed' ? 'bg-green-100 text-green-800' :
+                  selectedPayment.status === 'rejected' ? 'bg-red-100 text-red-800' :
+                  'bg-blue-100 text-blue-800'
+                }`}>
+                  {selectedPayment.status === 'submitted' ? 'Awaiting Confirmation' : selectedPayment.status}
+                </Badge>
+              </div>
+
+              {/* User & Account */}
+              <div className="rounded-lg bg-muted p-4 space-y-2 text-sm">
+                <div className="flex justify-between"><span className="text-muted-foreground">User:</span><span className="font-medium">{selectedPayment.user?.telegram_first_name || '-'}{selectedPayment.user?.telegram_username ? ` (@${selectedPayment.user.telegram_username})` : ''}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Account:</span><span className="font-medium">{selectedPayment.account?.full_name || '-'}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Email:</span><span className="text-xs">{selectedPayment.account?.account_email || '-'}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Platform:</span><span>{selectedPayment.account?.platform?.display_name || '-'}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Date:</span><span>{format(new Date(selectedPayment.created_at), "MMMM d, yyyy 'at' HH:mm")}</span></div>
+              </div>
+
+              {/* Amounts */}
+              <div className="rounded-lg border-2 border-primary/20 bg-primary/5 p-4 space-y-2 text-sm">
+                <div className="flex justify-between"><span className="text-muted-foreground">Platform Earnings:</span><span className="font-medium">${Number(selectedPayment.platform_amount || 0).toFixed(2)}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Percentage:</span><span>{selectedPayment.percentage_applied}%</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Should Pay:</span><span className="font-bold">${Number(selectedPayment.amount_owed || 0).toFixed(2)}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Actually Sent:</span><span className="font-bold text-primary">${Number(selectedPayment.amount_paid || 0).toFixed(2)}</span></div>
+                {Number(selectedPayment.amount_owed) !== Number(selectedPayment.amount_paid) && (
+                  <div className="flex justify-between pt-2 border-t">
+                    <span className="text-muted-foreground">Difference:</span>
+                    <span className={`font-bold ${Number(selectedPayment.amount_paid) >= Number(selectedPayment.amount_owed) ? 'text-blue-600' : 'text-red-600'}`}>
+                      {Number(selectedPayment.amount_paid) >= Number(selectedPayment.amount_owed) ? '+' : '-'}
+                      ${Math.abs(Number(selectedPayment.amount_paid || 0) - Number(selectedPayment.amount_owed || 0)).toFixed(2)}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Method & Reference */}
+              {(selectedPayment.payment_method || selectedPayment.payment_reference) && (
+                <div className="rounded-lg bg-muted p-3 space-y-1 text-sm">
+                  {selectedPayment.payment_method && (
+                    <div className="flex justify-between"><span className="text-muted-foreground">Method:</span><span className="capitalize">{selectedPayment.payment_method}</span></div>
+                  )}
+                  {selectedPayment.payment_reference && (
+                    <div className="flex justify-between"><span className="text-muted-foreground">Reference:</span><span className="font-mono text-xs break-all">{selectedPayment.payment_reference}</span></div>
+                  )}
+                </div>
+              )}
+
+              {/* Screenshots */}
+              {(selectedPayment.company_screenshot_url || selectedPayment.payment_screenshot_url || selectedPayment.screenshot_url) && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {(selectedPayment.company_screenshot_url || selectedPayment.screenshot_url) && (
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <p className="text-xs text-muted-foreground flex items-center gap-1"><Building2 className="h-3 w-3" /> Company Payment</p>
+                        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => openImageInNewTab((selectedPayment.company_screenshot_url || selectedPayment.screenshot_url) as string)}>
+                          <ExternalLink className="h-3 w-3" />
+                        </Button>
+                      </div>
+                      <img src={(selectedPayment.company_screenshot_url || selectedPayment.screenshot_url) as string} alt="Company" className="w-full rounded-lg border" />
+                    </div>
+                  )}
+                  {selectedPayment.payment_screenshot_url && (
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <p className="text-xs text-muted-foreground flex items-center gap-1"><Send className="h-3 w-3" /> Payment Sent</p>
+                        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => openImageInNewTab(selectedPayment.payment_screenshot_url as string)}>
+                          <ExternalLink className="h-3 w-3" />
+                        </Button>
+                      </div>
+                      <img src={selectedPayment.payment_screenshot_url} alt="Payment" className="w-full rounded-lg border" />
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Notes */}
+              {selectedPayment.user_notes && (
+                <div className="rounded-lg bg-muted p-3">
+                  <p className="text-xs text-muted-foreground mb-1">User notes:</p>
+                  <p className="text-sm">{selectedPayment.user_notes}</p>
+                </div>
+              )}
+              {selectedPayment.admin_notes && (
+                <div className="rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 p-3">
+                  <p className="text-xs text-blue-700 dark:text-blue-400 mb-1">Admin notes:</p>
+                  <p className="text-sm">{selectedPayment.admin_notes}</p>
+                </div>
+              )}
+              {selectedPayment.status === 'rejected' && selectedPayment.rejection_reason && (
+                <div className="rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 p-3">
+                  <p className="text-xs text-red-700 dark:text-red-400 font-medium mb-1">Rejection reason:</p>
+                  <p className="text-sm">{selectedPayment.rejection_reason}</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          <DialogFooter className="flex-col sm:flex-row gap-2">
+            {selectedPayment?.status === 'submitted' && (
+              <Button
+                onClick={() => router.push(`/dashboard/payments?payment=${selectedPayment.id}`)}
+                className="w-full sm:w-auto"
+              >
+                Review & Confirm in Payments →
+              </Button>
+            )}
+            <Button variant="outline" onClick={() => setDetailsOpen(false)} className="w-full sm:w-auto">
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
