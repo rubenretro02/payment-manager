@@ -119,7 +119,10 @@ export default function UsersPage() {
     telegram_first_name: '',
     email: '',
     role: 'user',
+    password: '',
   });
+  const [showPassword, setShowPassword] = useState(false);
+  const [createdCredentials, setCreatedCredentials] = useState<{ email: string; password: string } | null>(null);
 
   useEffect(() => {
     fetchUsers();
@@ -272,6 +275,14 @@ export default function UsersPage() {
       alert('Name is required');
       return;
     }
+    if (addForm.password && !addForm.email) {
+      alert('Email is required to set a password');
+      return;
+    }
+    if (addForm.password && addForm.password.length < 6) {
+      alert('Password must be at least 6 characters');
+      return;
+    }
     setIsSubmitting(true);
 
     try {
@@ -284,12 +295,18 @@ export default function UsersPage() {
       const data = await response.json();
       if (data.success) {
         await fetchUsers();
-        setIsAddDialogOpen(false);
+        // If password was set, show credentials so admin can share them
+        if (addForm.password && addForm.email) {
+          setCreatedCredentials({ email: addForm.email, password: addForm.password });
+        } else {
+          setIsAddDialogOpen(false);
+        }
         setAddForm({
           telegram_username: '',
           telegram_first_name: '',
           email: '',
           role: 'user',
+          password: '',
         });
       } else {
         alert('Error adding user: ' + data.error);
@@ -300,6 +317,14 @@ export default function UsersPage() {
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const generatePassword = () => {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+    let pwd = '';
+    for (let i = 0; i < 12; i++) pwd += chars[Math.floor(Math.random() * chars.length)];
+    setAddForm({ ...addForm, password: pwd });
+    setShowPassword(true);
   };
 
   if (loading) {
@@ -354,7 +379,7 @@ export default function UsersPage() {
                 />
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="add_email">Email (optional)</Label>
+                <Label htmlFor="add_email">Email (required for web login)</Label>
                 <Input
                   id="add_email"
                   type="email"
@@ -379,6 +404,29 @@ export default function UsersPage() {
                   </SelectContent>
                 </Select>
               </div>
+
+              <div className="grid gap-2 border-t pt-4">
+                <Label htmlFor="add_password">Password (optional — for web login)</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="add_password"
+                    type={showPassword ? 'text' : 'password'}
+                    placeholder="Leave empty if user only uses Telegram"
+                    value={addForm.password}
+                    onChange={(e) => setAddForm({ ...addForm, password: e.target.value })}
+                    className="font-mono"
+                  />
+                  <Button type="button" variant="outline" size="sm" onClick={() => setShowPassword(s => !s)}>
+                    {showPassword ? 'Hide' : 'Show'}
+                  </Button>
+                  <Button type="button" variant="outline" size="sm" onClick={generatePassword}>
+                    Generate
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Set a password for users who don&apos;t use Telegram. They will log in at /login with email + password.
+                </p>
+              </div>
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setIsAddDialogOpen(false)}>
@@ -387,6 +435,91 @@ export default function UsersPage() {
               <Button onClick={handleAddUser} disabled={isSubmitting}>
                 {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 Add User
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Credentials Display Dialog (shown after creating user with password) */}
+        <Dialog
+          open={createdCredentials !== null}
+          onOpenChange={(open) => {
+            if (!open) {
+              setCreatedCredentials(null);
+              setIsAddDialogOpen(false);
+            }
+          }}
+        >
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>✓ User Created — Share These Credentials</DialogTitle>
+              <DialogDescription>
+                Send the user this email + password so they can log in at the website.
+                <span className="block mt-2 text-yellow-700 dark:text-yellow-400 font-medium">
+                  ⚠️ This password won&apos;t be shown again — copy it now.
+                </span>
+              </DialogDescription>
+            </DialogHeader>
+            {createdCredentials && (
+              <div className="space-y-3">
+                <div>
+                  <Label className="text-xs">Email</Label>
+                  <div className="flex items-center gap-2 mt-1">
+                    <Input value={createdCredentials.email} readOnly className="font-mono" />
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => navigator.clipboard.writeText(createdCredentials.email)}
+                    >
+                      Copy
+                    </Button>
+                  </div>
+                </div>
+                <div>
+                  <Label className="text-xs">Password</Label>
+                  <div className="flex items-center gap-2 mt-1">
+                    <Input value={createdCredentials.password} readOnly className="font-mono" />
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => navigator.clipboard.writeText(createdCredentials.password)}
+                    >
+                      Copy
+                    </Button>
+                  </div>
+                </div>
+                <div>
+                  <Label className="text-xs">Login URL</Label>
+                  <div className="flex items-center gap-2 mt-1">
+                    <Input
+                      value={typeof window !== 'undefined' ? `${window.location.origin}/login` : '/login'}
+                      readOnly
+                      className="font-mono text-xs"
+                    />
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => navigator.clipboard.writeText(`${window.location.origin}/login`)}
+                    >
+                      Copy
+                    </Button>
+                  </div>
+                </div>
+                <Button
+                  className="w-full"
+                  onClick={() => {
+                    const text = `Login at: ${window.location.origin}/login\nEmail: ${createdCredentials.email}\nPassword: ${createdCredentials.password}`;
+                    navigator.clipboard.writeText(text);
+                    alert('All credentials copied!');
+                  }}
+                >
+                  Copy All
+                </Button>
+              </div>
+            )}
+            <DialogFooter>
+              <Button onClick={() => { setCreatedCredentials(null); setIsAddDialogOpen(false); }}>
+                Done
               </Button>
             </DialogFooter>
           </DialogContent>

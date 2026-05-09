@@ -36,16 +36,34 @@ export default function LoginPage() {
       }
 
       if (data.user) {
-        // Check if user is admin in our users table
-        const { data: userData } = await supabase
+        // Look up the corresponding user row by auth_user_id (preferred) or email
+        let userData: { id: string; role: string; status: string; email: string | null; telegram_first_name: string | null; [key: string]: unknown } | null = null;
+
+        const byAuthId = await supabase
           .from('users')
           .select('*')
-          .eq('email', email)
-          .eq('role', 'admin')
-          .single();
+          .eq('auth_user_id', data.user.id)
+          .maybeSingle();
+        if (byAuthId.data) {
+          userData = byAuthId.data;
+        } else {
+          const byEmail = await supabase
+            .from('users')
+            .select('*')
+            .ilike('email', email)
+            .maybeSingle();
+          userData = byEmail.data;
+        }
 
         if (!userData) {
-          setError('Access denied. Admin only.');
+          setError('No account found for this email. Contact your admin.');
+          await supabase.auth.signOut();
+          setLoading(false);
+          return;
+        }
+
+        if (userData.status === 'suspended' || userData.status === 'inactive') {
+          setError('Your account is not active. Contact your admin.');
           await supabase.auth.signOut();
           setLoading(false);
           return;
@@ -53,7 +71,13 @@ export default function LoginPage() {
 
         // Store user in localStorage for our auth hook
         localStorage.setItem('auth_user', JSON.stringify(userData));
-        router.push('/dashboard');
+
+        // Route based on role: regular users go to my-accounts, admins/IBOs to dashboard
+        if (userData.role === 'user') {
+          router.push('/dashboard/my-accounts');
+        } else {
+          router.push('/dashboard');
+        }
       }
     } catch (err) {
       setError('An error occurred. Please try again.');
@@ -68,9 +92,9 @@ export default function LoginPage() {
           <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary text-primary-foreground">
             <CreditCard className="h-7 w-7" />
           </div>
-          <CardTitle className="text-2xl">Admin Login</CardTitle>
+          <CardTitle className="text-2xl">Sign In</CardTitle>
           <CardDescription>
-            Sign in to manage your payment system
+            Log in with your email and password
           </CardDescription>
         </CardHeader>
         <CardContent>
