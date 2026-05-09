@@ -65,6 +65,8 @@ import {
   Mail,
   AtSign,
   Shield,
+  KeyRound,
+  MessageCircle,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { useAuth } from '@/hooks/useAuth';
@@ -123,6 +125,12 @@ export default function UsersPage() {
   });
   const [showPassword, setShowPassword] = useState(false);
   const [createdCredentials, setCreatedCredentials] = useState<{ email: string; password: string } | null>(null);
+
+  // Set/Reset credentials state for existing users
+  const [isCredentialsDialogOpen, setIsCredentialsDialogOpen] = useState(false);
+  const [credentialsTarget, setCredentialsTarget] = useState<User | null>(null);
+  const [credentialsForm, setCredentialsForm] = useState({ email: '', password: '' });
+  const [showCredsPassword, setShowCredsPassword] = useState(false);
 
   useEffect(() => {
     fetchUsers();
@@ -325,6 +333,68 @@ export default function UsersPage() {
     for (let i = 0; i < 12; i++) pwd += chars[Math.floor(Math.random() * chars.length)];
     setAddForm({ ...addForm, password: pwd });
     setShowPassword(true);
+  };
+
+  const generateCredsPassword = () => {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+    let pwd = '';
+    for (let i = 0; i < 12; i++) pwd += chars[Math.floor(Math.random() * chars.length)];
+    setCredentialsForm({ ...credentialsForm, password: pwd });
+    setShowCredsPassword(true);
+  };
+
+  const openCredentialsDialog = (user: User) => {
+    setCredentialsTarget(user);
+    setCredentialsForm({ email: user.email || '', password: '' });
+    setShowCredsPassword(false);
+    setIsCredentialsDialogOpen(true);
+  };
+
+  const handleSetCredentials = async () => {
+    if (!credentialsTarget) return;
+    if (!credentialsForm.email || !credentialsForm.password) {
+      alert('Email and password required');
+      return;
+    }
+    if (credentialsForm.password.length < 6) {
+      alert('Password must be at least 6 characters');
+      return;
+    }
+    setIsSubmitting(true);
+    try {
+      const res = await fetch(`/api/users/${credentialsTarget.id}/credentials`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(credentialsForm),
+      });
+      const data = await res.json();
+      if (data.success) {
+        await fetchUsers();
+        setIsCredentialsDialogOpen(false);
+        setCreatedCredentials({ email: credentialsForm.email, password: credentialsForm.password });
+        setCredentialsTarget(null);
+      } else {
+        alert('Error: ' + (data.error || 'Failed to set credentials'));
+      }
+    } catch (error) {
+      console.error('Error setting credentials:', error);
+      alert('Error setting credentials');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const sendWhatsAppMessage = (user: User) => {
+    if (!user.phone) {
+      alert('User has no phone number on file');
+      return;
+    }
+    // Strip non-digit characters from phone (wa.me wants only digits with country code)
+    const cleanPhone = user.phone.replace(/\D/g, '');
+    const message = encodeURIComponent(
+      `Hi ${user.telegram_first_name || ''}, this is a reminder from PayManager.`
+    );
+    window.open(`https://wa.me/${cleanPhone}?text=${message}`, '_blank');
   };
 
   if (loading) {
@@ -641,6 +711,16 @@ export default function UsersPage() {
                             <Edit className="mr-2 h-4 w-4" />
                             Edit
                           </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => openCredentialsDialog(user)}>
+                            <KeyRound className="mr-2 h-4 w-4" />
+                            {user.auth_user_id ? 'Reset Password' : 'Set Login Credentials'}
+                          </DropdownMenuItem>
+                          {user.phone && (
+                            <DropdownMenuItem onClick={() => sendWhatsAppMessage(user)}>
+                              <MessageCircle className="mr-2 h-4 w-4" />
+                              Send WhatsApp
+                            </DropdownMenuItem>
+                          )}
                           <DropdownMenuSeparator />
                           {user.status === 'active' ? (
                             <DropdownMenuItem
@@ -880,6 +960,67 @@ export default function UsersPage() {
             <Button onClick={handleSaveEdit} disabled={isSubmitting}>
               {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Save Changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Set/Reset Login Credentials Dialog */}
+      <Dialog open={isCredentialsDialogOpen} onOpenChange={setIsCredentialsDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              {credentialsTarget?.auth_user_id ? 'Reset Password' : 'Set Login Credentials'}
+            </DialogTitle>
+            <DialogDescription>
+              {credentialsTarget?.auth_user_id
+                ? 'Update the password for this user. They can keep using Telegram too.'
+                : 'Add web login credentials so this user can access the dashboard from a browser.'}
+              {credentialsTarget?.telegram_username && (
+                <span className="block mt-1 text-xs">
+                  ✓ Will keep their Telegram access (@{credentialsTarget.telegram_username})
+                </span>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="creds_email">Email *</Label>
+              <Input
+                id="creds_email"
+                type="email"
+                placeholder="email@example.com"
+                value={credentialsForm.email}
+                onChange={(e) => setCredentialsForm({ ...credentialsForm, email: e.target.value })}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="creds_password">Password *</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="creds_password"
+                  type={showCredsPassword ? 'text' : 'password'}
+                  placeholder="At least 6 characters"
+                  value={credentialsForm.password}
+                  onChange={(e) => setCredentialsForm({ ...credentialsForm, password: e.target.value })}
+                  className="font-mono"
+                />
+                <Button type="button" variant="outline" size="sm" onClick={() => setShowCredsPassword(s => !s)}>
+                  {showCredsPassword ? 'Hide' : 'Show'}
+                </Button>
+                <Button type="button" variant="outline" size="sm" onClick={generateCredsPassword}>
+                  Generate
+                </Button>
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsCredentialsDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleSetCredentials} disabled={isSubmitting}>
+              {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {credentialsTarget?.auth_user_id ? 'Reset Password' : 'Create Credentials'}
             </Button>
           </DialogFooter>
         </DialogContent>

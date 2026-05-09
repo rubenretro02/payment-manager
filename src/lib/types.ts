@@ -33,6 +33,9 @@ export interface User {
   payment_day: number | null;
   status: UserStatus;
   notes: string | null;
+  // Auth (set once email/password credentials are configured for this user)
+  auth_user_id: string | null;
+  auth_method: 'telegram' | 'email' | 'both' | null;
   created_at: string;
   updated_at: string;
 }
