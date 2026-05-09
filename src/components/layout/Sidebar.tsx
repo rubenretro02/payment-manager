@@ -16,6 +16,7 @@ import {
   UserCircle,
   Layers,
   BarChart3,
+  CalendarClock,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useState } from 'react';
@@ -24,6 +25,7 @@ import { useAuth } from '@/hooks/useAuth';
 const adminLinks = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/dashboard/users', label: 'Users', icon: Users },
+  { href: '/dashboard/due-payments', label: 'Due Payments', icon: CalendarClock },
   { href: '/dashboard/payments', label: 'Payments', icon: CreditCard },
   { href: '/dashboard/reports', label: 'Reports', icon: BarChart3 },
   { href: '/dashboard/accounts', label: 'Accounts', icon: Building2 },
@@ -36,6 +38,7 @@ const adminLinks = [
 const iboLinks = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/dashboard/users', label: 'My Users', icon: Users },
+  { href: '/dashboard/due-payments', label: 'Due Payments', icon: CalendarClock },
   { href: '/dashboard/payments', label: 'Payments', icon: CreditCard },
   { href: '/dashboard/accounts', label: 'My Accounts', icon: Building2 },
 ];

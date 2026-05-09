@@ -1,5 +1,6 @@
 import { sendTelegramMessage } from './telegram';
 import { createAdminClient } from './supabase/server';
+import { calculateNextPaymentDate, type PaymentFrequency } from './payment-dates';
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 
@@ -74,27 +75,29 @@ ${data.reason ? `\n📝 Reason: <i>${data.reason}</i>` : ''}
 Please review and resubmit your payment in the app.`,
 
   payment_reminder: (data) => `
-⏰ <b>Payment Reminder</b>
+⏰ <b>Payment Report Reminder</b>
 
-You have a payment coming up ${data.daysUntilDue === 1 ? 'tomorrow' : data.daysUntilDue === 0 ? 'today' : `in ${data.daysUntilDue} days`}!
+You need to submit your payment report ${data.daysUntilDue === 1 ? 'tomorrow' : data.daysUntilDue === 0 ? 'today' : `in ${data.daysUntilDue} days`}.
 
 📋 Account: <b>${data.accountName}</b>
 🏢 Platform: ${data.platformName}
 📅 Due: ${data.dueDate}
 💰 Your percentage: ${data.percentage}%
 
-Don't forget to submit your payment! 💵`,
+⚠️ Even if you already sent the payment, you must submit your report in the app.`,
 
   payment_overdue: (data) => `
-🚨 <b>Payment Overdue!</b>
+🚨 <b>Payment Report Overdue!</b>
 
-Your payment is past due. Please submit as soon as possible.
+You have not submitted your payment report yet.
 
 📋 Account: <b>${data.accountName}</b>
 🏢 Platform: ${data.platformName}
 📅 Was due: ${data.dueDate}
 
-Open the app to submit your payment now.`,
+⚠️ <b>You must submit your report in the app</b>, even if you already sent the payment.
+
+Open the app now to upload your screenshots and complete the report.`,
 
   new_account_assigned: (data) => `
 🆕 <b>New Account Assigned!</b>
@@ -316,8 +319,31 @@ export async function notifyAdminsNewPayment(data: {
 // =============================================
 
 /**
- * Send payment reminders to users with upcoming payments
- * Call this from a cron job or scheduled task
+ * Get the start of the current payment period for a given frequency.
+ * Used to check whether a payment has already been submitted/confirmed for the
+ * period that the upcoming due date belongs to.
+ */
+function getPeriodStart(frequency: PaymentFrequency, today: Date): Date {
+  const start = new Date(today);
+  start.setHours(0, 0, 0, 0);
+
+  switch (frequency) {
+    case 'weekly':
+      start.setDate(start.getDate() - 7);
+      break;
+    case 'biweekly':
+      start.setDate(start.getDate() - 14);
+      break;
+    case 'monthly':
+      start.setDate(start.getDate() - 31);
+      break;
+  }
+  return start;
+}
+
+/**
+ * Send payment reminders to users with upcoming or overdue payments.
+ * Call this from a cron job or scheduled task.
  */
 export async function sendPaymentReminders(): Promise<{
   sent: number;
@@ -328,10 +354,8 @@ export async function sendPaymentReminders(): Promise<{
   const results = { sent: 0, failed: 0, users: [] as string[] };
 
   try {
-    // Get accounts with upcoming payment dates (within next 2 days)
     const today = new Date();
-    const twoDaysFromNow = new Date(today);
-    twoDaysFromNow.setDate(twoDaysFromNow.getDate() + 2);
+    today.setHours(0, 0, 0, 0);
 
     const { data: accounts } = await supabase
       .from('accounts')
@@ -348,53 +372,56 @@ export async function sendPaymentReminders(): Promise<{
     for (const account of accounts) {
       if (!account.user?.telegram_id) continue;
 
-      // Calculate next payment date
-      const nextPaymentDate = account.next_payment_date
-        ? new Date(account.next_payment_date)
-        : null;
+      // Calculate next payment date in real time (don't rely on stored DB value)
+      const frequency: PaymentFrequency = account.payment_frequency || 'weekly';
+      const nextPaymentDate = calculateNextPaymentDate(
+        frequency,
+        account.payment_day,
+        today,
+        account.biweekly_first_day,
+        account.biweekly_second_day
+      );
 
-      if (!nextPaymentDate) continue;
-
-      // Check if payment is due within 2 days
       const daysUntilDue = Math.ceil(
         (nextPaymentDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)
       );
 
-      if (daysUntilDue <= 2 && daysUntilDue >= 0) {
-        // Check if user already submitted payment for this period
-        const { data: existingPayment } = await supabase
-          .from('payments')
-          .select('id')
-          .eq('account_id', account.id)
-          .eq('user_id', account.user.id)
-          .gte('created_at', new Date(today.setHours(0, 0, 0, 0)).toISOString())
-          .in('status', ['submitted', 'confirmed'])
-          .single();
+      // Notify if due within 2 days OR overdue (keep nagging until they report)
+      if (daysUntilDue > 2) continue;
 
-        if (existingPayment) continue; // Already submitted
+      // Check if user already submitted/confirmed payment for the current period
+      const periodStart = getPeriodStart(frequency, today);
+      const { data: existingPayments } = await supabase
+        .from('payments')
+        .select('id')
+        .eq('account_id', account.id)
+        .eq('user_id', account.user.id)
+        .gte('created_at', periodStart.toISOString())
+        .in('status', ['submitted', 'confirmed']);
 
-        const success = await sendUserNotification(
-          account.user.telegram_id,
-          daysUntilDue < 0 ? 'payment_overdue' : 'payment_reminder',
-          {
-            accountName: account.full_name,
-            platformName: account.platform?.display_name || 'Platform',
-            dueDate: nextPaymentDate.toLocaleDateString('en-US', {
-              weekday: 'long',
-              month: 'short',
-              day: 'numeric',
-            }),
-            daysUntilDue,
-            percentage: account.percentage,
-          }
-        );
+      if (existingPayments && existingPayments.length > 0) continue;
 
-        if (success) {
-          results.sent++;
-          results.users.push(account.user.telegram_first_name || 'User');
-        } else {
-          results.failed++;
+      const success = await sendUserNotification(
+        account.user.telegram_id,
+        daysUntilDue < 0 ? 'payment_overdue' : 'payment_reminder',
+        {
+          accountName: account.full_name,
+          platformName: account.platform?.display_name || 'Platform',
+          dueDate: nextPaymentDate.toLocaleDateString('en-US', {
+            weekday: 'long',
+            month: 'short',
+            day: 'numeric',
+          }),
+          daysUntilDue: Math.max(0, daysUntilDue),
+          percentage: account.percentage,
         }
+      );
+
+      if (success) {
+        results.sent++;
+        results.users.push(account.user.telegram_first_name || 'User');
+      } else {
+        results.failed++;
       }
     }
   } catch (error) {

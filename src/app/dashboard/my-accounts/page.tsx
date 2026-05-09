@@ -46,11 +46,14 @@ import {
   Image as ImageIcon,
   X,
   RefreshCw,
+  Eye,
+  Plus,
+  Send,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { enUS } from 'date-fns/locale';
 import { useAuth } from '@/hooks/useAuth';
-import type { Account, PaymentFrequency } from '@/lib/types';
+import type { Account, Payment, PaymentFrequency } from '@/lib/types';
 import {
   formatPaymentFrequency,
   formatPaymentSchedule,
@@ -112,13 +115,16 @@ interface UploadedImage {
 export default function MyAccountsPage() {
   const { user } = useAuth();
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [payments, setPayments] = useState<Payment[]>([]);
   const [adminPaymentMethods, setAdminPaymentMethods] = useState<AdminPaymentMethod[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedAccount, setSelectedAccount] = useState<Account | null>(null);
+  const [selectedReportPayment, setSelectedReportPayment] = useState<Payment | null>(null);
   const [isPaymentDialogOpen, setIsPaymentDialogOpen] = useState(false);
   const [isScheduleDialogOpen, setIsScheduleDialogOpen] = useState(false);
   const [isNoPaymentDialogOpen, setIsNoPaymentDialogOpen] = useState(false);
+  const [isViewReportDialogOpen, setIsViewReportDialogOpen] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
 
@@ -151,15 +157,18 @@ export default function MyAccountsPage() {
   async function fetchData(showRefreshing = false) {
     if (showRefreshing) setRefreshing(true);
     try {
-      const [accountsRes, methodsRes] = await Promise.all([
+      const [accountsRes, methodsRes, paymentsRes] = await Promise.all([
         fetch(`/api/my-accounts?user_id=${user?.id}`),
         fetch('/api/payment-methods'),
+        fetch(`/api/my-payments?user_id=${user?.id}`),
       ]);
 
       const accountsData = await accountsRes.json();
       const methodsData = await methodsRes.json();
+      const paymentsData = await paymentsRes.json();
 
       if (accountsData.success) setAccounts(accountsData.data || []);
+      if (paymentsData.success) setPayments(paymentsData.data || []);
       if (methodsData.success) {
         const activeMethods = (methodsData.data || []).filter((m: AdminPaymentMethod) => m.is_active);
         setAdminPaymentMethods(activeMethods);
@@ -177,6 +186,27 @@ export default function MyAccountsPage() {
       setRefreshing(false);
     }
   }
+
+  // Get the most recent payment for the current period of an account.
+  // Returns null if there's no submitted/confirmed payment in the current period
+  // (or only a rejected one — in that case user should report again).
+  const getCurrentPeriodReport = (account: Account): Payment | null => {
+    const frequency = account.payment_frequency || 'weekly';
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const periodStart = new Date(today);
+    if (frequency === 'weekly') periodStart.setDate(periodStart.getDate() - 7);
+    else if (frequency === 'biweekly') periodStart.setDate(periodStart.getDate() - 14);
+    else periodStart.setDate(periodStart.getDate() - 31);
+
+    return payments
+      .filter(p =>
+        p.account_id === account.id &&
+        (p.status === 'submitted' || p.status === 'confirmed') &&
+        new Date(p.created_at) >= periodStart
+      )
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0] || null;
+  };
 
   useEffect(() => {
     if (user?.id) {
@@ -727,44 +757,116 @@ export default function MyAccountsPage() {
                   </div>
 
                   {/* Actions - Only show Report Payment for production/nesting accounts */}
-                  {(account.status === 'production' || account.status === 'nesting') && (
-                    <div className="space-y-2">
-                      <div className="flex gap-2">
-                        <Button
-                          className="flex-1"
-                          onClick={() => {
-                            setSelectedAccount(account);
-                            setIsPaymentDialogOpen(true);
-                          }}
-                        >
-                          <DollarSign className="h-4 w-4 mr-2" />
-                          Report Payment
-                        </Button>
+                  {(account.status === 'production' || account.status === 'nesting') && (() => {
+                    const currentReport = getCurrentPeriodReport(account);
+
+                    // Already reported for this period — show status + view + add another
+                    if (currentReport) {
+                      const isConfirmed = currentReport.status === 'confirmed';
+                      return (
+                        <div className="space-y-2">
+                          <div className={`rounded-lg border p-3 flex items-center gap-2 ${
+                            isConfirmed
+                              ? 'bg-green-50 border-green-200 dark:bg-green-950/30 dark:border-green-800'
+                              : 'bg-purple-50 border-purple-200 dark:bg-purple-950/30 dark:border-purple-800'
+                          }`}>
+                            {isConfirmed ? (
+                              <CheckCircle2 className="h-4 w-4 text-green-600 shrink-0" />
+                            ) : (
+                              <Send className="h-4 w-4 text-purple-600 shrink-0" />
+                            )}
+                            <div className="flex-1 min-w-0">
+                              <p className={`text-sm font-medium ${
+                                isConfirmed ? 'text-green-700 dark:text-green-400' : 'text-purple-700 dark:text-purple-400'
+                              }`}>
+                                {isConfirmed ? 'Reported & Confirmed' : 'Reported – Awaiting Confirmation'}
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                ${Number(currentReport.amount_paid || 0).toFixed(2)} on {format(new Date(currentReport.created_at), 'MMM d')}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex gap-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="flex-1"
+                              onClick={() => {
+                                setSelectedReportPayment(currentReport);
+                                setSelectedAccount(account);
+                                setIsViewReportDialogOpen(true);
+                              }}
+                            >
+                              <Eye className="h-4 w-4 mr-2" />
+                              View
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="flex-1"
+                              onClick={() => {
+                                setSelectedAccount(account);
+                                setIsPaymentDialogOpen(true);
+                              }}
+                            >
+                              <Plus className="h-4 w-4 mr-2" />
+                              Add another
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                setSelectedAccount(account);
+                                setIsScheduleDialogOpen(true);
+                              }}
+                            >
+                              <Calendar className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    // No report for current period — show normal Report Payment buttons
+                    return (
+                      <div className="space-y-2">
+                        <div className="flex gap-2">
+                          <Button
+                            className="flex-1"
+                            onClick={() => {
+                              setSelectedAccount(account);
+                              setIsPaymentDialogOpen(true);
+                            }}
+                          >
+                            <DollarSign className="h-4 w-4 mr-2" />
+                            Report Payment
+                          </Button>
+                          <Button
+                            variant="outline"
+                            onClick={() => {
+                              setSelectedAccount(account);
+                              setIsScheduleDialogOpen(true);
+                            }}
+                          >
+                            <Calendar className="h-4 w-4" />
+                          </Button>
+                        </div>
+                        {/* No Payment / Issue Button */}
                         <Button
                           variant="outline"
+                          className="w-full border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950"
                           onClick={() => {
                             setSelectedAccount(account);
-                            setIsScheduleDialogOpen(true);
+                            setNoPaymentForm({ reason: '' });
+                            setIsNoPaymentDialogOpen(true);
                           }}
                         >
-                          <Calendar className="h-4 w-4" />
+                          <AlertTriangle className="h-4 w-4 mr-2" />
+                          No Payment / Issue
                         </Button>
                       </div>
-                      {/* No Payment / Issue Button */}
-                      <Button
-                        variant="outline"
-                        className="w-full border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950"
-                        onClick={() => {
-                          setSelectedAccount(account);
-                          setNoPaymentForm({ reason: '' });
-                          setIsNoPaymentDialogOpen(true);
-                        }}
-                      >
-                        <AlertTriangle className="h-4 w-4 mr-2" />
-                        No Payment / Issue
-                      </Button>
-                    </div>
-                  )}
+                    );
+                  })()}
 
                   {/* For non-production/nesting accounts, only show schedule */}
                   {account.status !== 'production' && account.status !== 'nesting' && (
@@ -1198,6 +1300,107 @@ export default function MyAccountsPage() {
                 <AlertTriangle className="h-4 w-4 mr-2" />
               )}
               Report Issue
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* View Report Dialog */}
+      <Dialog open={isViewReportDialogOpen} onOpenChange={setIsViewReportDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Payment Report</DialogTitle>
+            <DialogDescription>
+              {selectedAccount?.full_name} - {selectedAccount?.platform?.display_name}
+            </DialogDescription>
+          </DialogHeader>
+
+          {selectedReportPayment && (
+            <div className="space-y-4">
+              {/* Status */}
+              <div className="flex justify-center">
+                <Badge className={`text-sm px-4 py-1 ${
+                  selectedReportPayment.status === 'confirmed' ? 'bg-green-100 text-green-800' :
+                  selectedReportPayment.status === 'rejected' ? 'bg-red-100 text-red-800' :
+                  'bg-purple-100 text-purple-800'
+                }`}>
+                  {selectedReportPayment.status === 'submitted' ? 'Awaiting Confirmation' :
+                   selectedReportPayment.status === 'confirmed' ? 'Confirmed' :
+                   selectedReportPayment.status}
+                </Badge>
+              </div>
+
+              {/* Details */}
+              <div className="rounded-lg bg-muted p-4 space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Reported on:</span>
+                  <span>{format(new Date(selectedReportPayment.created_at), "MMM d, yyyy 'at' HH:mm")}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Platform earnings:</span>
+                  <span>${Number(selectedReportPayment.platform_amount || 0).toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Percentage:</span>
+                  <span>{selectedReportPayment.percentage_applied}%</span>
+                </div>
+                <div className="flex justify-between font-semibold">
+                  <span>Amount sent:</span>
+                  <span className="text-primary">${Number(selectedReportPayment.amount_paid || 0).toFixed(2)}</span>
+                </div>
+                {selectedReportPayment.payment_method && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Method:</span>
+                    <span className="capitalize">{selectedReportPayment.payment_method}</span>
+                  </div>
+                )}
+                {selectedReportPayment.payment_reference && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Reference:</span>
+                    <span className="font-mono text-xs">{selectedReportPayment.payment_reference}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Screenshots */}
+              {(selectedReportPayment.company_screenshot_url || selectedReportPayment.payment_screenshot_url) && (
+                <div className="grid grid-cols-2 gap-2">
+                  {selectedReportPayment.company_screenshot_url && (
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-1">Company Payment</p>
+                      <img
+                        src={selectedReportPayment.company_screenshot_url}
+                        alt="Company"
+                        className="w-full rounded-lg border"
+                      />
+                    </div>
+                  )}
+                  {selectedReportPayment.payment_screenshot_url && (
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-1">Payment Sent</p>
+                      <img
+                        src={selectedReportPayment.payment_screenshot_url}
+                        alt="Payment"
+                        className="w-full rounded-lg border"
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Notes */}
+              {selectedReportPayment.user_notes && (
+                <div className="rounded-lg bg-muted p-3">
+                  <p className="text-xs text-muted-foreground mb-1">Your notes:</p>
+                  <p className="text-sm">{selectedReportPayment.user_notes}</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button onClick={() => setIsViewReportDialogOpen(false)} className="w-full">
+              Close
             </Button>
           </DialogFooter>
         </DialogContent>

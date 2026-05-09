@@ -2,17 +2,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { sendPaymentReminders } from '@/lib/notifications';
 
 /**
- * POST /api/notifications/reminders
- * Trigger payment reminders for users with upcoming payments
- * Can be called by a cron job (e.g., daily at 9 AM)
+ * Vercel Cron jobs send GET requests with a Bearer token (CRON_SECRET).
+ * Manual triggers from clients can use POST. Both call the same logic.
  */
-export async function POST(request: NextRequest) {
+async function handle(request: NextRequest) {
   try {
-    // Optional: Add secret key validation for cron jobs
     const authHeader = request.headers.get('authorization');
     const cronSecret = process.env.CRON_SECRET;
 
-    // If CRON_SECRET is set, validate it
     if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
       return NextResponse.json(
         { success: false, error: 'Unauthorized' },
@@ -22,7 +19,6 @@ export async function POST(request: NextRequest) {
 
     console.log('Triggering payment reminders...');
     const results = await sendPaymentReminders();
-
     console.log('Reminders sent:', results);
 
     return NextResponse.json({
@@ -43,22 +39,10 @@ export async function POST(request: NextRequest) {
   }
 }
 
-/**
- * GET /api/notifications/reminders
- * Get info about reminder status (for admin panel)
- */
-export async function GET() {
-  return NextResponse.json({
-    success: true,
-    data: {
-      description: 'Payment reminder system',
-      usage: 'POST to this endpoint to trigger reminders',
-      frequency: 'Recommended: daily at 9 AM',
-      triggers: [
-        '1 day before payment due',
-        'On payment due date',
-        'When payment is overdue',
-      ],
-    },
-  });
+export async function GET(request: NextRequest) {
+  return handle(request);
+}
+
+export async function POST(request: NextRequest) {
+  return handle(request);
 }

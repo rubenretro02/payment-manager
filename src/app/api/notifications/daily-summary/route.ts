@@ -2,17 +2,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { sendDailySummaryToAdmins } from '@/lib/notifications';
 
 /**
- * POST /api/notifications/daily-summary
- * Send daily payment summary to all admins
- * Can be called by a cron job (e.g., daily at 8 AM)
+ * Vercel Cron jobs send GET requests with a Bearer token (CRON_SECRET).
+ * Manual triggers from clients can use POST. Both call the same logic.
  */
-export async function POST(request: NextRequest) {
+async function handle(request: NextRequest) {
   try {
-    // Optional: Add secret key validation for cron jobs
     const authHeader = request.headers.get('authorization');
     const cronSecret = process.env.CRON_SECRET;
 
-    // If CRON_SECRET is set, validate it
     if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
       return NextResponse.json(
         { success: false, error: 'Unauthorized' },
@@ -36,4 +33,12 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
+}
+
+export async function GET(request: NextRequest) {
+  return handle(request);
+}
+
+export async function POST(request: NextRequest) {
+  return handle(request);
 }
