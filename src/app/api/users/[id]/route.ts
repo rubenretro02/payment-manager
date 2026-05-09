@@ -51,6 +51,15 @@ export async function PATCH(
     if (body.telegram_last_name !== undefined) {
       updateData.telegram_last_name = body.telegram_last_name;
     }
+    if (body.telegram_username !== undefined) {
+      // Strip a leading @ if the admin pasted it that way
+      updateData.telegram_username = body.telegram_username
+        ? String(body.telegram_username).replace(/^@/, '').trim() || null
+        : null;
+    }
+    if (body.phone !== undefined) {
+      updateData.phone = body.phone || null;
+    }
     if (body.email !== undefined) {
       updateData.email = body.email || null;
     }

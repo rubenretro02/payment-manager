@@ -110,6 +110,8 @@ export default function UsersPage() {
   const [editForm, setEditForm] = useState({
     telegram_first_name: '',
     telegram_last_name: '',
+    telegram_username: '',
+    phone: '',
     email: '',
     role: 'user',
     status: 'active',
@@ -184,6 +186,8 @@ export default function UsersPage() {
     setEditForm({
       telegram_first_name: user.telegram_first_name || '',
       telegram_last_name: user.telegram_last_name || '',
+      telegram_username: user.telegram_username || '',
+      phone: user.phone || '',
       email: user.email || '',
       role: user.role || 'user',
       status: user.status || 'active',
@@ -918,6 +922,40 @@ export default function UsersPage() {
                 onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
               />
             </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="grid gap-2">
+                <Label htmlFor="edit_telegram_username">
+                  Telegram Username
+                  {!selectedUser?.telegram_id && selectedUser?.email && (
+                    <span className="text-xs text-blue-600 ml-2">(for auto-link)</span>
+                  )}
+                </Label>
+                <Input
+                  id="edit_telegram_username"
+                  placeholder="username (without @)"
+                  value={editForm.telegram_username}
+                  onChange={(e) => setEditForm({ ...editForm, telegram_username: e.target.value })}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="edit_phone">Phone (for WhatsApp)</Label>
+                <Input
+                  id="edit_phone"
+                  placeholder="+1234567890"
+                  value={editForm.phone}
+                  onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })}
+                />
+              </div>
+            </div>
+
+            {/* Hint about Telegram linking */}
+            {!selectedUser?.telegram_id && (
+              <div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/30 p-3 text-xs text-blue-700 dark:text-blue-400">
+                💡 <strong>To link this user with Telegram:</strong> set their Telegram username above.
+                When they open the bot, the system will auto-link this account and notify you. They will keep their email login too.
+              </div>
+            )}
+
             <div className="grid grid-cols-2 gap-4">
               <div className="grid gap-2">
                 <Label htmlFor="edit_role">Role</Label>
