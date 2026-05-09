@@ -75,6 +75,10 @@ export interface Account {
   // Status: production, drop, not_in_project
   status: AccountStatus;
 
+  // Crypto wallet (destination for crypto payments)
+  wallet_address: string | null;
+  wallet_network: string | null;
+
   // Optional details
   notes: string | null;
 

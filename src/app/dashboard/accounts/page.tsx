@@ -130,6 +130,8 @@ export default function AccountsPage() {
     payment_day: 5, // Friday by default for weekly, day of month for monthly
     biweekly_first_day: 1, // First payment day for biweekly
     biweekly_second_day: 16, // Second payment day for biweekly
+    wallet_address: '',
+    wallet_network: 'base',
   });
 
   const [assignUserId, setAssignUserId] = useState('');
@@ -246,6 +248,8 @@ export default function AccountsPage() {
           payment_day: 5,
           biweekly_first_day: 1,
           biweekly_second_day: 16,
+          wallet_address: '',
+          wallet_network: 'base',
         });
       } else {
         console.error('Error from API:', data.error);
@@ -314,6 +318,8 @@ export default function AccountsPage() {
           payment_day: 5,
           biweekly_first_day: 1,
           biweekly_second_day: 16,
+          wallet_address: '',
+          wallet_network: 'base',
         });
       } else {
         alert('Error: ' + (data.error || 'Failed to update account'));
@@ -357,6 +363,8 @@ export default function AccountsPage() {
       payment_day: account.payment_day ?? 5,
       biweekly_first_day: account.biweekly_first_day ?? 1,
       biweekly_second_day: account.biweekly_second_day ?? 16,
+      wallet_address: account.wallet_address || '',
+      wallet_network: account.wallet_network || 'base',
     });
     setIsEditDialogOpen(true);
   };
@@ -641,6 +649,47 @@ export default function AccountsPage() {
                   <p className="text-xs text-muted-foreground">
                     The assigned IBO/user will pay you this percentage of their earnings
                   </p>
+                </div>
+              </div>
+
+              {/* Crypto Wallet */}
+              <div className="border-t pt-4 mt-2">
+                <div className="grid gap-3">
+                  <div>
+                    <Label className="text-base">Crypto Wallet (optional)</Label>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      The destination wallet that the user will send payments to. Leave empty if this account doesn't accept crypto.
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="grid gap-2 sm:col-span-2">
+                      <Label htmlFor="wallet_address">Wallet Address</Label>
+                      <Input
+                        id="wallet_address"
+                        placeholder="0x..."
+                        value={newAccount.wallet_address}
+                        onChange={(e) => setNewAccount({ ...newAccount, wallet_address: e.target.value })}
+                      />
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="wallet_network">Network</Label>
+                      <Select
+                        value={newAccount.wallet_network}
+                        onValueChange={(v) => setNewAccount({ ...newAccount, wallet_network: v })}
+                      >
+                        <SelectTrigger id="wallet_network">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="base">Base</SelectItem>
+                          <SelectItem value="ethereum">Ethereum</SelectItem>
+                          <SelectItem value="polygon">Polygon</SelectItem>
+                          <SelectItem value="arbitrum">Arbitrum</SelectItem>
+                          <SelectItem value="optimism">Optimism</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1293,6 +1342,47 @@ export default function AccountsPage() {
                   value={newAccount.percentage}
                   onChange={(e) => setNewAccount({ ...newAccount, percentage: Number(e.target.value) })}
                 />
+              </div>
+            </div>
+
+            {/* Crypto Wallet */}
+            <div className="border-t pt-4 mt-2">
+              <div className="grid gap-3">
+                <div>
+                  <Label className="text-base">Crypto Wallet (optional)</Label>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Each account can have its own destination wallet. Users see this wallet when reporting a crypto payment for this account.
+                  </p>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="grid gap-2 sm:col-span-2">
+                    <Label htmlFor="edit_wallet_address">Wallet Address</Label>
+                    <Input
+                      id="edit_wallet_address"
+                      placeholder="0x..."
+                      value={newAccount.wallet_address}
+                      onChange={(e) => setNewAccount({ ...newAccount, wallet_address: e.target.value })}
+                    />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="edit_wallet_network">Network</Label>
+                    <Select
+                      value={newAccount.wallet_network}
+                      onValueChange={(v) => setNewAccount({ ...newAccount, wallet_network: v })}
+                    >
+                      <SelectTrigger id="edit_wallet_network">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="base">Base</SelectItem>
+                        <SelectItem value="ethereum">Ethereum</SelectItem>
+                        <SelectItem value="polygon">Polygon</SelectItem>
+                        <SelectItem value="arbitrum">Arbitrum</SelectItem>
+                        <SelectItem value="optimism">Optimism</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
               </div>
             </div>
           </div>

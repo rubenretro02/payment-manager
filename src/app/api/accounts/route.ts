@@ -59,7 +59,9 @@ export async function POST(request: NextRequest) {
       payment_frequency,
       payment_day,
       biweekly_first_day,
-      biweekly_second_day
+      biweekly_second_day,
+      wallet_address,
+      wallet_network,
     } = body;
 
     if (!full_name || !account_email || !platform_id) {
@@ -78,22 +80,26 @@ export async function POST(request: NextRequest) {
       biweekly_second_day
     );
 
+    const insertData: Record<string, unknown> = {
+      full_name,
+      account_email,
+      platform_id,
+      project_id: project_id || null,
+      status: status || 'production',
+      percentage: percentage || 50,
+      payment_frequency: payment_frequency || 'weekly',
+      payment_day: payment_day ?? 5,
+      biweekly_first_day: biweekly_first_day ?? 1,
+      biweekly_second_day: biweekly_second_day ?? 16,
+      next_payment_date: nextPaymentDate.toISOString(),
+    };
+    if (wallet_address) insertData.wallet_address = wallet_address;
+    if (wallet_network) insertData.wallet_network = wallet_network;
+
     const supabase = createAdminClient();
     const { data, error } = await supabase
       .from('accounts')
-      .insert({
-        full_name,
-        account_email,
-        platform_id,
-        project_id: project_id || null,
-        status: status || 'production',
-        percentage: percentage || 50,
-        payment_frequency: payment_frequency || 'weekly',
-        payment_day: payment_day ?? 5,
-        biweekly_first_day: biweekly_first_day ?? 1,
-        biweekly_second_day: biweekly_second_day ?? 16,
-        next_payment_date: nextPaymentDate.toISOString(),
-      })
+      .insert(insertData)
       .select('*, platform:platforms(*), project:projects(*)')
       .single();
 

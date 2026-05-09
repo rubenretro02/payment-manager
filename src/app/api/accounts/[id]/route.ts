@@ -19,7 +19,9 @@ export async function PUT(
       payment_frequency,
       payment_day,
       biweekly_first_day,
-      biweekly_second_day
+      biweekly_second_day,
+      wallet_address,
+      wallet_network,
     } = body;
 
     // Calculate next payment date
@@ -31,22 +33,26 @@ export async function PUT(
       biweekly_second_day
     );
 
+    const updateData: Record<string, unknown> = {
+      full_name,
+      account_email,
+      platform_id,
+      project_id: project_id || null,
+      status: status || 'production',
+      percentage: percentage || 50,
+      payment_frequency: payment_frequency || 'weekly',
+      payment_day: payment_day ?? 5,
+      biweekly_first_day: biweekly_first_day ?? 1,
+      biweekly_second_day: biweekly_second_day ?? 16,
+      next_payment_date: nextPaymentDate.toISOString(),
+    };
+    if (wallet_address !== undefined) updateData.wallet_address = wallet_address || null;
+    if (wallet_network !== undefined) updateData.wallet_network = wallet_network || null;
+
     const supabase = createAdminClient();
     const { data, error } = await supabase
       .from('accounts')
-      .update({
-        full_name,
-        account_email,
-        platform_id,
-        project_id: project_id || null,
-        status: status || 'production',
-        percentage: percentage || 50,
-        payment_frequency: payment_frequency || 'weekly',
-        payment_day: payment_day ?? 5,
-        biweekly_first_day: biweekly_first_day ?? 1,
-        biweekly_second_day: biweekly_second_day ?? 16,
-        next_payment_date: nextPaymentDate.toISOString(),
-      })
+      .update(updateData)
       .eq('id', id)
       .select('*, platform:platforms(*), project:projects(*)')
       .single();
