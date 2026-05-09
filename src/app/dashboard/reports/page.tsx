@@ -98,6 +98,12 @@ export default function ReportsPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedPayment, setSelectedPayment] = useState<Payment | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [cardFilter, setCardFilter] = useState<'all' | 'received' | 'pending' | 'losses'>('all');
+
+  const applyCardFilter = (filter: 'all' | 'received' | 'pending' | 'losses') => {
+    setCardFilter(filter);
+    setActiveView('overview');
+  };
 
   const openPaymentDetails = (payment: Payment) => {
     setSelectedPayment(payment);
@@ -405,7 +411,10 @@ export default function ReportsPage() {
 
       {/* Summary Cards */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <Card className="border-green-200 dark:border-green-800 cursor-pointer transition-all hover:shadow-md hover:border-green-400" onClick={() => setActiveView('overview')}>
+        <Card
+          className={`border-green-200 dark:border-green-800 cursor-pointer transition-all hover:shadow-md hover:border-green-400 ${cardFilter === 'received' ? 'ring-2 ring-green-500' : ''}`}
+          onClick={() => applyCardFilter(cardFilter === 'received' ? 'all' : 'received')}
+        >
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
               <TrendingUp className="h-4 w-4 text-green-600" />
@@ -417,7 +426,10 @@ export default function ReportsPage() {
             <p className="text-xs text-muted-foreground">From {stats.paymentsCount.confirmed} confirmed payments →</p>
           </CardContent>
         </Card>
-        <Card className="border-yellow-200 dark:border-yellow-800 cursor-pointer transition-all hover:shadow-md hover:border-yellow-400" onClick={() => setActiveView('overview')}>
+        <Card
+          className={`border-yellow-200 dark:border-yellow-800 cursor-pointer transition-all hover:shadow-md hover:border-yellow-400 ${cardFilter === 'pending' ? 'ring-2 ring-yellow-500' : ''}`}
+          onClick={() => applyCardFilter(cardFilter === 'pending' ? 'all' : 'pending')}
+        >
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
               <Clock className="h-4 w-4 text-yellow-600" />
@@ -429,7 +441,10 @@ export default function ReportsPage() {
             <p className="text-xs text-muted-foreground">{stats.paymentsCount.pending} payments awaiting →</p>
           </CardContent>
         </Card>
-        <Card className="border-red-200 dark:border-red-800 cursor-pointer transition-all hover:shadow-md hover:border-red-400" onClick={() => setActiveView('overview')}>
+        <Card
+          className={`border-red-200 dark:border-red-800 cursor-pointer transition-all hover:shadow-md hover:border-red-400 ${cardFilter === 'losses' ? 'ring-2 ring-red-500' : ''}`}
+          onClick={() => applyCardFilter(cardFilter === 'losses' ? 'all' : 'losses')}
+        >
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
               <TrendingDown className="h-4 w-4 text-red-600" />
@@ -441,7 +456,10 @@ export default function ReportsPage() {
             <p className="text-xs text-muted-foreground">View underpaid payments →</p>
           </CardContent>
         </Card>
-        <Card>
+        <Card
+          className={`cursor-pointer transition-all hover:shadow-md hover:border-primary/50 ${cardFilter === 'all' && activeView === 'overview' ? 'ring-2 ring-primary' : ''}`}
+          onClick={() => applyCardFilter('all')}
+        >
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
               <PieChart className="h-4 w-4" />
@@ -456,6 +474,20 @@ export default function ReportsPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Active filter badge */}
+      {cardFilter !== 'all' && activeView === 'overview' && (
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-muted-foreground">Showing only:</span>
+          <Badge variant="outline" className="gap-1 cursor-pointer" onClick={() => setCardFilter('all')}>
+            {cardFilter === 'received' && <><TrendingUp className="h-3 w-3 text-green-600" /> Total Received</>}
+            {cardFilter === 'pending' && <><Clock className="h-3 w-3 text-yellow-600" /> Pending Payments</>}
+            {cardFilter === 'losses' && <><TrendingDown className="h-3 w-3 text-red-600" /> Underpaid Payments</>}
+            <XCircle className="h-3 w-3 ml-1" />
+          </Badge>
+          <Button variant="ghost" size="sm" onClick={() => setCardFilter('all')}>Show all</Button>
+        </div>
+      )}
 
       {/* View Tabs */}
       <Tabs value={activeView} onValueChange={(v) => setActiveView(v as typeof activeView)}>
@@ -476,6 +508,7 @@ export default function ReportsPage() {
 
         {/* OVERVIEW TAB */}
         <TabsContent value="overview" className="space-y-4 mt-4">
+          {cardFilter === 'all' && (
           <div className="grid gap-4 md:grid-cols-2">
             <Card>
               <CardHeader>
@@ -527,9 +560,10 @@ export default function ReportsPage() {
               </CardContent>
             </Card>
           </div>
+          )}
 
           {/* Top Underpayers (by user) */}
-          {topUnderpayers.length > 0 && (
+          {(cardFilter === 'all' || cardFilter === 'losses') && topUnderpayers.length > 0 && (
             <Card className="border-red-200 dark:border-red-800">
               <CardHeader>
                 <CardTitle className="text-lg flex items-center gap-2">
@@ -575,7 +609,7 @@ export default function ReportsPage() {
           )}
 
           {/* Underpaid Payments (individual, clickable) */}
-          {underpaidPayments.length > 0 && (
+          {(cardFilter === 'all' || cardFilter === 'losses') && underpaidPayments.length > 0 && (
             <Card className="border-red-200 dark:border-red-800">
               <CardHeader>
                 <CardTitle className="text-lg flex items-center gap-2">
@@ -627,7 +661,7 @@ export default function ReportsPage() {
           )}
 
           {/* Pending Payments (clickable) */}
-          {pendingPayments.length > 0 && (
+          {(cardFilter === 'all' || cardFilter === 'pending') && pendingPayments.length > 0 && (
             <Card className="border-yellow-200 dark:border-yellow-800">
               <CardHeader>
                 <CardTitle className="text-lg flex items-center gap-2">
@@ -676,7 +710,7 @@ export default function ReportsPage() {
           )}
 
           {/* Recent Received Payments (clickable) */}
-          {recentReceivedPayments.length > 0 && (
+          {(cardFilter === 'all' || cardFilter === 'received') && recentReceivedPayments.length > 0 && (
             <Card className="border-green-200 dark:border-green-800">
               <CardHeader>
                 <CardTitle className="text-lg flex items-center gap-2">
