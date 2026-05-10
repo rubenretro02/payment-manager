@@ -1137,22 +1137,12 @@ export default function MyAccountsPage() {
 
             {/* Reference */}
             <div className="grid gap-2">
-              <Label htmlFor="payment_reference">
-                Reference / Confirmation #
-                {selectedAccount?.wallet_address && (selectedAccount.wallet_network || 'base') === 'base' && (
-                  <span className="text-xs text-blue-600 ml-2">(tx hash auto-verifies on Base)</span>
-                )}
-              </Label>
+              <Label htmlFor="payment_reference">Reference / Confirmation # (optional)</Label>
               <Input
                 id="payment_reference"
-                placeholder={
-                  selectedAccount?.wallet_address && (selectedAccount.wallet_network || 'base') === 'base'
-                    ? '0x... (transaction hash) or any reference'
-                    : 'Transaction ID or confirmation number'
-                }
+                placeholder="Confirmation number or reference"
                 value={paymentForm.payment_reference}
                 onChange={(e) => setPaymentForm({ ...paymentForm, payment_reference: e.target.value })}
-                className="font-mono text-xs"
               />
             </div>
 
