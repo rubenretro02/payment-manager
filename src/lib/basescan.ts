@@ -186,6 +186,131 @@ export interface MatchCheckResult extends TxVerificationResult {
   matched_amount_usd?: number;
 }
 
+/**
+ * Find a recent incoming token transfer to a wallet matching the expected amount.
+ * Used when the user reports a payment without providing a tx hash —
+ * we look at the admin's wallet history and pick the matching one.
+ */
+export interface FindRecentMatchOptions {
+  walletAddress: string;
+  expectedAmountUsd: number;
+  /** Time window in hours to search backwards (default: 72) */
+  hoursBack?: number;
+  /** USD tolerance below expected amount (default: 0.5) */
+  tolerance?: number;
+  /** Token contract addresses to consider (default: known stablecoins) */
+  tokenContracts?: string[];
+  /** Tx hashes to exclude (already used by other payments) */
+  excludeHashes?: string[];
+}
+
+export interface RecentMatchResult {
+  found: boolean;
+  tx_hash?: string;
+  block_number?: number;
+  timestamp?: number;
+  from?: string;
+  to?: string;
+  token_symbol?: string;
+  amount_usd?: number;
+  explorer_url?: string;
+  error?: string;
+  candidates_count?: number;
+}
+
+interface TokenTxItem {
+  blockNumber: string;
+  timeStamp: string;
+  hash: string;
+  from: string;
+  to: string;
+  value: string;
+  contractAddress: string;
+  tokenSymbol: string;
+  tokenDecimal: string;
+  confirmations: string;
+}
+
+export async function findRecentIncomingMatch(opts: FindRecentMatchOptions): Promise<RecentMatchResult> {
+  const wallet = opts.walletAddress.toLowerCase();
+  const hoursBack = opts.hoursBack ?? 72;
+  const tolerance = opts.tolerance ?? 0.5;
+  const excludeSet = new Set((opts.excludeHashes || []).map(h => h.toLowerCase()));
+  const stablecoins = Object.keys(KNOWN_TOKENS); // lowercased
+  const allowedContracts = new Set(
+    (opts.tokenContracts || stablecoins).map(c => c.toLowerCase())
+  );
+
+  try {
+    const url = buildUrl({
+      module: 'account',
+      action: 'tokentx',
+      address: wallet,
+      page: '1',
+      offset: '100',
+      sort: 'desc',
+    });
+    const res = await fetch(url, { cache: 'no-store' });
+    if (!res.ok) {
+      return { found: false, error: `Basescan HTTP ${res.status}` };
+    }
+    const json = await res.json() as { status?: string; message?: string; result?: TokenTxItem[] };
+
+    if (!Array.isArray(json.result)) {
+      return { found: false, error: json.message || 'No data from Basescan' };
+    }
+
+    const cutoffSec = Math.floor(Date.now() / 1000) - hoursBack * 3600;
+    const candidates: Array<{ item: TokenTxItem; amountUsd: number; diff: number; ts: number }> = [];
+
+    for (const item of json.result) {
+      if (item.to?.toLowerCase() !== wallet) continue;
+      if (excludeSet.has(item.hash.toLowerCase())) continue;
+      const contract = item.contractAddress.toLowerCase();
+      if (!allowedContracts.has(contract)) continue;
+
+      const ts = parseInt(item.timeStamp, 10);
+      if (Number.isNaN(ts) || ts < cutoffSec) continue;
+
+      const decimals = parseInt(item.tokenDecimal, 10) || KNOWN_TOKENS[contract]?.decimals || 18;
+      const amountUsd = formatTokenAmount(item.value, decimals);
+
+      const diff = amountUsd - opts.expectedAmountUsd;
+      // accept exact-or-over, or under by up to `tolerance`
+      if (diff >= -tolerance) {
+        candidates.push({ item, amountUsd, diff: Math.abs(diff), ts });
+      }
+    }
+
+    if (candidates.length === 0) {
+      return { found: false, candidates_count: 0 };
+    }
+
+    // Prefer the candidate with the smallest amount diff; tiebreak by most recent
+    candidates.sort((a, b) => a.diff - b.diff || b.ts - a.ts);
+    const best = candidates[0];
+    const tokenInfo = KNOWN_TOKENS[best.item.contractAddress.toLowerCase()];
+
+    return {
+      found: true,
+      tx_hash: best.item.hash,
+      block_number: parseInt(best.item.blockNumber, 10),
+      timestamp: best.ts,
+      from: best.item.from.toLowerCase(),
+      to: best.item.to.toLowerCase(),
+      token_symbol: tokenInfo?.symbol || best.item.tokenSymbol,
+      amount_usd: best.amountUsd,
+      explorer_url: `https://basescan.org/tx/${best.item.hash}`,
+      candidates_count: candidates.length,
+    };
+  } catch (error) {
+    return {
+      found: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+}
+
 export async function matchTransactionToPayment(opts: MatchCheckOptions): Promise<MatchCheckResult> {
   const verification = await verifyBaseTransaction(opts.txHash);
   const expected = opts.expectedWallet.toLowerCase();

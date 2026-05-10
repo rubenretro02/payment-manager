@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAllPayments, createPayment } from '@/lib/supabase/db';
 import { sendUserNotification, notifyAdminsNewPayment } from '@/lib/notifications';
 import { createAdminClient } from '@/lib/supabase/server';
-import { matchTransactionToPayment } from '@/lib/basescan';
+import { matchTransactionToPayment, findRecentIncomingMatch } from '@/lib/basescan';
 
 export async function GET(request: NextRequest) {
   try {
@@ -21,10 +21,13 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     console.log('Creating payment with data:', JSON.stringify(body, null, 2));
 
-    // SERVER-SIDE TX verification — never trust client claims of verification.
-    // If the client says they have a verified Base tx, we re-verify here.
+    // SERVER-SIDE Basescan auto-verification.
+    // Two paths to auto-confirm a payment:
+    //   1) Client passed a specific verified_tx_hash → re-verify that exact tx
+    //   2) No hash but account has a Base wallet → scan recent incoming transfers
+    //      looking for one that matches the claimed amount (within tolerance).
     let autoConfirmed = false;
-    if (body.verified_tx_hash && body.account_id) {
+    if (body.account_id) {
       try {
         const supabase = createAdminClient();
         const { data: account } = await supabase
@@ -33,26 +36,61 @@ export async function POST(request: NextRequest) {
           .eq('id', body.account_id)
           .single();
 
-        if (account?.wallet_address && (account.wallet_network || 'base') === 'base') {
-          const verification = await matchTransactionToPayment({
-            txHash: body.verified_tx_hash,
-            expectedWallet: account.wallet_address,
-            expectedAmountUsd: body.amount_paid ? Number(body.amount_paid) : undefined,
-          });
+        const isBaseWallet = account?.wallet_address && (account.wallet_network || 'base') === 'base';
 
-          if (verification.found && verification.confirmed && verification.wallet_match) {
-            // Blockchain confirmed: auto-confirm the payment
-            body.status = 'confirmed';
-            body.confirmed_at = new Date().toISOString();
-            body.payment_reference = body.verified_tx_hash;
-            const tokenInfo = verification.matched_transfer
-              ? `${verification.matched_amount_usd?.toFixed(2)} ${verification.matched_transfer.token_symbol}`
-              : 'native ETH';
-            body.admin_notes = `[AUTO-CONFIRMED via Basescan] Verified ${tokenInfo} sent to ${account.wallet_address.slice(0, 10)}...${account.wallet_address.slice(-6)}`;
-            autoConfirmed = true;
-            console.log('Payment auto-confirmed via Basescan:', body.verified_tx_hash);
-          } else {
-            console.log('Basescan verification did not match, keeping as submitted:', verification);
+        if (isBaseWallet) {
+          // Path 1: explicit tx hash provided
+          if (body.verified_tx_hash) {
+            const verification = await matchTransactionToPayment({
+              txHash: body.verified_tx_hash,
+              expectedWallet: account.wallet_address,
+              expectedAmountUsd: body.amount_paid ? Number(body.amount_paid) : undefined,
+            });
+
+            if (verification.found && verification.confirmed && verification.wallet_match) {
+              body.status = 'confirmed';
+              body.confirmed_at = new Date().toISOString();
+              body.payment_reference = body.verified_tx_hash;
+              const tokenInfo = verification.matched_transfer
+                ? `${verification.matched_amount_usd?.toFixed(2)} ${verification.matched_transfer.token_symbol}`
+                : 'native ETH';
+              body.admin_notes = `[AUTO-CONFIRMED via Basescan] Verified ${tokenInfo} sent to ${account.wallet_address.slice(0, 10)}...${account.wallet_address.slice(-6)}`;
+              autoConfirmed = true;
+              console.log('Payment auto-confirmed via tx hash:', body.verified_tx_hash);
+            }
+          }
+
+          // Path 2: scan recent incoming transfers — runs when path 1 didn't auto-confirm
+          if (!autoConfirmed && body.amount_paid) {
+            // Don't double-credit a tx hash already used by another confirmed payment
+            const { data: usedRefs } = await supabase
+              .from('payments')
+              .select('payment_reference')
+              .eq('status', 'confirmed')
+              .eq('account_id', body.account_id)
+              .not('payment_reference', 'is', null)
+              .limit(100);
+            const excludeHashes = (usedRefs || [])
+              .map(r => r.payment_reference)
+              .filter((h): h is string => typeof h === 'string' && /^0x[a-fA-F0-9]{64}$/.test(h));
+
+            const match = await findRecentIncomingMatch({
+              walletAddress: account.wallet_address,
+              expectedAmountUsd: Number(body.amount_paid),
+              hoursBack: 72,
+              excludeHashes,
+            });
+
+            if (match.found && match.tx_hash) {
+              body.status = 'confirmed';
+              body.confirmed_at = new Date().toISOString();
+              body.payment_reference = match.tx_hash;
+              body.admin_notes = `[AUTO-CONFIRMED via wallet scan] Matched ${match.amount_usd?.toFixed(2)} ${match.token_symbol} incoming to ${account.wallet_address.slice(0, 10)}...${account.wallet_address.slice(-6)}. From: ${match.from?.slice(0, 10)}...`;
+              autoConfirmed = true;
+              console.log('Payment auto-confirmed via wallet scan:', match.tx_hash);
+            } else {
+              console.log('Wallet scan found no match:', match);
+            }
           }
         }
       } catch (verifyError) {
