@@ -143,20 +143,6 @@ export default function MyAccountsPage() {
     notes: '',
   });
 
-  // Crypto TX verification state
-  const [txHash, setTxHash] = useState('');
-  const [verifying, setVerifying] = useState(false);
-  const [txVerification, setTxVerification] = useState<{
-    success: boolean;
-    found?: boolean;
-    confirmed?: boolean;
-    wallet_match?: boolean;
-    amount_match?: boolean | null;
-    matched_amount_usd?: number;
-    matched_token?: string;
-    explorer_url?: string;
-    error?: string;
-  } | null>(null);
 
   // No Payment / Issue form state
   const [noPaymentForm, setNoPaymentForm] = useState({
@@ -400,9 +386,15 @@ export default function MyAccountsPage() {
       return;
     }
 
-    // Payment screenshot is required UNLESS we have a verified TX on Base
-    if (!paymentProofImage && !txVerification?.success) {
-      alert('Please upload the Payment Sent screenshot, or verify your transaction on Base');
+    // Detect if the reference field contains a Base tx hash — server will re-verify
+    const refValue = (paymentForm.payment_reference || '').trim();
+    const looksLikeTxHash = /^0x[a-fA-F0-9]{64}$/.test(refValue);
+    const accountHasBaseWallet = !!selectedAccount.wallet_address && (selectedAccount.wallet_network || 'base') === 'base';
+    const canAutoVerify = looksLikeTxHash && accountHasBaseWallet;
+
+    // Payment screenshot required unless we can auto-verify on the blockchain
+    if (!paymentProofImage && !canAutoVerify) {
+      alert('Please upload the Payment Sent screenshot');
       return;
     }
 
@@ -419,12 +411,6 @@ export default function MyAccountsPage() {
     const amountToSend = calculateAmountOwed(platformAmount, selectedAccount.percentage);
     const selectedMethod = getSelectedPaymentMethod();
 
-    // Build verification note prefix if applicable
-    const verificationNote = txVerification?.success
-      ? `[✓ TX VERIFIED ON BASE — ${txVerification.matched_amount_usd?.toFixed(2)} ${txVerification.matched_token}]`
-      : '';
-    const combinedNotes = [verificationNote, paymentForm.notes].filter(Boolean).join(' ').trim() || null;
-
     try {
       // Only include fields that are safe for the database
       const paymentData: Record<string, unknown> = {
@@ -435,8 +421,8 @@ export default function MyAccountsPage() {
         amount_owed: amountToSend,
         amount_paid: amountSent,
         payment_method: selectedMethod?.type || 'other',
-        payment_reference: paymentForm.payment_reference || (txVerification?.success ? txHash : null),
-        user_notes: combinedNotes,
+        payment_reference: refValue || null,
+        user_notes: paymentForm.notes || null,
         // Use Telegram URLs if available, otherwise use base64 preview
         company_screenshot_url: companyProofImage.telegramUrl || companyProofImage.preview,
       };
@@ -446,9 +432,10 @@ export default function MyAccountsPage() {
         paymentData.payment_screenshot_url = paymentProofImage.telegramUrl || paymentProofImage.preview;
       }
 
-      // Pass tx hash for server-side re-verification + auto-confirm
-      if (txVerification?.success && txHash.trim()) {
-        paymentData.verified_tx_hash = txHash.trim();
+      // If the reference field is a Base tx hash, let the server re-verify it
+      // and auto-confirm if it matches the account's wallet.
+      if (canAutoVerify) {
+        paymentData.verified_tx_hash = refValue;
       }
 
       console.log('Submitting payment:', paymentData);
@@ -495,52 +482,6 @@ export default function MyAccountsPage() {
     });
     setCompanyProofImage(null);
     setPaymentProofImage(null);
-    setTxHash('');
-    setTxVerification(null);
-  };
-
-  const verifyTransaction = async () => {
-    if (!selectedAccount || !txHash.trim()) return;
-    setVerifying(true);
-    setTxVerification(null);
-    try {
-      const expectedAmount = paymentForm.amount_sent ? parseFloat(paymentForm.amount_sent) : undefined;
-      const res = await fetch('/api/payments/verify-tx', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          tx_hash: txHash.trim(),
-          account_id: selectedAccount.id,
-          expected_amount: expectedAmount,
-        }),
-      });
-      const data = await res.json();
-      if (data.success && data.data) {
-        const v = data.data;
-        const matchedTransfer = v.matched_transfer;
-        setTxVerification({
-          success: v.found && v.confirmed && v.wallet_match,
-          found: v.found,
-          confirmed: v.confirmed,
-          wallet_match: v.wallet_match,
-          amount_match: v.amount_match,
-          matched_amount_usd: v.matched_amount_usd,
-          matched_token: matchedTransfer?.token_symbol,
-          explorer_url: v.explorer_url,
-          error: v.error,
-        });
-        // Auto-fill the reference field with tx hash
-        if (v.found && v.wallet_match) {
-          setPaymentForm(prev => ({ ...prev, payment_reference: txHash.trim() }));
-        }
-      } else {
-        setTxVerification({ success: false, error: data.error || 'Verification failed' });
-      }
-    } catch (error) {
-      setTxVerification({ success: false, error: 'Network error' });
-    } finally {
-      setVerifying(false);
-    }
   };
 
   if (loading) {
@@ -1100,45 +1041,58 @@ export default function MyAccountsPage() {
               )}
             </div>
 
-            {/* Show Selected Payment Method Details */}
-            {selectedPaymentMethod && (
-              <div className="rounded-lg border border-primary/30 bg-primary/5 p-4">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2">
-                    {(() => {
-                      const Icon = getTypeIcon(selectedPaymentMethod.type);
-                      return <Icon className="h-4 w-4 text-primary" />;
-                    })()}
-                    <span className="font-medium text-sm">{selectedPaymentMethod.display_name || selectedPaymentMethod.type}</span>
-                    {selectedPaymentMethod.is_primary && (
-                      <Badge className="bg-yellow-500 text-xs">Preferred</Badge>
-                    )}
+            {/* Show Selected Payment Method Details — hidden for crypto methods
+                when account has its own wallet (account-specific orange box covers it) */}
+            {selectedPaymentMethod && (() => {
+              const methodType = (selectedPaymentMethod.type || '').toLowerCase();
+              const isCryptoMethod = methodType.includes('crypto') || methodType.includes('wallet') || methodType.includes('binance');
+              const accountHasWallet = !!selectedAccount?.wallet_address;
+              const hasDetails = !!(selectedPaymentMethod.details || '').trim();
+
+              // Hide entirely if it's a crypto method, account has its own wallet, and global details are empty
+              if (isCryptoMethod && accountHasWallet && !hasDetails) return null;
+
+              return (
+                <div className="rounded-lg border border-primary/30 bg-primary/5 p-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      {(() => {
+                        const Icon = getTypeIcon(selectedPaymentMethod.type);
+                        return <Icon className="h-4 w-4 text-primary" />;
+                      })()}
+                      <span className="font-medium text-sm">{selectedPaymentMethod.display_name || selectedPaymentMethod.type}</span>
+                      {selectedPaymentMethod.is_primary && (
+                        <Badge className="bg-yellow-500 text-xs">Preferred</Badge>
+                      )}
+                    </div>
                   </div>
+                  {hasDetails && (
+                    <div className="flex items-center gap-2 bg-background/80 rounded-md p-2 mb-2">
+                      <code className="text-sm font-mono flex-1 break-all">
+                        {selectedPaymentMethod.details}
+                      </code>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 shrink-0"
+                        onClick={() => copyToClipboard(selectedPaymentMethod.details, selectedPaymentMethod.id)}
+                      >
+                        {copiedId === selectedPaymentMethod.id ? (
+                          <Check className="h-4 w-4 text-green-600" />
+                        ) : (
+                          <Copy className="h-4 w-4" />
+                        )}
+                      </Button>
+                    </div>
+                  )}
+                  {selectedPaymentMethod.instructions && (
+                    <p className="text-xs text-muted-foreground">
+                      {selectedPaymentMethod.instructions}
+                    </p>
+                  )}
                 </div>
-                <div className="flex items-center gap-2 bg-background/80 rounded-md p-2 mb-2">
-                  <code className="text-sm font-mono flex-1 break-all">
-                    {selectedPaymentMethod.details}
-                  </code>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 shrink-0"
-                    onClick={() => copyToClipboard(selectedPaymentMethod.details, selectedPaymentMethod.id)}
-                  >
-                    {copiedId === selectedPaymentMethod.id ? (
-                      <Check className="h-4 w-4 text-green-600" />
-                    ) : (
-                      <Copy className="h-4 w-4" />
-                    )}
-                  </Button>
-                </div>
-                {selectedPaymentMethod.instructions && (
-                  <p className="text-xs text-muted-foreground">
-                    {selectedPaymentMethod.instructions}
-                  </p>
-                )}
-              </div>
-            )}
+              );
+            })()}
 
             {/* Account-specific Crypto Wallet (priority over global method) */}
             {selectedAccount?.wallet_address && (
@@ -1171,95 +1125,11 @@ export default function MyAccountsPage() {
               </div>
             )}
 
-            {/* TX Verification (only when account has wallet on Base) */}
-            {selectedAccount?.wallet_address && (selectedAccount.wallet_network || 'base') === 'base' && (
-              <div className="rounded-lg border border-blue-300 dark:border-blue-700 bg-blue-50 dark:bg-blue-950/30 p-4 space-y-3">
-                <div>
-                  <Label className="text-sm font-semibold flex items-center gap-2">
-                    <Check className="h-4 w-4 text-blue-600" />
-                    Already sent? Verify on Base
-                  </Label>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Paste your transaction hash to auto-verify the payment on the blockchain
-                  </p>
-                </div>
-                <div className="flex gap-2">
-                  <Input
-                    placeholder="0x... (transaction hash)"
-                    value={txHash}
-                    onChange={(e) => {
-                      setTxHash(e.target.value);
-                      setTxVerification(null);
-                    }}
-                    className="font-mono text-xs"
-                  />
-                  <Button
-                    type="button"
-                    onClick={verifyTransaction}
-                    disabled={verifying || !txHash.trim()}
-                  >
-                    {verifying ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Verify'}
-                  </Button>
-                </div>
 
-                {/* Verification Result */}
-                {txVerification && (
-                  <div className={`rounded-md p-3 text-sm ${
-                    txVerification.success
-                      ? 'bg-green-100 dark:bg-green-950/50 border border-green-300 dark:border-green-800'
-                      : 'bg-red-100 dark:bg-red-950/50 border border-red-300 dark:border-red-800'
-                  }`}>
-                    {txVerification.success ? (
-                      <div className="space-y-1 text-green-900 dark:text-green-300">
-                        <p className="font-semibold flex items-center gap-1">
-                          <Check className="h-4 w-4" /> Transaction Verified
-                        </p>
-                        {txVerification.matched_amount_usd !== undefined && (
-                          <p className="text-xs">
-                            Received: <strong>{txVerification.matched_amount_usd.toFixed(2)} {txVerification.matched_token}</strong>
-                          </p>
-                        )}
-                        {txVerification.amount_match === false && (
-                          <p className="text-xs text-yellow-700 dark:text-yellow-400">
-                            ⚠️ Amount is less than expected (${paymentForm.amount_sent})
-                          </p>
-                        )}
-                        {txVerification.amount_match === true && (
-                          <p className="text-xs">✓ Amount matches expected</p>
-                        )}
-                        {txVerification.explorer_url && (
-                          <a href={txVerification.explorer_url} target="_blank" rel="noopener noreferrer" className="text-xs underline">
-                            View on Basescan ↗
-                          </a>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="text-red-900 dark:text-red-300">
-                        <p className="font-semibold flex items-center gap-1">
-                          <X className="h-4 w-4" /> Verification Failed
-                        </p>
-                        {txVerification.error && (
-                          <p className="text-xs mt-1">{txVerification.error}</p>
-                        )}
-                        {!txVerification.error && txVerification.found && !txVerification.confirmed && (
-                          <p className="text-xs mt-1">Transaction is not yet confirmed on chain.</p>
-                        )}
-                        {!txVerification.error && txVerification.found && !txVerification.wallet_match && (
-                          <p className="text-xs mt-1">
-                            Transaction did not send funds to this account&apos;s wallet ({selectedAccount.wallet_address?.slice(0, 8)}...).
-                          </p>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Screenshot 2: Payment Sent Proof — optional when TX verified */}
+            {/* Screenshot 2: Payment Sent Proof */}
             <ImageUploadBox
               type="payment"
-              label={txVerification?.success ? 'Payment Sent Screenshot (optional — TX verified)' : 'Payment Sent Screenshot'}
+              label="Payment Sent Screenshot"
               image={paymentProofImage}
               inputRef={paymentProofInputRef}
               cameraRef={paymentCameraInputRef}
@@ -1267,12 +1137,22 @@ export default function MyAccountsPage() {
 
             {/* Reference */}
             <div className="grid gap-2">
-              <Label htmlFor="payment_reference">Reference / Confirmation # (optional)</Label>
+              <Label htmlFor="payment_reference">
+                Reference / Confirmation #
+                {selectedAccount?.wallet_address && (selectedAccount.wallet_network || 'base') === 'base' && (
+                  <span className="text-xs text-blue-600 ml-2">(tx hash auto-verifies on Base)</span>
+                )}
+              </Label>
               <Input
                 id="payment_reference"
-                placeholder="Transaction ID or confirmation number"
+                placeholder={
+                  selectedAccount?.wallet_address && (selectedAccount.wallet_network || 'base') === 'base'
+                    ? '0x... (transaction hash) or any reference'
+                    : 'Transaction ID or confirmation number'
+                }
                 value={paymentForm.payment_reference}
                 onChange={(e) => setPaymentForm({ ...paymentForm, payment_reference: e.target.value })}
+                className="font-mono text-xs"
               />
             </div>
 
@@ -1304,7 +1184,6 @@ export default function MyAccountsPage() {
                 !paymentForm.platform_amount ||
                 !paymentForm.amount_sent ||
                 !companyProofImage ||
-                (!paymentProofImage && !txVerification?.success) ||
                 companyProofImage?.uploading ||
                 paymentProofImage?.uploading ||
                 isSubmitting ||
@@ -1317,7 +1196,7 @@ export default function MyAccountsPage() {
               ) : (
                 <CheckCircle2 className="h-4 w-4 mr-2" />
               )}
-              {txVerification?.success ? 'Submit & Auto-Confirm' : 'Submit Payment'}
+              Submit Payment
             </Button>
           </DialogFooter>
         </DialogContent>
