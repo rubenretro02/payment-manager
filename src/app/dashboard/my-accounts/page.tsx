@@ -1094,36 +1094,46 @@ export default function MyAccountsPage() {
               );
             })()}
 
-            {/* Account-specific Crypto Wallet (priority over global method) */}
-            {selectedAccount?.wallet_address && (
-              <div className="rounded-lg border-2 border-orange-300 dark:border-orange-700 bg-orange-50 dark:bg-orange-950/30 p-4">
-                <div className="flex items-center gap-2 mb-2">
-                  <Wallet className="h-4 w-4 text-orange-600" />
-                  <span className="font-medium text-sm">Send to this wallet for {selectedAccount.full_name}</span>
-                  <Badge className="bg-orange-500 text-xs uppercase">{selectedAccount.wallet_network || 'base'}</Badge>
+            {/* Account-specific Crypto Wallet — only shown when user picked a crypto method */}
+            {selectedAccount?.wallet_address && (() => {
+              const methodType = (selectedPaymentMethod?.type || '').toLowerCase();
+              const isCryptoMethod =
+                methodType.includes('crypto') ||
+                methodType.includes('wallet') ||
+                methodType.includes('binance') ||
+                methodType.includes('usdc') ||
+                methodType.includes('usdt');
+              if (!isCryptoMethod) return null;
+              return (
+                <div className="rounded-lg border-2 border-orange-300 dark:border-orange-700 bg-orange-50 dark:bg-orange-950/30 p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Wallet className="h-4 w-4 text-orange-600" />
+                    <span className="font-medium text-sm">Send to this wallet for {selectedAccount.full_name}</span>
+                    <Badge className="bg-orange-500 text-xs uppercase">{selectedAccount.wallet_network || 'base'}</Badge>
+                  </div>
+                  <div className="flex items-center gap-2 bg-background/80 rounded-md p-2">
+                    <code className="text-xs font-mono flex-1 break-all">
+                      {selectedAccount.wallet_address}
+                    </code>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 shrink-0"
+                      onClick={() => copyToClipboard(selectedAccount.wallet_address!, `wallet-${selectedAccount.id}`)}
+                    >
+                      {copiedId === `wallet-${selectedAccount.id}` ? (
+                        <Check className="h-4 w-4 text-green-600" />
+                      ) : (
+                        <Copy className="h-4 w-4" />
+                      )}
+                    </Button>
+                  </div>
+                  <p className="text-xs text-orange-700 dark:text-orange-400 mt-2">
+                    ⚠️ Only send {(selectedAccount.wallet_network || 'base').toUpperCase()} network tokens to this address
+                  </p>
                 </div>
-                <div className="flex items-center gap-2 bg-background/80 rounded-md p-2">
-                  <code className="text-xs font-mono flex-1 break-all">
-                    {selectedAccount.wallet_address}
-                  </code>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 shrink-0"
-                    onClick={() => copyToClipboard(selectedAccount.wallet_address!, `wallet-${selectedAccount.id}`)}
-                  >
-                    {copiedId === `wallet-${selectedAccount.id}` ? (
-                      <Check className="h-4 w-4 text-green-600" />
-                    ) : (
-                      <Copy className="h-4 w-4" />
-                    )}
-                  </Button>
-                </div>
-                <p className="text-xs text-orange-700 dark:text-orange-400 mt-2">
-                  ⚠️ Only send {(selectedAccount.wallet_network || 'base').toUpperCase()} network tokens to this address
-                </p>
-              </div>
-            )}
+              );
+            })()}
 
 
             {/* Screenshot 2: Payment Sent Proof */}
