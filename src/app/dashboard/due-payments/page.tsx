@@ -280,29 +280,29 @@ export default function DuePaymentsPage() {
     if (item.status === 'overdue') {
       const daysOverdue = Math.abs(item.days_until_due);
       message =
-        `Hola ${item.user_name || ''},\n\n` +
-        `⏰ Recordatorio de pago vencido (${daysOverdue} día${daysOverdue !== 1 ? 's' : ''}):\n\n` +
-        `📋 Cuenta: ${item.account_name}\n` +
-        `🏢 Plataforma: ${item.platform_name}\n` +
-        `📅 Vencía: ${formattedDate}\n` +
-        `💰 Tu porcentaje: ${item.percentage}%\n\n` +
-        `Por favor reporta tu pago en la app:\n${appUrl}`;
+        `Hi ${item.user_name || ''},\n\n` +
+        `⏰ Overdue payment reminder (${daysOverdue} day${daysOverdue !== 1 ? 's' : ''}):\n\n` +
+        `📋 Account: ${item.account_name}\n` +
+        `🏢 Platform: ${item.platform_name}\n` +
+        `📅 Was due: ${formattedDate}\n` +
+        `💰 Your percentage: ${item.percentage}%\n\n` +
+        `Please report your payment in the app:\n${appUrl}`;
     } else if (item.status === 'due_today') {
       message =
-        `Hola ${item.user_name || ''},\n\n` +
-        `⏰ Pago vence HOY:\n\n` +
-        `📋 Cuenta: ${item.account_name}\n` +
-        `🏢 Plataforma: ${item.platform_name}\n` +
-        `💰 Tu porcentaje: ${item.percentage}%\n\n` +
-        `No olvides reportar tu pago en la app:\n${appUrl}`;
+        `Hi ${item.user_name || ''},\n\n` +
+        `⏰ Payment is due TODAY:\n\n` +
+        `📋 Account: ${item.account_name}\n` +
+        `🏢 Platform: ${item.platform_name}\n` +
+        `💰 Your percentage: ${item.percentage}%\n\n` +
+        `Don't forget to report your payment in the app:\n${appUrl}`;
     } else {
       message =
-        `Hola ${item.user_name || ''},\n\n` +
-        `📅 Recordatorio de pago próximo (${formattedDate}):\n\n` +
-        `📋 Cuenta: ${item.account_name}\n` +
-        `🏢 Plataforma: ${item.platform_name}\n` +
-        `💰 Tu porcentaje: ${item.percentage}%\n\n` +
-        `Cuando hagas el pago, reportalo aquí:\n${appUrl}`;
+        `Hi ${item.user_name || ''},\n\n` +
+        `📅 Upcoming payment reminder (${formattedDate}):\n\n` +
+        `📋 Account: ${item.account_name}\n` +
+        `🏢 Platform: ${item.platform_name}\n` +
+        `💰 Your percentage: ${item.percentage}%\n\n` +
+        `When you make the payment, report it here:\n${appUrl}`;
     }
 
     const cleanPhone = item.user_phone.replace(/\D/g, '');

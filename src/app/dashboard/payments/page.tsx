@@ -184,13 +184,13 @@ export default function PaymentsPage() {
             const accountName = selectedPayment.account?.full_name || 'your account';
             const platform = selectedPayment.account?.platform?.display_name || '';
             const message =
-              `Hola ${selectedPayment.user?.telegram_first_name || ''},\n\n` +
-              `❌ Tu pago fue rechazado:\n\n` +
-              `📋 Cuenta: ${accountName}\n` +
-              (platform ? `🏢 Plataforma: ${platform}\n` : '') +
-              `💰 Monto: $${Number(selectedPayment.amount_paid || 0).toFixed(2)}\n\n` +
-              `📝 Razón: ${rejectionReason}\n\n` +
-              `Por favor revisa y vuelve a reportar el pago:\n${appUrl}`;
+              `Hi ${selectedPayment.user?.telegram_first_name || ''},\n\n` +
+              `❌ Your payment was rejected:\n\n` +
+              `📋 Account: ${accountName}\n` +
+              (platform ? `🏢 Platform: ${platform}\n` : '') +
+              `💰 Amount: $${Number(selectedPayment.amount_paid || 0).toFixed(2)}\n\n` +
+              `📝 Reason: ${rejectionReason}\n\n` +
+              `Please review and resubmit the payment:\n${appUrl}`;
             const cleanPhone = userPhone.replace(/\D/g, '');
             window.open(`https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`, '_blank');
           }
