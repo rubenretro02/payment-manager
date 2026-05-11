@@ -1,8 +1,7 @@
 'use client';
 
-import { Search, Menu } from 'lucide-react';
+import { Menu } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import {
   DropdownMenu,
@@ -33,18 +32,6 @@ export function Header({ onMenuClick }: HeaderProps) {
       <Button variant="ghost" size="icon" className="lg:hidden" onClick={onMenuClick}>
         <Menu className="h-5 w-5" />
       </Button>
-
-      {/* Search */}
-      <div className="hidden flex-1 md:block">
-        <div className="relative max-w-md">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            type="search"
-            placeholder="Search users, payments..."
-            className="pl-10"
-          />
-        </div>
-      </div>
 
       <div className="flex flex-1 items-center justify-end gap-4">
         {/* User menu */}
