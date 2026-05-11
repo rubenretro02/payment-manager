@@ -1,6 +1,6 @@
 'use client';
 
-import { Bell, Search, Menu } from 'lucide-react';
+import { Search, Menu } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -13,7 +13,6 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useAuth } from '@/hooks/useAuth';
-import { Badge } from '@/components/ui/badge';
 
 interface HeaderProps {
   onMenuClick?: () => void;
@@ -41,23 +40,13 @@ export function Header({ onMenuClick }: HeaderProps) {
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             type="search"
-            placeholder="Buscar agentes, pagos..."
+            placeholder="Search users, payments..."
             className="pl-10"
           />
         </div>
       </div>
 
       <div className="flex flex-1 items-center justify-end gap-4">
-        {/* Notifications */}
-        <Button variant="ghost" size="icon" className="relative">
-          <Bell className="h-5 w-5" />
-          <Badge
-            className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full p-0 text-[10px]"
-          >
-            3
-          </Badge>
-        </Button>
-
         {/* User menu */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -77,16 +66,16 @@ export function Header({ onMenuClick }: HeaderProps) {
                   {user?.telegram_first_name} {user?.telegram_last_name}
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  @{user?.telegram_username || 'usuario'}
+                  @{user?.telegram_username || 'user'}
                 </p>
               </div>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
-            <DropdownMenuItem>Mi perfil</DropdownMenuItem>
-            <DropdownMenuItem>Configuración</DropdownMenuItem>
+            <DropdownMenuItem>My Profile</DropdownMenuItem>
+            <DropdownMenuItem>Settings</DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={logout} className="text-destructive">
-              Cerrar sesión
+              Log out
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
