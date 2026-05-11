@@ -39,6 +39,7 @@ import {
   Search,
   RefreshCw,
   DollarSign,
+  MessageCircle,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
@@ -52,6 +53,7 @@ interface DueAccountInfo {
   user_name: string | null;
   user_username: string | null;
   user_telegram_id: number | null;
+  user_phone: string | null;
   platform_name: string;
   project_name: string | null;
   percentage: number;
@@ -265,6 +267,49 @@ export default function DuePaymentsPage() {
   const canReport = (item: DueAccountInfo) =>
     item.status === 'overdue' || item.status === 'due_today' || item.status === 'due_soon';
 
+  const sendWhatsApp = (item: DueAccountInfo) => {
+    if (!item.user_phone) {
+      toast.error(`${item.user_name || 'User'} has no phone number on file`);
+      return;
+    }
+    const dueDate = new Date(item.next_payment_date);
+    const formattedDate = format(dueDate, 'MMM d, yyyy');
+    const appUrl = typeof window !== 'undefined' ? window.location.origin : 'https://reportpayment.blackgoatt.com';
+
+    let message: string;
+    if (item.status === 'overdue') {
+      const daysOverdue = Math.abs(item.days_until_due);
+      message =
+        `Hola ${item.user_name || ''},\n\n` +
+        `⏰ Recordatorio de pago vencido (${daysOverdue} día${daysOverdue !== 1 ? 's' : ''}):\n\n` +
+        `📋 Cuenta: ${item.account_name}\n` +
+        `🏢 Plataforma: ${item.platform_name}\n` +
+        `📅 Vencía: ${formattedDate}\n` +
+        `💰 Tu porcentaje: ${item.percentage}%\n\n` +
+        `Por favor reporta tu pago en la app:\n${appUrl}`;
+    } else if (item.status === 'due_today') {
+      message =
+        `Hola ${item.user_name || ''},\n\n` +
+        `⏰ Pago vence HOY:\n\n` +
+        `📋 Cuenta: ${item.account_name}\n` +
+        `🏢 Plataforma: ${item.platform_name}\n` +
+        `💰 Tu porcentaje: ${item.percentage}%\n\n` +
+        `No olvides reportar tu pago en la app:\n${appUrl}`;
+    } else {
+      message =
+        `Hola ${item.user_name || ''},\n\n` +
+        `📅 Recordatorio de pago próximo (${formattedDate}):\n\n` +
+        `📋 Cuenta: ${item.account_name}\n` +
+        `🏢 Plataforma: ${item.platform_name}\n` +
+        `💰 Tu porcentaje: ${item.percentage}%\n\n` +
+        `Cuando hagas el pago, reportalo aquí:\n${appUrl}`;
+    }
+
+    const cleanPhone = item.user_phone.replace(/\D/g, '');
+    const encoded = encodeURIComponent(message);
+    window.open(`https://wa.me/${cleanPhone}?text=${encoded}`, '_blank');
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
@@ -417,6 +462,19 @@ export default function DuePaymentsPage() {
                         <Icon className="h-3 w-3" />
                         {cfg.label}
                       </Badge>
+
+                      {(item.status === 'overdue' || item.status === 'due_today' || item.status === 'due_soon') && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => sendWhatsApp(item)}
+                          className={`gap-1 ${item.user_phone ? 'text-green-700 border-green-300 hover:bg-green-50' : 'text-muted-foreground'}`}
+                          title={item.user_phone ? `WhatsApp ${item.user_phone}` : 'No phone on file'}
+                        >
+                          <MessageCircle className="h-3 w-3" />
+                          <span className="hidden sm:inline">WhatsApp</span>
+                        </Button>
+                      )}
 
                       {canReport(item) && (
                         <Button

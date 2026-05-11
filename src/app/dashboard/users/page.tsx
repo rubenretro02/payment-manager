@@ -719,12 +719,14 @@ export default function UsersPage() {
                             <KeyRound className="mr-2 h-4 w-4" />
                             {user.auth_user_id ? 'Reset Password' : 'Set Login Credentials'}
                           </DropdownMenuItem>
-                          {user.phone && (
-                            <DropdownMenuItem onClick={() => sendWhatsAppMessage(user)}>
-                              <MessageCircle className="mr-2 h-4 w-4" />
-                              Send WhatsApp
-                            </DropdownMenuItem>
-                          )}
+                          <DropdownMenuItem
+                            onClick={() => sendWhatsAppMessage(user)}
+                            disabled={!user.phone}
+                            className={!user.phone ? 'opacity-50' : ''}
+                          >
+                            <MessageCircle className="mr-2 h-4 w-4" />
+                            {user.phone ? 'Send WhatsApp' : 'WhatsApp (no phone)'}
+                          </DropdownMenuItem>
                           <DropdownMenuSeparator />
                           {user.status === 'active' ? (
                             <DropdownMenuItem

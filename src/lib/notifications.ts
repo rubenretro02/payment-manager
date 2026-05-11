@@ -242,7 +242,7 @@ export async function sendAdminNotification(
 
   try {
     const message = adminNotificationTemplates[type](data);
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://payment-manager.vercel.app';
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://reportpayment.blackgoatt.com';
 
     // Build inline keyboard for new payment notifications
     let reply_markup: unknown = undefined;

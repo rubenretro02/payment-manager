@@ -10,6 +10,7 @@ interface DueAccountInfo {
   user_name: string | null;
   user_username: string | null;
   user_telegram_id: number | null;
+  user_phone: string | null;
   platform_name: string;
   project_name: string | null;
   percentage: number;
@@ -43,7 +44,7 @@ export async function GET() {
       .from('accounts')
       .select(`
         *,
-        user:users(id, telegram_id, telegram_first_name, telegram_username),
+        user:users(id, telegram_id, telegram_first_name, telegram_username, phone),
         platform:platforms(display_name),
         project:projects(display_name)
       `)
@@ -115,6 +116,7 @@ export async function GET() {
         user_name: account.user?.telegram_first_name || null,
         user_username: account.user?.telegram_username || null,
         user_telegram_id: account.user?.telegram_id || null,
+        user_phone: account.user?.phone || null,
         platform_name: account.platform?.display_name || 'Platform',
         project_name: account.project?.display_name || null,
         percentage: account.percentage,
