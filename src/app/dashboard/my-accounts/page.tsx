@@ -1201,29 +1201,63 @@ export default function MyAccountsPage() {
               const sent = parseFloat(paymentForm.amount_sent || '0');
               const amountMismatch =
                 paymentForm.amount_sent && paymentForm.platform_amount && Math.abs(sent - owed) > 0.001;
-              const isLess = amountMismatch && sent < owed;
-              const isMore = amountMismatch && sent > owed;
+              const isLess = !!amountMismatch && sent < owed;
+              const isMore = !!amountMismatch && sent > owed;
+
+              // Tailwind classes per case (less = yellow warning, more = blue info)
+              const containerClass = isLess
+                ? 'rounded-xl border-2 border-yellow-400 bg-yellow-50 dark:bg-yellow-950/30 p-4'
+                : isMore
+                ? 'rounded-xl border-2 border-blue-400 bg-blue-50 dark:bg-blue-950/30 p-4'
+                : '';
+              const labelClass = isLess
+                ? 'text-base font-bold text-yellow-900 dark:text-yellow-200'
+                : isMore
+                ? 'text-base font-bold text-blue-900 dark:text-blue-200'
+                : '';
+              const helperClass = isLess
+                ? 'text-xs text-yellow-800 dark:text-yellow-300'
+                : isMore
+                ? 'text-xs text-blue-800 dark:text-blue-300'
+                : '';
+              const inputClass = isLess
+                ? 'border-yellow-400 bg-white dark:bg-background min-h-[80px]'
+                : isMore
+                ? 'border-blue-400 bg-white dark:bg-background min-h-[80px]'
+                : '';
+
+              const labelText = isLess
+                ? '⚠️ Explain why you sent LESS *'
+                : isMore
+                ? 'ℹ️ Explain why you sent MORE *'
+                : 'Notes (optional)';
+
+              const helperText = isLess
+                ? "The amount you sent doesn't match what you have to send. Please explain why you are sending less."
+                : isMore
+                ? "The amount you sent is greater than what you have to send. Please explain why you are sending more."
+                : '';
+
+              const placeholder = isLess
+                ? 'e.g. I will pay the difference next week...'
+                : isMore
+                ? 'e.g. I overpaid by mistake, please apply credit...'
+                : 'Any additional information...';
 
               return (
-                <div className={`grid gap-2 ${amountMismatch ? 'rounded-xl border-2 border-yellow-400 bg-yellow-50 dark:bg-yellow-950/30 p-4' : ''}`}>
-                  <Label htmlFor="notes" className={amountMismatch ? 'text-base font-bold text-yellow-900 dark:text-yellow-200' : ''}>
-                    {amountMismatch
-                      ? `⚠️ Explain why you sent ${isLess ? 'LESS' : 'MORE'} *`
-                      : 'Notes (optional)'}
+                <div className={`grid gap-2 ${containerClass}`}>
+                  <Label htmlFor="notes" className={labelClass}>
+                    {labelText}
                   </Label>
-                  {amountMismatch && (
-                    <p className="text-xs text-yellow-800 dark:text-yellow-300">
-                      The amount you sent doesn&apos;t match what you owe. Please explain the reason — this is required.
-                    </p>
+                  {amountMismatch && helperText && (
+                    <p className={helperClass}>{helperText}</p>
                   )}
                   <Textarea
                     id="notes"
-                    placeholder={amountMismatch
-                      ? (isLess ? 'e.g. I will pay the difference next week...' : 'e.g. I overpaid by mistake, please apply credit...')
-                      : 'Any additional information...'}
+                    placeholder={placeholder}
                     value={paymentForm.notes}
                     onChange={(e) => setPaymentForm({ ...paymentForm, notes: e.target.value })}
-                    className={amountMismatch ? 'border-yellow-400 bg-white dark:bg-background min-h-[80px]' : ''}
+                    className={inputClass}
                   />
                 </div>
               );
