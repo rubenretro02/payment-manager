@@ -369,8 +369,14 @@ export async function sendPaymentReminders(): Promise<{
 
     if (!accounts) return results;
 
+    console.log(`[reminders] Eligible accounts (production/nesting): ${accounts.length}`);
+
     for (const account of accounts) {
-      if (!account.user?.telegram_id) continue;
+      if (!account.user?.telegram_id) {
+        console.log(`[reminders] SKIP ${account.full_name} (status=${account.status}) — no telegram_id`);
+        continue;
+      }
+      console.log(`[reminders] Checking ${account.full_name} (status=${account.status}, payment_day=${account.payment_day}, frequency=${account.payment_frequency})`);
 
       // Calculate next payment date in real time (don't rely on stored DB value)
       const frequency: PaymentFrequency = account.payment_frequency || 'weekly';
@@ -387,7 +393,10 @@ export async function sendPaymentReminders(): Promise<{
       );
 
       // Notify if due within 2 days OR overdue (keep nagging until they report)
-      if (daysUntilDue > 2) continue;
+      if (daysUntilDue > 2) {
+        console.log(`[reminders] SKIP ${account.full_name} — daysUntilDue=${daysUntilDue} (more than 2 days away)`);
+        continue;
+      }
 
       // Check if user already submitted/confirmed payment for the current period
       const periodStart = getPeriodStart(frequency, today);
@@ -399,7 +408,12 @@ export async function sendPaymentReminders(): Promise<{
         .gte('created_at', periodStart.toISOString())
         .in('status', ['submitted', 'confirmed']);
 
-      if (existingPayments && existingPayments.length > 0) continue;
+      if (existingPayments && existingPayments.length > 0) {
+        console.log(`[reminders] SKIP ${account.full_name} — already reported this period`);
+        continue;
+      }
+
+      console.log(`[reminders] SEND to ${account.user.telegram_first_name} for ${account.full_name} (daysUntilDue=${daysUntilDue})`);
 
       const success = await sendUserNotification(
         account.user.telegram_id,
