@@ -386,6 +386,16 @@ export default function MyAccountsPage() {
       return;
     }
 
+    // If the amount sent doesn't match what's owed, require an explanation
+    const platformAmt = parseFloat(paymentForm.platform_amount);
+    const expectedOwed = calculateAmountOwed(platformAmt, selectedAccount.percentage);
+    const sentAmt = parseFloat(paymentForm.amount_sent);
+    const hasMismatch = Math.abs(sentAmt - expectedOwed) > 0.001;
+    if (hasMismatch && !paymentForm.notes.trim()) {
+      alert('You sent a different amount than owed. Please explain the reason in the Notes field.');
+      return;
+    }
+
     // Detect if the reference field contains a Base tx hash — server will re-verify
     const refValue = (paymentForm.payment_reference || '').trim();
     const looksLikeTxHash = /^0x[a-fA-F0-9]{64}$/.test(refValue);
@@ -991,9 +1001,6 @@ export default function MyAccountsPage() {
                     ({selectedAccount.percentage}% of ${parseFloat(paymentForm.platform_amount).toFixed(2)})
                   </p>
                 </div>
-                <p className="text-xs text-center text-muted-foreground">
-                  You keep ${(parseFloat(paymentForm.platform_amount) - calculateAmountOwed(parseFloat(paymentForm.platform_amount), selectedAccount.percentage)).toFixed(2)} ({100 - selectedAccount.percentage}%)
-                </p>
               </div>
             )}
 
@@ -1025,11 +1032,11 @@ export default function MyAccountsPage() {
                     <span className="text-green-700 dark:text-green-400">✓ Exact amount</span>
                   ) : parseFloat(paymentForm.amount_sent) < calculateAmountOwed(parseFloat(paymentForm.platform_amount), selectedAccount.percentage) ? (
                     <span className="text-red-600 dark:text-red-400">
-                      ⚠ You sent ${(calculateAmountOwed(parseFloat(paymentForm.platform_amount), selectedAccount.percentage) - parseFloat(paymentForm.amount_sent)).toFixed(2)} LESS than owed
+                      ⚠ You sent ${(calculateAmountOwed(parseFloat(paymentForm.platform_amount), selectedAccount.percentage) - parseFloat(paymentForm.amount_sent)).toFixed(2)} LESS
                     </span>
                   ) : (
                     <span className="text-blue-600 dark:text-blue-400">
-                      +${(parseFloat(paymentForm.amount_sent) - calculateAmountOwed(parseFloat(paymentForm.platform_amount), selectedAccount.percentage)).toFixed(2)} more than required
+                      +${(parseFloat(paymentForm.amount_sent) - calculateAmountOwed(parseFloat(paymentForm.platform_amount), selectedAccount.percentage)).toFixed(2)} MORE than required
                     </span>
                   )}
                 </p>
@@ -1186,16 +1193,41 @@ export default function MyAccountsPage() {
               />
             </div>
 
-            {/* Notes */}
-            <div className="grid gap-2">
-              <Label htmlFor="notes">Notes (optional)</Label>
-              <Textarea
-                id="notes"
-                placeholder="Any additional information..."
-                value={paymentForm.notes}
-                onChange={(e) => setPaymentForm({ ...paymentForm, notes: e.target.value })}
-              />
-            </div>
+            {/* Notes — mandatory when amount doesn't match exactly */}
+            {(() => {
+              const owed = paymentForm.platform_amount && selectedAccount
+                ? calculateAmountOwed(parseFloat(paymentForm.platform_amount), selectedAccount.percentage)
+                : 0;
+              const sent = parseFloat(paymentForm.amount_sent || '0');
+              const amountMismatch =
+                paymentForm.amount_sent && paymentForm.platform_amount && Math.abs(sent - owed) > 0.001;
+              const isLess = amountMismatch && sent < owed;
+              const isMore = amountMismatch && sent > owed;
+
+              return (
+                <div className={`grid gap-2 ${amountMismatch ? 'rounded-xl border-2 border-yellow-400 bg-yellow-50 dark:bg-yellow-950/30 p-4' : ''}`}>
+                  <Label htmlFor="notes" className={amountMismatch ? 'text-base font-bold text-yellow-900 dark:text-yellow-200' : ''}>
+                    {amountMismatch
+                      ? `⚠️ Explain why you sent ${isLess ? 'LESS' : 'MORE'} *`
+                      : 'Notes (optional)'}
+                  </Label>
+                  {amountMismatch && (
+                    <p className="text-xs text-yellow-800 dark:text-yellow-300">
+                      The amount you sent doesn&apos;t match what you owe. Please explain the reason — this is required.
+                    </p>
+                  )}
+                  <Textarea
+                    id="notes"
+                    placeholder={amountMismatch
+                      ? (isLess ? 'e.g. I will pay the difference next week...' : 'e.g. I overpaid by mistake, please apply credit...')
+                      : 'Any additional information...'}
+                    value={paymentForm.notes}
+                    onChange={(e) => setPaymentForm({ ...paymentForm, notes: e.target.value })}
+                    className={amountMismatch ? 'border-yellow-400 bg-white dark:bg-background min-h-[80px]' : ''}
+                  />
+                </div>
+              );
+            })()}
           </div>
           <DialogFooter className="flex-col sm:flex-row gap-2">
             <Button
