@@ -24,12 +24,15 @@ interface DueAccountInfo {
 }
 
 function getPeriodStart(frequency: PaymentFrequency, today: Date): Date {
+  // Tight enough to exclude payments from the previous cycle (which would
+  // otherwise be mistakenly counted when the admin shifts payment_day),
+  // but lenient enough to still include early payments within the cycle.
   const start = new Date(today);
   start.setHours(0, 0, 0, 0);
   switch (frequency) {
-    case 'weekly': start.setDate(start.getDate() - 7); break;
-    case 'biweekly': start.setDate(start.getDate() - 14); break;
-    case 'monthly': start.setDate(start.getDate() - 31); break;
+    case 'weekly': start.setDate(start.getDate() - 5); break;
+    case 'biweekly': start.setDate(start.getDate() - 12); break;
+    case 'monthly': start.setDate(start.getDate() - 20); break;
   }
   return start;
 }

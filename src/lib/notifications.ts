@@ -324,18 +324,20 @@ export async function notifyAdminsNewPayment(data: {
  * period that the upcoming due date belongs to.
  */
 function getPeriodStart(frequency: PaymentFrequency, today: Date): Date {
+  // Match the Due Payments API: short windows so previous-cycle payments
+  // don't leak into the current period (e.g. after an admin shifts day).
   const start = new Date(today);
   start.setHours(0, 0, 0, 0);
 
   switch (frequency) {
     case 'weekly':
-      start.setDate(start.getDate() - 7);
+      start.setDate(start.getDate() - 5);
       break;
     case 'biweekly':
-      start.setDate(start.getDate() - 14);
+      start.setDate(start.getDate() - 12);
       break;
     case 'monthly':
-      start.setDate(start.getDate() - 31);
+      start.setDate(start.getDate() - 20);
       break;
   }
   return start;
