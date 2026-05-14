@@ -1345,6 +1345,137 @@ export default function AccountsPage() {
               </div>
             </div>
 
+            {/* Payment Configuration */}
+            <div className="border-t pt-4 mt-2">
+              <h4 className="font-medium mb-3 flex items-center gap-2">
+                <Calendar className="h-4 w-4" />
+                Payment Configuration
+              </h4>
+              <div className="grid gap-4">
+                <div className="grid gap-2">
+                  <Label>Payment Frequency</Label>
+                  <Select
+                    value={newAccount.payment_frequency}
+                    onValueChange={(value: PaymentFrequency) => {
+                      let defaultDay = 5;
+                      if (value === 'biweekly') defaultDay = 1;
+                      if (value === 'monthly') defaultDay = 1;
+                      setNewAccount({ ...newAccount, payment_frequency: value, payment_day: defaultDay });
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="weekly">Weekly</SelectItem>
+                      <SelectItem value="biweekly">Bi-weekly (1st & 16th)</SelectItem>
+                      <SelectItem value="monthly">Monthly</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {newAccount.payment_frequency === 'weekly' && (
+                  <div className="grid gap-2">
+                    <Label>Payment Day</Label>
+                    <Select
+                      value={String(newAccount.payment_day)}
+                      onValueChange={(value) => setNewAccount({ ...newAccount, payment_day: Number(value) })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="1">Monday</SelectItem>
+                        <SelectItem value="2">Tuesday</SelectItem>
+                        <SelectItem value="3">Wednesday</SelectItem>
+                        <SelectItem value="4">Thursday</SelectItem>
+                        <SelectItem value="5">Friday</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+
+                {newAccount.payment_frequency === 'biweekly' && (
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="grid gap-2">
+                      <Label>First Payment Day</Label>
+                      <Select
+                        value={String(newAccount.biweekly_first_day)}
+                        onValueChange={(value) => setNewAccount({ ...newAccount, biweekly_first_day: Number(value) })}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {Array.from({ length: 28 }, (_, i) => i + 1).map((day) => (
+                            <SelectItem key={day} value={String(day)}>Day {day}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="grid gap-2">
+                      <Label>Second Payment Day</Label>
+                      <Select
+                        value={String(newAccount.biweekly_second_day)}
+                        onValueChange={(value) => setNewAccount({ ...newAccount, biweekly_second_day: Number(value) })}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {Array.from({ length: 28 }, (_, i) => i + 1).map((day) => (
+                            <SelectItem key={day} value={String(day)}>Day {day}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                )}
+
+                {newAccount.payment_frequency === 'monthly' && (
+                  <div className="grid gap-2">
+                    <Label>Day of Month</Label>
+                    <Select
+                      value={String(newAccount.payment_day)}
+                      onValueChange={(value) => setNewAccount({ ...newAccount, payment_day: Number(value) })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {Array.from({ length: 28 }, (_, i) => i + 1).map((day) => (
+                          <SelectItem key={day} value={String(day)}>Day {day}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+
+                <div className="rounded-lg bg-blue-50 dark:bg-blue-950/30 p-3">
+                  <p className="text-sm font-medium text-blue-800 dark:text-blue-300 mb-2">
+                    Upcoming scheduled payments:
+                  </p>
+                  <div className="space-y-1">
+                    {getUpcomingPaymentDates(
+                      newAccount.payment_frequency,
+                      newAccount.payment_day,
+                      3,
+                      new Date(),
+                      newAccount.biweekly_first_day,
+                      newAccount.biweekly_second_day
+                    ).map((date, i) => (
+                      <p key={i} className="text-sm text-blue-700 dark:text-blue-400">
+                        {format(date, "EEEE, MMMM d, yyyy", { locale: enUS })}
+                      </p>
+                    ))}
+                  </div>
+                  <p className="text-xs text-blue-600/70 mt-2">
+                    * Dates adjust automatically for weekends and US holidays
+                  </p>
+                </div>
+              </div>
+            </div>
+
             {/* Crypto Wallet */}
             <div className="border-t pt-4 mt-2">
               <div className="grid gap-3">
