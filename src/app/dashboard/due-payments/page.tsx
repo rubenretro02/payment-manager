@@ -133,7 +133,16 @@ export default function DuePaymentsPage() {
       ]);
       const dueJson = await dueRes.json();
       const methodsJson = await methodsRes.json();
-      if (dueJson.success) setData(dueJson.data);
+      if (dueJson.success) {
+        setData(dueJson.data);
+        const totalFound = dueJson.data?.all?.length || 0;
+        if (totalFound === 0 && showRefreshing) {
+          toast.warning('No accounts found. Check that they have user_id assigned and status is production/nesting/active.');
+        }
+      } else {
+        toast.error(`Due Payments API failed: ${dueJson.error || 'unknown error'}`);
+        console.error('Due Payments API error:', dueJson);
+      }
       if (methodsJson.success) {
         setPaymentMethods((methodsJson.data || []).filter((m: PaymentMethod) => m.is_active));
       }

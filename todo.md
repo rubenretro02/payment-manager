@@ -1,115 +1,126 @@
 # Payment Manager — TODO & Project History
 
-> Historial de cambios y plan de trabajo para el sistema PayManager.
-> Mantén este archivo actualizado conforme avancemos.
+> Historial y plan de trabajo. Mantén este archivo al día conforme avancemos.
 
 ---
 
-## ✅ Hecho (sesión actual)
+## ✅ Hecho
 
 ### Notificaciones automáticas
-- **Cron jobs configurados** en `vercel.json`
-  - `/api/notifications/reminders` → diario 9am EST
-  - `/api/notifications/daily-summary` → diario 8am EST
-- **Bugs arreglados** en `sendPaymentReminders()`:
-  - Calcula `next_payment_date` en tiempo real (ya no depende del campo DB vacío)
-  - Reemplazado `.single()` por query normal (no rompe con 0/varios resultados)
-  - Sin límite de días overdue — sigue mandando hasta que reporten
-  - Verifica pagos en período actual según frecuencia (semanal/biweekly/monthly)
-- **Mensajes reescritos** para enfatizar que el reporte es obligatorio aunque ya pagaron
-- **Endpoints aceptan GET + POST** (Vercel cron usa GET)
+- Cron jobs en `vercel.json` (reminders + daily-summary, daily)
+- `sendPaymentReminders()` arreglado: real-time date calc, no .single(), keep nagging hasta que reporten
+- Mensajes claros pidiendo el reporte aunque ya hayan pagado
+- Endpoints aceptan GET + POST (Vercel cron usa GET)
 
 ### Vista admin de Due Payments
-- Nueva página `/dashboard/due-payments`
-- Endpoint `/api/payments/due` calcula estado en tiempo real
-- 6 categorías: Overdue / Due Today / Due Soon / Upcoming / Reported / Confirmed
-- Botón "Send Reminders" para disparar el cron manualmente
-- Link en Sidebar admin/IBO
+- `/dashboard/due-payments` con 6 categorías
+- Tarjetas clickeables que filtran las tablas
+- Botón "Send Reminders" para disparar cron manual
+- Botón "Report" + dialog para reportar a nombre del user
+- Botón "WhatsApp" por fila con mensaje contextual
 
-### Admin reporta a nombre de user
-- Endpoint `/api/payments/admin-report`
-- Botón "Report" en Due Payments page (overdue/due_today/due_soon)
-- Switch "Auto-confirm" para saltar revisión
-- Marca `admin_notes` para registrar que fue admin quien reportó
+### Reports detallado
+- 4 tabs: Overview, By Account, By User, All Payments
+- Top Underpayers por user
+- Tablas clickeables que abren Payment Details dialog (con screenshots)
+- Filtros via tarjetas superiores
+- Export CSV funcional
 
-### Mini app — bloqueo inteligente del botón Report
-- Una vez reportado: muestra status + View + Add another
-- "View" abre dialog con detalles del reporte (montos, screenshots, notas)
-- "Add another" permite reportar otra vez (pagos en partes, correcciones)
-- Si fue rechazado: vuelve a aparecer "Report Payment" normal
-- Lógica de "período actual" según frecuencia de la cuenta
+### Login con contraseña / web auth
+- Migration `migration-add-email-auth.sql` aplicada
+- Add User dialog con campo password (+ Generate)
+- "Set/Reset Credentials" para users existentes
+- Dialog de "Copy All credentials" para mandárselas
+- Login acepta cualquier role (user/ibo/admin)
+- Auto-link cuando un user con email abre el bot
 
-### Landing page eliminada
-- `/` ahora redirige directo a `/login` cuando no hay sesión
-- Mantiene flujo de Telegram Mini App intacto
+### Wallet + Basescan auto-verificación
+- Migration `migration-add-wallet-address.sql` aplicada
+- Wallet por cuenta en Add/Edit Account
+- API `/api/payments/verify-tx` (verificación manual)
+- API `/api/payments` auto-confirma cuando llega tx con match
+- Auto-scan: escanea wallet por transfers entrantes recientes que matchean el monto
+- Solo se muestra wallet cuando user elige método crypto
 
----
+### Mini app — UX inteligente
+- Botón Report se bloquea después de reportar (View + Add another)
+- Telegram auto-link cuando admin agrega `telegram_username` antes
+- Mensajes WhatsApp pre-llenados contextuales (overdue / due today / soon)
+- Phone field editable, indicador "no phone" en menú
 
-## ⏳ Pendiente — Plan original
-
-### 1. Account name en payments list
-**Estado:** ❌ No empezado
-**Problema:** En `/dashboard/payments` la lista muestra solo `user.telegram_first_name`, no `account.full_name`. En el Payment Details dialog tampoco aparece.
-**Solución:** Agregar `account.full_name` en la fila + en el dialog.
-
-### 2. Reports más detallado por cuenta
-**Estado:** 🔄 En progreso esta sesión
-**Pendiente:**
-- Sección "Breakdown by Account" (cada cuenta con su total recibido vs esperado)
-- Sección "Breakdown by User" (top payers / underpayers)
-- Mostrar nombre de cuenta + plataforma en todas las tablas (no solo user)
-- Diferencia paid vs owed por cada item
-
-### 3. Login con contraseña para users sin Telegram
-**Estado:** ❌ No empezado
-**Pendiente:**
-- Aplicar `migration-add-email-auth.sql` en Supabase
-- Modificar `/login` para aceptar roles `user` e `ibo` (no solo admin)
-- UI en `/dashboard/users` para crear users con email + contraseña
-- Link entre `auth.users` (Supabase Auth) y nuestra tabla `users`
-- Flujo de bienvenida: enviar URL al user con sus credenciales
-
-### 4. Wallet address + Basescan verification
-**Estado:** ❌ No empezado
-**Pendiente:**
-- Aplicar `migration-add-wallet-address.sql` en Supabase
-- Agregar campo `wallet_address` en form de crear/editar cuenta
-- Agregar `crypto` como `PaymentMethod` válido
-- Endpoint que verifica tx hash contra Basescan API
-- UI: cuando user reporta con método crypto, pega tx hash → bot verifica automático
-- Variable nueva: `BASESCAN_API_KEY`
-
-### 5. Bot AI conversacional (futuro)
-**Estado:** ❌ No empezado
-**Idea:** Bot de Telegram que entienda lenguaje natural ("¿quién no pagó?", "confirma pago de Juan").
-**Tecnología sugerida:** Claude API integrada al webhook de Telegram.
-**Variable nueva:** `ANTHROPIC_API_KEY`
+### Limpieza UI
+- Landing page eliminada → redirect directo a `/login`
+- Campanita decorativa eliminada del Header
+- Search duplicado del Header eliminado
+- Todo el texto en inglés (consistente)
+- Bottom nav admin con "More" sheet que expone todas las páginas
+- Webhook Telegram traducido (comandos /report, /mypayments, /status, /help)
 
 ---
 
-## 📋 Pasos manuales pendientes
+## 🐛 Bugs activos
 
-### En Vercel
-- [ ] Agregar variable `CRON_SECRET` (string aleatorio largo)
-- [ ] Verificar que aparezcan los 2 cron jobs en Settings → Cron Jobs
-- [ ] Redeploy si fue necesario
+### Due Payments muestra 0 en todas las categorías
+**Síntoma:** Hay accounts en Accounts page (21 cuentas, varias con Next Payment hoy) pero `/dashboard/due-payments` muestra 0 en todas las categorías.
+**Diagnóstico:** Agregué logging server-side en `/api/payments/due`. Revisar **Vercel → Project → Logs → Functions** después de cargar la página para ver:
+- `[due-payments] Found accounts: N` — debería ser >0
+- `[due-payments] Result counts:` — distribución por categoría
+- Si "Found accounts" es 0: problema de RLS o filtro
+- Si "Found accounts" > 0 pero todo va a `upcoming`: probable issue de fecha/timezone
 
-### En Supabase (cuando hagamos los features)
-- [ ] Ejecutar `migration-add-wallet-address.sql` (antes de feature #4)
-- [ ] Ejecutar `migration-add-email-auth.sql` (antes de feature #3)
-  - **Antes** correr query de duplicados de email para verificar
+**Hipótesis:** El cron usa server time (UTC) y el "today" en el server puede no coincidir con el local. Por ejemplo, si en Vercel son las 11 PM EST = 4 AM UTC del día siguiente, el server piensa que es mañana.
 
-### Variables de entorno pendientes
-| Variable | Cuándo | Dónde conseguirla |
-|----------|--------|-------------------|
-| `CRON_SECRET` | Ahora | Generar string aleatorio |
-| `BASESCAN_API_KEY` | Feature #4 | basescan.org → Account → API Keys |
-| `ANTHROPIC_API_KEY` | Feature #5 | console.anthropic.com → API Keys |
+### Algunos users no reciben reminders
+**Causa identificada:** El cron solo manda a users con `telegram_id` (línea ~350 en `notifications.ts`). Users creados solo con email (sin telegram_id) **nunca reciben Telegram reminders**.
+**Fix futuro:** mandar WhatsApp automático a users con phone (requiere Whapi o similar, $39/mo).
+
+### Reminders solo 1 vez al día
+**Limitación:** Vercel Hobby plan solo permite cron diario (1x/día mínimo).
+**Solución abajo en "Pendiente" → External cron.**
 
 ---
 
-## 🐛 Bugs / Mejoras observadas
-- Falta mostrar nombre de cuenta en las listas de payments confirmed
-- Reports no agrupa por cuenta/user — solo lista todos los pagos
-- Users sin Telegram no pueden entrar al sistema
-- No hay forma de auto-verificar pagos crypto en Base
+## ⏳ Pendiente
+
+### 1. Reminders cada 2-3 horas (cron externo gratis)
+**Setup:**
+1. Crear cuenta en **cron-job.org** (gratis)
+2. New cronjob:
+   - **URL:** `https://reportpayment.blackgoatt.com/api/notifications/reminders`
+   - **Method:** GET
+   - **Schedule:** Every 2 hours, only between 9am-9pm
+     - O cron syntax: `0 13,15,17,19,21,23,1 * * *` (UTC: 9am-9pm EST)
+   - **Headers:**
+     - `Authorization: Bearer <CRON_SECRET>`
+3. Save & enable
+
+**Resultado:** se llamará el endpoint cada 2 horas durante el día. Cada llamada manda reminders solo a quienes están due/overdue y no han reportado.
+
+**Alternativa pagada:** Vercel Pro $20/mo para crons sub-daily (más caro pero menos pieces).
+
+### 2. WhatsApp automático (futuro, costo)
+- Whapi.cloud ($39/mo) para no depender de clicks manuales
+- Twilio WhatsApp Business API (oficial, ~$0.005/msg)
+
+### 3. Bot AI conversacional
+- Claude API integrada al webhook ("¿quién no pagó?", etc.)
+- Variable: `ANTHROPIC_API_KEY`
+
+---
+
+## 📋 Pasos manuales
+
+### En Vercel (Settings → Environment Variables)
+Verificar que existen:
+- [ ] `CRON_SECRET` (string aleatorio)
+- [ ] `BASESCAN_API_KEY`
+- [ ] `NEXT_PUBLIC_APP_URL=https://reportpayment.blackgoatt.com`
+
+### En cron-job.org (setup pending)
+- [ ] Crear cuenta
+- [ ] Cronjob cada 2 horas a `/api/notifications/reminders` con Bearer auth
+
+### Diagnóstico Due Payments
+- [ ] Cargar `/dashboard/due-payments`
+- [ ] Ir a Vercel → Logs → buscar `[due-payments]`
+- [ ] Reportar conteo de accounts encontradas y distribución por categoría

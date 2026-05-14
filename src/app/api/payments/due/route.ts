@@ -40,6 +40,8 @@ export async function GET() {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
+    console.log('[due-payments] Querying accounts. Today:', today.toISOString());
+
     const { data: accounts, error } = await supabase
       .from('accounts')
       .select(`
@@ -52,14 +54,26 @@ export async function GET() {
       .in('status', ['production', 'nesting', 'active']);
 
     if (error) {
-      console.error('Error fetching accounts:', error);
+      console.error('[due-payments] Error fetching accounts:', error);
       return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+    }
+
+    console.log('[due-payments] Found accounts:', accounts?.length || 0);
+    if (accounts && accounts.length > 0) {
+      console.log('[due-payments] Sample account:', {
+        id: accounts[0].id,
+        full_name: accounts[0].full_name,
+        status: accounts[0].status,
+        payment_frequency: accounts[0].payment_frequency,
+        payment_day: accounts[0].payment_day,
+        user_id: accounts[0].user_id,
+      });
     }
 
     if (!accounts) {
       return NextResponse.json({
         success: true,
-        data: { overdue: [], dueToday: [], dueSoon: [], upcoming: [], reported: [], confirmed: [] }
+        data: { overdue: [], dueToday: [], dueSoon: [], upcoming: [], reported: [], confirmed: [], all: [], summary: { overdue: 0, dueToday: 0, dueSoon: 0, upcoming: 0, reported: 0, confirmed: 0 } }
       });
     }
 
@@ -139,6 +153,16 @@ export async function GET() {
       reported: result.filter(r => r.status === 'reported'),
       confirmed: result.filter(r => r.status === 'confirmed'),
     };
+
+    console.log('[due-payments] Result counts:', {
+      total: result.length,
+      overdue: grouped.overdue.length,
+      dueToday: grouped.dueToday.length,
+      dueSoon: grouped.dueSoon.length,
+      upcoming: grouped.upcoming.length,
+      reported: grouped.reported.length,
+      confirmed: grouped.confirmed.length,
+    });
 
     return NextResponse.json({
       success: true,
