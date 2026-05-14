@@ -491,6 +491,70 @@ export async function sendDailySummaryToAdmins(): Promise<void> {
   }
 }
 
+/**
+ * Send a payment reminder to a single account's assigned user.
+ * Used by the admin's per-row 'Remind' button. Skips the daysUntilDue
+ * / already-reported filters because the admin is explicitly choosing
+ * to nudge this account.
+ */
+export async function sendReminderToAccount(
+  accountId: string
+): Promise<{ sent: boolean; userName?: string; error?: string }> {
+  const supabase = createAdminClient();
+
+  const { data: account, error } = await supabase
+    .from('accounts')
+    .select(`
+      *,
+      user:users!user_id(id, telegram_id, telegram_first_name),
+      platform:platforms(display_name)
+    `)
+    .eq('id', accountId)
+    .single();
+
+  if (error || !account) return { sent: false, error: 'Account not found' };
+  if (!account.user?.telegram_id) {
+    return { sent: false, error: 'User has no Telegram linked' };
+  }
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const frequency: PaymentFrequency = account.payment_frequency || 'weekly';
+  const nextPaymentDate = calculateNextPaymentDate(
+    frequency,
+    account.payment_day,
+    today,
+    account.biweekly_first_day,
+    account.biweekly_second_day
+  );
+
+  const daysUntilDue = Math.round(
+    (nextPaymentDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)
+  );
+
+  const success = await sendUserNotification(
+    account.user.telegram_id,
+    daysUntilDue < 0 ? 'payment_overdue' : 'payment_reminder',
+    {
+      accountName: account.full_name,
+      platformName: account.platform?.display_name || 'Platform',
+      dueDate: nextPaymentDate.toLocaleDateString('en-US', {
+        weekday: 'long',
+        month: 'short',
+        day: 'numeric',
+      }),
+      daysUntilDue: Math.max(0, daysUntilDue),
+      percentage: account.percentage,
+    }
+  );
+
+  return {
+    sent: success,
+    userName: account.user.telegram_first_name || undefined,
+  };
+}
+
 // Legacy export for backwards compatibility
 export const sendNotification = sendUserNotification;
 export const notifyAdminNewPayment = notifyAdminsNewPayment;

@@ -171,7 +171,11 @@ export default function DuePaymentsPage() {
   const sendReminders = async () => {
     setSendingReminders(true);
     try {
-      const res = await fetch('/api/notifications/reminders', { method: 'POST' });
+      const res = await fetch('/api/notifications/reminders/manual', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
       const json = await res.json();
       if (json.success) {
         toast.success(json.data.message || 'Reminders sent');
@@ -182,6 +186,33 @@ export default function DuePaymentsPage() {
       toast.error('Failed to send reminders');
     } finally {
       setSendingReminders(false);
+    }
+  };
+
+  const [singleReminderLoading, setSingleReminderLoading] = useState<string | null>(null);
+
+  const sendSingleReminder = async (item: DueAccountInfo) => {
+    if (!item.user_telegram_id) {
+      toast.error(`${item.user_name || 'User'} has no Telegram linked. Use WhatsApp instead.`);
+      return;
+    }
+    setSingleReminderLoading(item.account_id);
+    try {
+      const res = await fetch('/api/notifications/reminders/manual', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ account_id: item.account_id }),
+      });
+      const json = await res.json();
+      if (json.success) {
+        toast.success(json.data.message || `Reminder sent to ${item.user_name || 'user'}`);
+      } else {
+        toast.error(json.error || 'Failed to send reminder');
+      }
+    } catch (error) {
+      toast.error('Failed to send reminder');
+    } finally {
+      setSingleReminderLoading(null);
     }
   };
 
@@ -485,6 +516,24 @@ export default function DuePaymentsPage() {
                         <Icon className="h-3 w-3" />
                         {cfg.label}
                       </Badge>
+
+                      {(item.status === 'overdue' || item.status === 'due_today' || item.status === 'due_soon') && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => sendSingleReminder(item)}
+                          disabled={singleReminderLoading === item.account_id}
+                          className={`gap-1 ${item.user_telegram_id ? 'text-blue-700 border-blue-300 hover:bg-blue-50' : 'text-muted-foreground'}`}
+                          title={item.user_telegram_id ? 'Send Telegram reminder' : 'No Telegram linked'}
+                        >
+                          {singleReminderLoading === item.account_id ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <Bell className="h-3 w-3" />
+                          )}
+                          <span className="hidden sm:inline">Remind</span>
+                        </Button>
+                      )}
 
                       {(item.status === 'overdue' || item.status === 'due_today' || item.status === 'due_soon') && (
                         <Button
