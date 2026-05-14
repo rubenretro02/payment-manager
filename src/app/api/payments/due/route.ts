@@ -46,6 +46,8 @@ export async function GET() {
 
     console.log('[due-payments] Querying accounts. Today:', today.toISOString());
 
+    // Include unassigned accounts too — admin still needs to see them and
+    // report on their behalf. user_id may be null; we handle that downstream.
     const { data: accounts, error } = await supabase
       .from('accounts')
       .select(`
@@ -54,7 +56,6 @@ export async function GET() {
         platform:platforms(display_name),
         project:projects(display_name)
       `)
-      .not('user_id', 'is', null)
       .in('status', ['production', 'nesting']);
 
     if (error) {
@@ -104,16 +105,21 @@ export async function GET() {
       // the math avoids the half-day skew that broke the Due Today bucket.
       nextPaymentDate.setUTCHours(12, 0, 0, 0);
 
-      // Check if there's already a payment for the current period
+      // Check if there's already a payment for the current period.
+      // For unassigned accounts (user_id null), just match on account_id —
+      // any admin-reported payment counts.
       const periodStart = getPeriodStart(frequency, today);
-      const { data: existingPayments } = await supabase
+      let paymentsQuery = supabase
         .from('payments')
         .select('id, status, amount_owed, created_at')
         .eq('account_id', account.id)
-        .eq('user_id', account.user_id)
         .gte('created_at', periodStart.toISOString())
         .in('status', ['submitted', 'confirmed', 'pending'])
         .order('created_at', { ascending: false });
+      if (account.user_id) {
+        paymentsQuery = paymentsQuery.eq('user_id', account.user_id);
+      }
+      const { data: existingPayments } = await paymentsQuery;
 
       const currentPayment = existingPayments?.[0] || null;
 

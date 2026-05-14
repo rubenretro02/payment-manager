@@ -528,12 +528,20 @@ export default function DuePaymentsPage() {
                           )}
                         </div>
                         <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                          <span>{item.user_name || 'Unassigned'}</span>
-                          {item.user_username && (
+                          {item.user_id ? (
                             <>
-                              <span>•</span>
-                              <span>@{item.user_username}</span>
+                              <span>{item.user_name || 'User'}</span>
+                              {item.user_username && (
+                                <>
+                                  <span>•</span>
+                                  <span>@{item.user_username}</span>
+                                </>
+                              )}
                             </>
+                          ) : (
+                            <Badge variant="outline" className="text-xs bg-amber-50 border-amber-300 text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
+                              ⚠ Unassigned — assign a user first
+                            </Badge>
                           )}
                           <span>•</span>
                           <span className="capitalize">{item.payment_frequency}</span>
@@ -560,7 +568,7 @@ export default function DuePaymentsPage() {
                         {cfg.label}
                       </Badge>
 
-                      {(item.status === 'overdue' || item.status === 'due_today' || item.status === 'due_soon') && (
+                      {(item.status === 'overdue' || item.status === 'due_today' || item.status === 'due_soon') && item.user_id && (
                         <Button
                           size="sm"
                           variant="outline"
@@ -578,7 +586,7 @@ export default function DuePaymentsPage() {
                         </Button>
                       )}
 
-                      {(item.status === 'overdue' || item.status === 'due_today' || item.status === 'due_soon') && (
+                      {(item.status === 'overdue' || item.status === 'due_today' || item.status === 'due_soon') && item.user_id && (
                         <Button
                           size="sm"
                           variant="outline"
@@ -591,7 +599,7 @@ export default function DuePaymentsPage() {
                         </Button>
                       )}
 
-                      {canReport(item) && (
+                      {canReport(item) && item.user_id && (
                         <Button
                           size="sm"
                           variant="outline"
@@ -600,6 +608,19 @@ export default function DuePaymentsPage() {
                         >
                           <DollarSign className="h-3 w-3" />
                           Report
+                        </Button>
+                      )}
+
+                      {canReport(item) && !item.user_id && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => router.push('/dashboard/accounts')}
+                          className="gap-1 text-amber-700 border-amber-300 hover:bg-amber-50"
+                          title="Assign a user to this account first"
+                        >
+                          <Send className="h-3 w-3" />
+                          Assign
                         </Button>
                       )}
 
