@@ -161,6 +161,22 @@ export async function GET() {
       confirmed: result.filter(r => r.status === 'confirmed'),
     };
 
+    // Sort 'all' by urgency: overdue first, then today, then soon, then upcoming,
+    // then reported, then confirmed; within each bucket, by date ascending.
+    const statusPriority: Record<DueAccountInfo['status'], number> = {
+      overdue: 0,
+      due_today: 1,
+      due_soon: 2,
+      upcoming: 3,
+      reported: 4,
+      confirmed: 5,
+    };
+    const sortedAll = [...result].sort((a, b) => {
+      const diff = statusPriority[a.status] - statusPriority[b.status];
+      if (diff !== 0) return diff;
+      return a.days_until_due - b.days_until_due;
+    });
+
     console.log('[due-payments] Result counts:', {
       total: result.length,
       overdue: grouped.overdue.length,
@@ -175,7 +191,7 @@ export async function GET() {
       success: true,
       data: {
         ...grouped,
-        all: result,
+        all: sortedAll,
         summary: {
           overdue: grouped.overdue.length,
           dueToday: grouped.dueToday.length,
