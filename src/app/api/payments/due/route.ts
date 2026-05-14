@@ -6,6 +6,7 @@ interface DueAccountInfo {
   account_id: string;
   account_name: string;
   account_email: string;
+  account_status: string;
   user_id: string | null;
   user_name: string | null;
   user_username: string | null;
@@ -136,6 +137,7 @@ export async function GET() {
         account_id: account.id,
         account_name: account.full_name,
         account_email: account.account_email,
+        account_status: account.status,
         user_id: account.user_id,
         user_name: account.user?.telegram_first_name || null,
         user_username: account.user?.telegram_username || null,

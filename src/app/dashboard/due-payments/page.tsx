@@ -49,6 +49,7 @@ interface DueAccountInfo {
   account_id: string;
   account_name: string;
   account_email: string;
+  account_status: string;
   user_id: string | null;
   user_name: string | null;
   user_username: string | null;
@@ -65,6 +66,14 @@ interface DueAccountInfo {
   current_payment_status: string | null;
   amount_owed: number | null;
 }
+
+const accountStatusConfig: Record<string, { label: string; color: string }> = {
+  production: { label: 'Production', color: 'bg-green-100 text-green-800 border-green-300' },
+  nesting: { label: 'Nesting', color: 'bg-yellow-100 text-yellow-800 border-yellow-300' },
+  active: { label: 'Active', color: 'bg-blue-100 text-blue-800 border-blue-300' },
+  drop: { label: 'Drop', color: 'bg-red-100 text-red-800 border-red-300' },
+  not_in_project: { label: 'No Project', color: 'bg-gray-100 text-gray-800 border-gray-300' },
+};
 
 interface DuePaymentsData {
   overdue: DueAccountInfo[];
@@ -430,6 +439,11 @@ export default function DuePaymentsPage() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
                           <p className="font-medium truncate">{item.account_name}</p>
+                          {accountStatusConfig[item.account_status] && (
+                            <Badge variant="outline" className={`shrink-0 text-xs border ${accountStatusConfig[item.account_status].color}`}>
+                              {accountStatusConfig[item.account_status].label}
+                            </Badge>
+                          )}
                           <Badge variant="outline" className="shrink-0 text-xs">
                             {item.platform_name}
                           </Badge>
