@@ -365,7 +365,7 @@ export async function sendPaymentReminders(): Promise<{
         platform:platforms(display_name)
       `)
       .not('user_id', 'is', null)
-      .in('status', ['production', 'nesting', 'active']);
+      .in('status', ['production', 'nesting']);
 
     if (!accounts) return results;
 

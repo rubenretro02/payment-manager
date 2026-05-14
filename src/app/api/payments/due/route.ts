@@ -51,7 +51,7 @@ export async function GET() {
         project:projects(display_name)
       `)
       .not('user_id', 'is', null)
-      .in('status', ['production', 'nesting', 'active']);
+      .in('status', ['production', 'nesting']);
 
     if (error) {
       console.error('[due-payments] Error fetching accounts:', error);
@@ -88,6 +88,11 @@ export async function GET() {
         account.biweekly_first_day,
         account.biweekly_second_day
       );
+
+      // Shift to noon UTC so the calendar date is the same in any timezone
+      // (sending 00:00 UTC means a client in UTC-4 will render it as the
+      // previous calendar day, which was the source of the date mismatch).
+      nextPaymentDate.setUTCHours(12, 0, 0, 0);
 
       const daysUntilDue = Math.ceil(
         (nextPaymentDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)
