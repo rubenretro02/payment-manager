@@ -927,9 +927,9 @@ export default function MyAccountsPage() {
       }}>
         <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Report Payment</DialogTitle>
+            <DialogTitle className="text-xl">Report Payment</DialogTitle>
             <DialogDescription>
-              Submit your payment for {selectedAccount?.full_name}
+              Report a payment for <span className="font-semibold">{selectedAccount?.full_name}</span>
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
@@ -943,65 +943,93 @@ export default function MyAccountsPage() {
               </div>
             </div>
 
-            {/* Company Paid */}
-            <div className="grid gap-2">
-              <Label htmlFor="platform_amount">Company Paid ($) *</Label>
+            {/* STEP 1 — Company paid you */}
+            <div className="rounded-xl border-2 border-blue-300 dark:border-blue-700 bg-blue-50 dark:bg-blue-950/30 p-4 space-y-3">
+              <div>
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="flex h-6 w-6 items-center justify-center rounded-full bg-blue-600 text-white text-sm font-bold">1</span>
+                  <Label htmlFor="platform_amount" className="text-base font-bold text-blue-900 dark:text-blue-200">
+                    How much did the company pay you?
+                  </Label>
+                </div>
+                <p className="text-xs text-blue-700 dark:text-blue-300 ml-8">
+                  Enter the FULL amount {selectedAccount?.platform?.display_name || 'the platform'} paid into your account.
+                </p>
+              </div>
               <Input
                 id="platform_amount"
                 type="number"
                 step="0.01"
-                placeholder="Enter the amount the company paid you"
+                placeholder="0.00"
                 value={paymentForm.platform_amount}
                 onChange={(e) => setPaymentForm({ ...paymentForm, platform_amount: e.target.value })}
+                className="text-2xl font-bold h-14 bg-white dark:bg-background"
               />
             </div>
 
             {/* Screenshot 1: Company Payment Proof */}
             <ImageUploadBox
               type="company"
-              label="Company Payment Screenshot"
+              label="📸 Screenshot of company payment"
               image={companyProofImage}
               inputRef={companyProofInputRef}
               cameraRef={companyCameraInputRef}
             />
 
-            {/* Amount to Send (calculated) */}
+            {/* STEP 2 — You owe (auto-calculated) */}
             {paymentForm.platform_amount && selectedAccount && (
-              <div className="rounded-lg bg-primary/10 p-3 border border-primary/20">
-                <div className="flex justify-between items-center">
-                  <span className="text-sm font-medium">Amount to Send:</span>
-                  <span className="text-lg font-bold text-primary">
-                    ${calculateAmountOwed(parseFloat(paymentForm.platform_amount), selectedAccount.percentage).toFixed(2)}
-                  </span>
+              <div className="rounded-xl border-2 border-orange-300 dark:border-orange-700 bg-orange-50 dark:bg-orange-950/30 p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="flex h-6 w-6 items-center justify-center rounded-full bg-orange-600 text-white text-sm font-bold">2</span>
+                  <span className="text-base font-bold text-orange-900 dark:text-orange-200">You must send to admin:</span>
                 </div>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {selectedAccount.percentage}% of ${parseFloat(paymentForm.platform_amount).toFixed(2)}
+                <div className="text-center my-3">
+                  <p className="text-4xl font-extrabold text-orange-600 dark:text-orange-400">
+                    ${calculateAmountOwed(parseFloat(paymentForm.platform_amount), selectedAccount.percentage).toFixed(2)}
+                  </p>
+                  <p className="text-xs text-orange-700 dark:text-orange-400 mt-1">
+                    ({selectedAccount.percentage}% of ${parseFloat(paymentForm.platform_amount).toFixed(2)})
+                  </p>
+                </div>
+                <p className="text-xs text-center text-muted-foreground">
+                  You keep ${(parseFloat(paymentForm.platform_amount) - calculateAmountOwed(parseFloat(paymentForm.platform_amount), selectedAccount.percentage)).toFixed(2)} ({100 - selectedAccount.percentage}%)
                 </p>
               </div>
             )}
 
-            {/* Amount Sent */}
-            <div className="grid gap-2">
-              <Label htmlFor="amount_sent">Amount Sent ($) *</Label>
+            {/* STEP 3 — Amount you actually sent to admin */}
+            <div className="rounded-xl border-2 border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-950/30 p-4 space-y-3">
+              <div>
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="flex h-6 w-6 items-center justify-center rounded-full bg-green-600 text-white text-sm font-bold">3</span>
+                  <Label htmlFor="amount_sent" className="text-base font-bold text-green-900 dark:text-green-200">
+                    Amount you sent to admin
+                  </Label>
+                </div>
+                <p className="text-xs text-green-700 dark:text-green-300 ml-8">
+                  The amount you actually transferred to the admin&apos;s account/wallet.
+                </p>
+              </div>
               <Input
                 id="amount_sent"
                 type="number"
                 step="0.01"
-                placeholder="Enter the exact amount you sent"
+                placeholder="0.00"
                 value={paymentForm.amount_sent}
                 onChange={(e) => setPaymentForm({ ...paymentForm, amount_sent: e.target.value })}
+                className="text-2xl font-bold h-14 bg-white dark:bg-background"
               />
               {paymentForm.amount_sent && paymentForm.platform_amount && selectedAccount && (
-                <p className="text-xs text-muted-foreground">
+                <p className="text-sm font-semibold text-center">
                   {parseFloat(paymentForm.amount_sent) === calculateAmountOwed(parseFloat(paymentForm.platform_amount), selectedAccount.percentage) ? (
-                    <span className="text-green-600">Exact amount</span>
+                    <span className="text-green-700 dark:text-green-400">✓ Exact amount</span>
                   ) : parseFloat(paymentForm.amount_sent) < calculateAmountOwed(parseFloat(paymentForm.platform_amount), selectedAccount.percentage) ? (
-                    <span className="text-yellow-600">
-                      Difference: -${(calculateAmountOwed(parseFloat(paymentForm.platform_amount), selectedAccount.percentage) - parseFloat(paymentForm.amount_sent)).toFixed(2)}
+                    <span className="text-red-600 dark:text-red-400">
+                      ⚠ You sent ${(calculateAmountOwed(parseFloat(paymentForm.platform_amount), selectedAccount.percentage) - parseFloat(paymentForm.amount_sent)).toFixed(2)} LESS than owed
                     </span>
                   ) : (
-                    <span className="text-blue-600">
-                      Overpaid: +${(parseFloat(paymentForm.amount_sent) - calculateAmountOwed(parseFloat(paymentForm.platform_amount), selectedAccount.percentage)).toFixed(2)}
+                    <span className="text-blue-600 dark:text-blue-400">
+                      +${(parseFloat(paymentForm.amount_sent) - calculateAmountOwed(parseFloat(paymentForm.platform_amount), selectedAccount.percentage)).toFixed(2)} more than required
                     </span>
                   )}
                 </p>
@@ -1105,30 +1133,32 @@ export default function MyAccountsPage() {
                 methodType.includes('usdt');
               if (!isCryptoMethod) return null;
               return (
-                <div className="rounded-lg border-2 border-orange-300 dark:border-orange-700 bg-orange-50 dark:bg-orange-950/30 p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Wallet className="h-4 w-4 text-orange-600" />
-                    <span className="font-medium text-sm">Send to this wallet for {selectedAccount.full_name}</span>
-                    <Badge className="bg-orange-500 text-xs uppercase">{selectedAccount.wallet_network || 'base'}</Badge>
+                <div className="rounded-xl border-2 border-purple-400 dark:border-purple-700 bg-purple-50 dark:bg-purple-950/30 p-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Wallet className="h-5 w-5 text-purple-700 dark:text-purple-300" />
+                    <span className="font-bold text-base text-purple-900 dark:text-purple-200">
+                      Admin&apos;s wallet — SEND YOUR PAYMENT HERE
+                    </span>
+                    <Badge className="bg-purple-600 text-xs uppercase ml-auto">{selectedAccount.wallet_network || 'base'}</Badge>
                   </div>
-                  <div className="flex items-center gap-2 bg-background/80 rounded-md p-2">
-                    <code className="text-xs font-mono flex-1 break-all">
+                  <div className="flex items-center gap-2 bg-white dark:bg-background rounded-lg p-3 border border-purple-200">
+                    <code className="text-sm font-mono flex-1 break-all">
                       {selectedAccount.wallet_address}
                     </code>
                     <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 shrink-0"
+                      variant="default"
+                      size="sm"
+                      className="shrink-0 bg-purple-600 hover:bg-purple-700"
                       onClick={() => copyToClipboard(selectedAccount.wallet_address!, `wallet-${selectedAccount.id}`)}
                     >
                       {copiedId === `wallet-${selectedAccount.id}` ? (
-                        <Check className="h-4 w-4 text-green-600" />
+                        <><Check className="h-4 w-4 mr-1" /> Copied!</>
                       ) : (
-                        <Copy className="h-4 w-4" />
+                        <><Copy className="h-4 w-4 mr-1" /> Copy</>
                       )}
                     </Button>
                   </div>
-                  <p className="text-xs text-orange-700 dark:text-orange-400 mt-2">
+                  <p className="text-xs text-purple-700 dark:text-purple-400 mt-2 font-semibold">
                     ⚠️ Only send {(selectedAccount.wallet_network || 'base').toUpperCase()} network tokens to this address
                   </p>
                 </div>
