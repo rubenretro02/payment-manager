@@ -361,7 +361,7 @@ export async function sendPaymentReminders(): Promise<{
       .from('accounts')
       .select(`
         *,
-        user:users(id, telegram_id, telegram_first_name),
+        user:users!user_id(id, telegram_id, telegram_first_name),
         platform:platforms(display_name)
       `)
       .not('user_id', 'is', null)
@@ -450,7 +450,7 @@ export async function sendDailySummaryToAdmins(): Promise<void> {
     // Get overdue count (simplified - accounts with past due dates and no recent payment)
     const { data: overdueData } = await supabase
       .from('accounts')
-      .select('user:users(telegram_first_name)')
+      .select('user:users!user_id(telegram_first_name)')
       .lt('next_payment_date', new Date().toISOString())
       .not('user_id', 'is', null);
 

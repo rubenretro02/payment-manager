@@ -27,7 +27,7 @@ export async function getAllUsers(): Promise<User[]> {
 
 export async function getAllAccounts(): Promise<Account[]> {
   const supabase = createAdminClient();
-  const { data } = await supabase.from('accounts').select('*, platform:platforms(*), user:users(*)').order('created_at', { ascending: false });
+  const { data } = await supabase.from('accounts').select('*, platform:platforms(*), user:users!user_id(*)').order('created_at', { ascending: false });
   return (data || []) as Account[];
 }
 

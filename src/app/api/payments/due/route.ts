@@ -46,7 +46,7 @@ export async function GET() {
       .from('accounts')
       .select(`
         *,
-        user:users(id, telegram_id, telegram_first_name, telegram_username, phone),
+        user:users!user_id(id, telegram_id, telegram_first_name, telegram_username, phone),
         platform:platforms(display_name),
         project:projects(display_name)
       `)
