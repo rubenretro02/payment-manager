@@ -214,16 +214,21 @@ export default function DashboardPage() {
                   </Avatar>
 
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <p className="font-medium truncate">
-                        {payment.user?.telegram_first_name || 'User'}
+                        {payment.account?.full_name || 'Account'}
                       </p>
                       <Badge variant="outline" className="shrink-0">
                         {payment.account?.platform?.display_name || 'Platform'}
                       </Badge>
                     </div>
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <span>@{payment.user?.telegram_username || 'user'}</span>
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground flex-wrap">
+                      <span className="font-medium text-foreground/80">
+                        {payment.user?.telegram_first_name || 'User'}
+                      </span>
+                      {payment.user?.telegram_username && (
+                        <span>@{payment.user.telegram_username}</span>
+                      )}
                       {payment.submitted_at && (
                         <>
                           <span>•</span>

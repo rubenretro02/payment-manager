@@ -365,16 +365,21 @@ export default function PaymentsPage() {
                       </Avatar>
 
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <p className="font-medium truncate">
-                            {payment.user?.telegram_first_name || 'User'}
+                            {payment.account?.full_name || 'Account'}
                           </p>
                           <Badge variant="outline" className="shrink-0">
                             {payment.account?.platform?.display_name || 'Platform'}
                           </Badge>
                         </div>
-                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                          <span>@{payment.user?.telegram_username || 'user'}</span>
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground flex-wrap">
+                          <span className="font-medium text-foreground/80">
+                            {payment.user?.telegram_first_name || 'User'}
+                          </span>
+                          {payment.user?.telegram_username && (
+                            <span>@{payment.user.telegram_username}</span>
+                          )}
                           {payment.submitted_at && (
                             <>
                               <span>•</span>
@@ -457,7 +462,7 @@ export default function PaymentsPage() {
           <DialogHeader>
             <DialogTitle>Payment Screenshots</DialogTitle>
             <DialogDescription>
-              {selectedPayment?.user?.telegram_first_name} - ${Number(selectedPayment?.amount_owed || 0).toFixed(2)}
+              {selectedPayment?.account?.full_name || 'Account'} — reported by {selectedPayment?.user?.telegram_first_name || 'user'} — ${Number(selectedPayment?.amount_owed || 0).toFixed(2)}
             </DialogDescription>
           </DialogHeader>
 
@@ -694,12 +699,23 @@ export default function PaymentsPage() {
           <DialogHeader>
             <DialogTitle>Payment Details</DialogTitle>
             <DialogDescription>
-              {selectedPayment?.user?.telegram_first_name || 'User'} - {selectedPayment?.account?.platform?.display_name || 'Platform'}
+              {selectedPayment?.account?.full_name || 'Account'} — {selectedPayment?.account?.platform?.display_name || 'Platform'}
             </DialogDescription>
           </DialogHeader>
 
           {selectedPayment && (
             <div className="space-y-4">
+              {/* Reported by */}
+              <div className="rounded-lg bg-muted p-3 text-sm flex items-center justify-between">
+                <span className="text-muted-foreground">Reported by:</span>
+                <span className="font-medium">
+                  {selectedPayment.user?.telegram_first_name || 'User'}
+                  {selectedPayment.user?.telegram_username && (
+                    <span className="text-muted-foreground font-normal"> @{selectedPayment.user.telegram_username}</span>
+                  )}
+                </span>
+              </div>
+
               {/* Status Badge */}
               <div className="flex justify-center">
                 <Badge className={`text-sm px-4 py-1 ${
