@@ -121,7 +121,7 @@ export default function DuePaymentsPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [sendingReminders, setSendingReminders] = useState(false);
-  const [selectedTab, setSelectedTab] = useState<string>('overdue');
+  const [selectedTab, setSelectedTab] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
 
   // Report dialog state
@@ -285,12 +285,20 @@ export default function DuePaymentsPage() {
       const amountPaid = parseFloat(reportForm.amount_paid);
       const amountOwed = (platformAmount * selectedItem.percentage) / 100;
 
+      // For unassigned accounts, attribute the payment to the admin so the
+      // record has a valid user_id; admin_notes will mark it as on-behalf.
+      const effectiveUserId = selectedItem.user_id || adminUser?.id;
+      if (!effectiveUserId) {
+        toast.error('Could not determine a user for this report');
+        setSubmitting(false);
+        return;
+      }
       const res = await fetch('/api/payments/admin-report', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           account_id: selectedItem.account_id,
-          user_id: selectedItem.user_id,
+          user_id: effectiveUserId,
           platform_amount: platformAmount,
           percentage_applied: selectedItem.percentage,
           amount_owed: amountOwed,
@@ -442,18 +450,26 @@ export default function DuePaymentsPage() {
           const cfg = statusConfig[key];
           const count = data?.summary[key === 'due_today' ? 'dueToday' : key === 'due_soon' ? 'dueSoon' : key] || 0;
           const Icon = cfg.icon;
+          const tone = {
+            overdue: { card: 'border-red-300 bg-red-50 dark:bg-red-950/30 hover:border-red-500', text: 'text-red-700 dark:text-red-300', count: 'text-red-700', icon: 'text-red-600', ring: 'ring-red-500' },
+            due_today: { card: 'border-orange-300 bg-orange-50 dark:bg-orange-950/30 hover:border-orange-500', text: 'text-orange-700 dark:text-orange-300', count: 'text-orange-700', icon: 'text-orange-600', ring: 'ring-orange-500' },
+            due_soon: { card: 'border-yellow-300 bg-yellow-50 dark:bg-yellow-950/30 hover:border-yellow-500', text: 'text-yellow-700 dark:text-yellow-300', count: 'text-yellow-700', icon: 'text-yellow-600', ring: 'ring-yellow-500' },
+            upcoming: { card: 'border-blue-300 bg-blue-50 dark:bg-blue-950/30 hover:border-blue-500', text: 'text-blue-700 dark:text-blue-300', count: 'text-blue-700', icon: 'text-blue-600', ring: 'ring-blue-500' },
+            reported: { card: 'border-purple-300 bg-purple-50 dark:bg-purple-950/30 hover:border-purple-500', text: 'text-purple-700 dark:text-purple-300', count: 'text-purple-700', icon: 'text-purple-600', ring: 'ring-purple-500' },
+            confirmed: { card: 'border-green-300 bg-green-50 dark:bg-green-950/30 hover:border-green-500', text: 'text-green-700 dark:text-green-300', count: 'text-green-700', icon: 'text-green-600', ring: 'ring-green-500' },
+          }[key];
           return (
             <Card
               key={key}
-              className={`cursor-pointer transition-all hover:shadow-md active:scale-[0.98] ${selectedTab === key ? 'ring-2 ring-primary' : ''}`}
+              className={`cursor-pointer transition-all hover:shadow-md active:scale-[0.98] border-2 ${tone.card} ${selectedTab === key ? `ring-2 ${tone.ring}` : ''}`}
               onClick={() => setSelectedTab(key)}
             >
               <CardContent className="p-4">
                 <div className="flex items-center justify-between mb-1">
-                  <p className="text-xs text-muted-foreground font-medium">{cfg.label}</p>
-                  <Icon className="h-4 w-4 text-muted-foreground" />
+                  <p className={`text-xs font-semibold ${tone.text}`}>{cfg.label}</p>
+                  <Icon className={`h-4 w-4 ${tone.icon}`} />
                 </div>
-                <p className="text-2xl font-bold">{count}</p>
+                <p className={`text-3xl font-extrabold ${tone.count}`}>{count}</p>
               </CardContent>
             </Card>
           );
@@ -599,7 +615,7 @@ export default function DuePaymentsPage() {
                         </Button>
                       )}
 
-                      {canReport(item) && item.user_id && (
+                      {canReport(item) && (
                         <Button
                           size="sm"
                           variant="outline"
@@ -608,19 +624,6 @@ export default function DuePaymentsPage() {
                         >
                           <DollarSign className="h-3 w-3" />
                           Report
-                        </Button>
-                      )}
-
-                      {canReport(item) && !item.user_id && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => router.push('/dashboard/accounts')}
-                          className="gap-1 text-amber-700 border-amber-300 hover:bg-amber-50"
-                          title="Assign a user to this account first"
-                        >
-                          <Send className="h-3 w-3" />
-                          Assign
                         </Button>
                       )}
 
