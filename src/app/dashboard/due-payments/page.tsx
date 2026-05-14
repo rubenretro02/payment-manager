@@ -40,7 +40,11 @@ import {
   RefreshCw,
   DollarSign,
   MessageCircle,
+  ImageIcon,
+  ExternalLink,
+  Building2,
 } from 'lucide-react';
+import type { Payment } from '@/lib/types';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
@@ -190,6 +194,45 @@ export default function DuePaymentsPage() {
   };
 
   const [singleReminderLoading, setSingleReminderLoading] = useState<string | null>(null);
+
+  // View Payment dialog
+  const [viewPayment, setViewPayment] = useState<Payment | null>(null);
+  const [viewDialogOpen, setViewDialogOpen] = useState(false);
+  const [viewLoading, setViewLoading] = useState(false);
+
+  const openPaymentView = async (paymentId: string) => {
+    setViewDialogOpen(true);
+    setViewLoading(true);
+    setViewPayment(null);
+    try {
+      const res = await fetch(`/api/payments/${paymentId}`);
+      const json = await res.json();
+      if (json.success) {
+        setViewPayment(json.data);
+      } else {
+        toast.error(json.error || 'Failed to load payment');
+        setViewDialogOpen(false);
+      }
+    } catch (error) {
+      toast.error('Failed to load payment');
+      setViewDialogOpen(false);
+    } finally {
+      setViewLoading(false);
+    }
+  };
+
+  const openImageInNewTab = (url: string) => {
+    if (!url) return;
+    if (url.startsWith('data:')) {
+      const w = window.open('', '_blank');
+      if (w) {
+        w.document.write(`<!DOCTYPE html><html><head><title>Screenshot</title><style>body{margin:0;display:flex;justify-content:center;align-items:center;min-height:100vh;background:#1a1a1a}img{max-width:100%;max-height:100vh;object-fit:contain}</style></head><body><img src="${url}"/></body></html>`);
+        w.document.close();
+      }
+    } else {
+      window.open(url, '_blank');
+    }
+  };
 
   const sendSingleReminder = async (item: DueAccountInfo) => {
     if (!item.user_telegram_id) {
@@ -564,7 +607,7 @@ export default function DuePaymentsPage() {
                         <Button
                           size="sm"
                           variant="ghost"
-                          onClick={() => router.push(`/dashboard/payments?payment=${item.current_payment_id}`)}
+                          onClick={() => openPaymentView(item.current_payment_id!)}
                         >
                           View
                         </Button>
@@ -724,6 +767,136 @@ export default function DuePaymentsPage() {
                   Report
                 </>
               )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* View Payment Details Dialog */}
+      <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
+        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Payment Details</DialogTitle>
+            <DialogDescription>
+              {viewPayment?.account?.full_name || 'Account'} — {viewPayment?.account?.platform?.display_name || 'Platform'}
+            </DialogDescription>
+          </DialogHeader>
+
+          {viewLoading && (
+            <div className="flex justify-center py-8">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            </div>
+          )}
+
+          {!viewLoading && viewPayment && (
+            <div className="space-y-4">
+              {/* Status */}
+              <div className="flex justify-center">
+                <Badge className={`text-sm px-4 py-1 ${
+                  viewPayment.status === 'confirmed' ? 'bg-green-100 text-green-800' :
+                  viewPayment.status === 'rejected' ? 'bg-red-100 text-red-800' :
+                  'bg-blue-100 text-blue-800'
+                }`}>
+                  {viewPayment.status === 'submitted' ? 'Awaiting Confirmation' : viewPayment.status}
+                </Badge>
+              </div>
+
+              {/* User & Account */}
+              <div className="rounded-lg bg-muted p-4 space-y-2 text-sm">
+                <div className="flex justify-between"><span className="text-muted-foreground">Reported by:</span><span className="font-medium">{viewPayment.user?.telegram_first_name || '-'}{viewPayment.user?.telegram_username ? ` (@${viewPayment.user.telegram_username})` : ''}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Account:</span><span className="font-medium">{viewPayment.account?.full_name || '-'}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Email:</span><span className="text-xs">{viewPayment.account?.account_email || '-'}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Platform:</span><span>{viewPayment.account?.platform?.display_name || '-'}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Date:</span><span>{format(new Date(viewPayment.created_at), "MMMM d, yyyy 'at' HH:mm")}</span></div>
+              </div>
+
+              {/* Amounts */}
+              <div className="rounded-lg border-2 border-primary/20 bg-primary/5 p-4 space-y-2 text-sm">
+                <div className="flex justify-between"><span className="text-muted-foreground">Platform Earnings:</span><span className="font-medium">${Number(viewPayment.platform_amount || 0).toFixed(2)}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Percentage:</span><span>{viewPayment.percentage_applied}%</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Should Pay:</span><span className="font-bold">${Number(viewPayment.amount_owed || 0).toFixed(2)}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Actually Sent:</span><span className="font-bold text-primary">${Number(viewPayment.amount_paid || 0).toFixed(2)}</span></div>
+                {Number(viewPayment.amount_owed) !== Number(viewPayment.amount_paid) && (
+                  <div className="flex justify-between pt-2 border-t">
+                    <span className="text-muted-foreground">Difference:</span>
+                    <span className={`font-bold ${Number(viewPayment.amount_paid) >= Number(viewPayment.amount_owed) ? 'text-blue-600' : 'text-red-600'}`}>
+                      {Number(viewPayment.amount_paid) >= Number(viewPayment.amount_owed) ? '+' : '-'}
+                      ${Math.abs(Number(viewPayment.amount_paid || 0) - Number(viewPayment.amount_owed || 0)).toFixed(2)}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Method & Reference */}
+              {(viewPayment.payment_method || viewPayment.payment_reference) && (
+                <div className="rounded-lg bg-muted p-3 space-y-1 text-sm">
+                  {viewPayment.payment_method && (
+                    <div className="flex justify-between"><span className="text-muted-foreground">Method:</span><span className="capitalize">{viewPayment.payment_method}</span></div>
+                  )}
+                  {viewPayment.payment_reference && (
+                    <div className="flex justify-between"><span className="text-muted-foreground">Reference:</span><span className="font-mono text-xs break-all">{viewPayment.payment_reference}</span></div>
+                  )}
+                </div>
+              )}
+
+              {/* Screenshots */}
+              {(viewPayment.company_screenshot_url || viewPayment.payment_screenshot_url || viewPayment.screenshot_url) && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {(viewPayment.company_screenshot_url || viewPayment.screenshot_url) && (
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <p className="text-xs text-muted-foreground flex items-center gap-1"><Building2 className="h-3 w-3" /> Company Payment</p>
+                        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => openImageInNewTab((viewPayment.company_screenshot_url || viewPayment.screenshot_url) as string)}>
+                          <ExternalLink className="h-3 w-3" />
+                        </Button>
+                      </div>
+                      <img src={(viewPayment.company_screenshot_url || viewPayment.screenshot_url) as string} alt="Company" className="w-full rounded-lg border" />
+                    </div>
+                  )}
+                  {viewPayment.payment_screenshot_url && (
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <p className="text-xs text-muted-foreground flex items-center gap-1"><Send className="h-3 w-3" /> Payment Sent</p>
+                        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => openImageInNewTab(viewPayment.payment_screenshot_url as string)}>
+                          <ExternalLink className="h-3 w-3" />
+                        </Button>
+                      </div>
+                      <img src={viewPayment.payment_screenshot_url} alt="Payment" className="w-full rounded-lg border" />
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Notes */}
+              {viewPayment.user_notes && (
+                <div className="rounded-lg bg-muted p-3">
+                  <p className="text-xs text-muted-foreground mb-1">User notes:</p>
+                  <p className="text-sm">{viewPayment.user_notes}</p>
+                </div>
+              )}
+              {viewPayment.admin_notes && (
+                <div className="rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 p-3">
+                  <p className="text-xs text-blue-700 dark:text-blue-400 mb-1">Admin notes:</p>
+                  <p className="text-sm">{viewPayment.admin_notes}</p>
+                </div>
+              )}
+              {viewPayment.status === 'rejected' && viewPayment.rejection_reason && (
+                <div className="rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 p-3">
+                  <p className="text-xs text-red-700 dark:text-red-400 font-medium mb-1">Rejection reason:</p>
+                  <p className="text-sm">{viewPayment.rejection_reason}</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          <DialogFooter className="flex-col sm:flex-row gap-2">
+            {viewPayment?.status === 'submitted' && (
+              <Button onClick={() => router.push(`/dashboard/payments?payment=${viewPayment.id}`)} className="w-full sm:w-auto">
+                Review & Confirm in Payments →
+              </Button>
+            )}
+            <Button variant="outline" onClick={() => setViewDialogOpen(false)} className="w-full sm:w-auto">
+              Close
             </Button>
           </DialogFooter>
         </DialogContent>
