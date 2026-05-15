@@ -423,13 +423,15 @@ export async function sendPaymentReminders(): Promise<{
         (today.getTime() - previousPaymentDate.getTime()) / (1000 * 60 * 60 * 24)
       );
 
-      // Only nag for recent misses (max 7 days past previous due)
-      const isOverdue = daysSincePrevious > 0 && daysSincePrevious <= 7;
-      if (daysUntilDue > 2 && !isOverdue) {
+      // Only nag for recent misses (max 7 days past previous due).
+      // BUT if today IS the next payment day, treat as 'reminder for today',
+      // not 'overdue from previous'.
+      const isMissedPrevious = daysSincePrevious > 0 && daysSincePrevious <= 7 && daysUntilDue !== 0;
+      if (daysUntilDue > 2 && !isMissedPrevious) {
         console.log(`[reminders] SKIP ${account.full_name} — daysUntilDue=${daysUntilDue} (more than 2 days away)`);
         continue;
       }
-      if (isOverdue && daysUntilDue > 2) {
+      if (isMissedPrevious && daysUntilDue > 2) {
         daysUntilDue = -daysSincePrevious;
       }
 

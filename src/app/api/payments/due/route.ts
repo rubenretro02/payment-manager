@@ -168,15 +168,15 @@ export async function GET() {
         status = 'confirmed';
       } else if (currentPayment?.status === 'submitted') {
         status = 'reported';
+      } else if (daysUntilDue === 0) {
+        // Today IS the payment day — not overdue yet, the admin still has
+        // until end of day. Takes priority over the missed-previous check.
+        status = 'due_today';
       } else if (!currentPayment && daysSincePrevious > 0 && daysSincePrevious <= 7) {
         // Missed previous cycle (recently) — show overdue with the previous date.
-        // Window capped at 7 days so biweekly/monthly accounts whose previous
-        // due date is far in the past don't all get flagged as overdue.
         status = 'overdue';
         daysUntilDue = -daysSincePrevious;
         displayDate = previousPaymentDate;
-      } else if (daysUntilDue === 0) {
-        status = 'due_today';
       } else if (daysUntilDue <= 7) {
         status = 'due_soon';
       } else {
