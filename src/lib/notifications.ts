@@ -462,6 +462,7 @@ export async function sendPaymentReminders(): Promise<{
             weekday: 'long',
             month: 'short',
             day: 'numeric',
+            timeZone: 'UTC',
           }),
           daysUntilDue: Math.max(0, daysUntilDue),
           percentage: account.percentage,
@@ -552,8 +553,11 @@ export async function sendReminderToAccount(
     return { sent: false, error: 'User has no Telegram linked' };
   }
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  // Use admin's local timezone so Vercel's UTC doesn't roll the date early
+  const todayDateStr = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York',
+  }).format(new Date());
+  const today = new Date(`${todayDateStr}T00:00:00.000Z`);
 
   const frequency: PaymentFrequency = account.payment_frequency || 'weekly';
   const nextPaymentDate = calculateNextPaymentDate(
@@ -578,6 +582,7 @@ export async function sendReminderToAccount(
         weekday: 'long',
         month: 'short',
         day: 'numeric',
+        timeZone: 'UTC',
       }),
       daysUntilDue: Math.max(0, daysUntilDue),
       percentage: account.percentage,
