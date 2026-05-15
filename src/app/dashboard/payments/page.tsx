@@ -32,7 +32,7 @@ import {
   Send,
   ExternalLink,
 } from 'lucide-react';
-import { format } from 'date-fns';
+import { format, startOfDay, startOfWeek, startOfMonth, startOfYear, isAfter, isBefore, endOfDay } from 'date-fns';
 import { useAuth } from '@/hooks/useAuth';
 import type { Payment } from '@/lib/types';
 
@@ -53,6 +53,9 @@ export default function PaymentsPage() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTab, setSelectedTab] = useState(statusFromUrl || 'submitted');
+  const [dateRange, setDateRange] = useState<'today' | 'week' | 'month' | 'year' | 'all' | 'custom'>('month');
+  const [customFrom, setCustomFrom] = useState<string>('');
+  const [customTo, setCustomTo] = useState<string>('');
   const [selectedPayment, setSelectedPayment] = useState<Payment | null>(null);
   const [showDetails, setShowDetails] = useState(false);
   const [showScreenshot, setShowScreenshot] = useState(false);
@@ -102,13 +105,46 @@ export default function PaymentsPage() {
     }
   }
 
-  const filteredPayments = payments.filter((payment) => {
+  // Compute date filter window once per render
+  const dateFilter = (() => {
+    const now = new Date();
+    if (dateRange === 'all') return null;
+    if (dateRange === 'today') return { from: startOfDay(now), to: endOfDay(now) };
+    if (dateRange === 'week') return { from: startOfWeek(now, { weekStartsOn: 1 }), to: endOfDay(now) };
+    if (dateRange === 'month') return { from: startOfMonth(now), to: endOfDay(now) };
+    if (dateRange === 'year') return { from: startOfYear(now), to: endOfDay(now) };
+    if (dateRange === 'custom') {
+      const from = customFrom ? startOfDay(new Date(customFrom + 'T00:00:00')) : null;
+      const to = customTo ? endOfDay(new Date(customTo + 'T00:00:00')) : null;
+      if (!from && !to) return null;
+      return { from, to };
+    }
+    return null;
+  })();
+
+  // First apply date + search filters (stats count from this set)
+  const dateFilteredPayments = payments.filter((payment) => {
     const matchesSearch =
+      !searchQuery ||
       payment.user?.telegram_first_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      payment.user?.telegram_username?.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesTab = selectedTab === 'all' || payment.status === selectedTab;
-    return matchesSearch && matchesTab;
+      payment.user?.telegram_username?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      payment.account?.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      payment.account?.platform?.display_name?.toLowerCase().includes(searchQuery.toLowerCase());
+
+    let matchesDate = true;
+    if (dateFilter) {
+      const created = new Date(payment.created_at);
+      if (dateFilter.from && isBefore(created, dateFilter.from)) matchesDate = false;
+      if (dateFilter.to && isAfter(created, dateFilter.to)) matchesDate = false;
+    }
+
+    return matchesSearch && matchesDate;
   });
+
+  // Then narrow to the selected status tab for the list rendering
+  const filteredPayments = dateFilteredPayments.filter((payment) =>
+    selectedTab === 'all' || payment.status === selectedTab
+  );
 
   const getInitials = (name: string | null | undefined) => {
     if (!name) return '?';
@@ -116,10 +152,10 @@ export default function PaymentsPage() {
   };
 
   const stats = {
-    pending: payments.filter(p => p.status === 'pending').length,
-    submitted: payments.filter(p => p.status === 'submitted').length,
-    confirmed: payments.filter(p => p.status === 'confirmed').length,
-    rejected: payments.filter(p => p.status === 'rejected').length,
+    pending: dateFilteredPayments.filter(p => p.status === 'pending').length,
+    submitted: dateFilteredPayments.filter(p => p.status === 'submitted').length,
+    confirmed: dateFilteredPayments.filter(p => p.status === 'confirmed').length,
+    rejected: dateFilteredPayments.filter(p => p.status === 'rejected').length,
   };
 
   // Check if payment has any screenshots
@@ -265,6 +301,50 @@ export default function PaymentsPage() {
           Export
         </Button>
       </div>
+
+      {/* Date filter */}
+      <Card>
+        <CardContent className="p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+              <Clock className="h-4 w-4" />
+              Filter by date:
+            </div>
+            <div className="flex flex-wrap gap-2 items-center">
+              <Tabs value={dateRange} onValueChange={(v) => setDateRange(v as typeof dateRange)}>
+                <TabsList>
+                  <TabsTrigger value="today">Today</TabsTrigger>
+                  <TabsTrigger value="week">This Week</TabsTrigger>
+                  <TabsTrigger value="month">This Month</TabsTrigger>
+                  <TabsTrigger value="year">This Year</TabsTrigger>
+                  <TabsTrigger value="custom">Custom</TabsTrigger>
+                  <TabsTrigger value="all">All</TabsTrigger>
+                </TabsList>
+              </Tabs>
+              {dateRange === 'custom' && (
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="date"
+                    value={customFrom}
+                    onChange={(e) => setCustomFrom(e.target.value)}
+                    className="w-[150px]"
+                  />
+                  <span className="text-muted-foreground text-sm">to</span>
+                  <Input
+                    type="date"
+                    value={customTo}
+                    onChange={(e) => setCustomTo(e.target.value)}
+                    className="w-[150px]"
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground mt-2">
+            Showing {filteredPayments.length} payment{filteredPayments.length !== 1 ? 's' : ''} in selected range
+          </p>
+        </CardContent>
+      </Card>
 
       {/* Stats */}
       <div className="grid gap-4 md:grid-cols-4">
