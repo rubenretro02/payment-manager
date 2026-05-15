@@ -390,14 +390,44 @@ export async function sendPaymentReminders(): Promise<{
         account.biweekly_second_day
       );
 
-      const daysUntilDue = Math.ceil(
+      // Previous scheduled due date — for detecting missed cycles
+      const previousPaymentDate = new Date(nextPaymentDate);
+      switch (frequency) {
+        case 'weekly':
+          previousPaymentDate.setDate(previousPaymentDate.getDate() - 7);
+          break;
+        case 'biweekly': {
+          const firstDay = account.biweekly_first_day ?? 1;
+          const secondDay = account.biweekly_second_day ?? 16;
+          if (nextPaymentDate.getDate() === firstDay) {
+            previousPaymentDate.setMonth(previousPaymentDate.getMonth() - 1);
+            previousPaymentDate.setDate(secondDay);
+          } else {
+            previousPaymentDate.setDate(firstDay);
+          }
+          break;
+        }
+        case 'monthly':
+          previousPaymentDate.setMonth(previousPaymentDate.getMonth() - 1);
+          break;
+      }
+
+      let daysUntilDue = Math.round(
         (nextPaymentDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)
       );
+      const daysSincePrevious = Math.round(
+        (today.getTime() - previousPaymentDate.getTime()) / (1000 * 60 * 60 * 24)
+      );
 
-      // Notify if due within 2 days OR overdue (keep nagging until they report)
-      if (daysUntilDue > 2) {
+      // If next is too far AND we don't have an overdue previous, skip
+      const isOverdue = daysSincePrevious > 0 && daysSincePrevious <= 30;
+      if (daysUntilDue > 2 && !isOverdue) {
         console.log(`[reminders] SKIP ${account.full_name} — daysUntilDue=${daysUntilDue} (more than 2 days away)`);
         continue;
+      }
+      // When we're treating it as overdue from previous, flip the sign
+      if (isOverdue && daysUntilDue > 2) {
+        daysUntilDue = -daysSincePrevious;
       }
 
       // Check if user already submitted/confirmed payment for the current period

@@ -94,16 +94,40 @@ export async function GET() {
         account.biweekly_second_day
       );
 
-      // Calculate daysUntilDue BEFORE shifting timezone — both today and
-      // nextPaymentDate start at midnight here, so the diff is whole days.
-      const daysUntilDue = Math.round(
+      // Also compute the PREVIOUS scheduled due date so we can detect
+      // a missed cycle (e.g. it was due yesterday, never reported, and
+      // the calculator already advanced to next week).
+      const previousPaymentDate = new Date(nextPaymentDate);
+      switch (frequency) {
+        case 'weekly':
+          previousPaymentDate.setDate(previousPaymentDate.getDate() - 7);
+          break;
+        case 'biweekly': {
+          const firstDay = account.biweekly_first_day ?? 1;
+          const secondDay = account.biweekly_second_day ?? 16;
+          if (nextPaymentDate.getDate() === firstDay) {
+            previousPaymentDate.setMonth(previousPaymentDate.getMonth() - 1);
+            previousPaymentDate.setDate(secondDay);
+          } else {
+            previousPaymentDate.setDate(firstDay);
+          }
+          break;
+        }
+        case 'monthly':
+          previousPaymentDate.setMonth(previousPaymentDate.getMonth() - 1);
+          break;
+      }
+
+      let daysUntilDue = Math.round(
         (nextPaymentDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)
       );
+      const daysSincePrevious = Math.round(
+        (today.getTime() - previousPaymentDate.getTime()) / (1000 * 60 * 60 * 24)
+      );
 
-      // Shift to noon UTC so the calendar date renders correctly in any
-      // timezone west of UTC when the client formats it. Doing this AFTER
-      // the math avoids the half-day skew that broke the Due Today bucket.
+      // Shift both dates to noon UTC so the calendar date renders correctly
       nextPaymentDate.setUTCHours(12, 0, 0, 0);
+      previousPaymentDate.setUTCHours(12, 0, 0, 0);
 
       // Check if there's already a payment for the current period.
       // For unassigned accounts (user_id null), just match on account_id —
@@ -123,14 +147,20 @@ export async function GET() {
 
       const currentPayment = existingPayments?.[0] || null;
 
-      // Determine status
+      // Determine status. When there's no payment and the previous due date
+      // already passed without one, this account is overdue from THAT date —
+      // not 'due_soon' for next week.
       let status: DueAccountInfo['status'];
+      let displayDate = nextPaymentDate;
       if (currentPayment?.status === 'confirmed') {
         status = 'confirmed';
       } else if (currentPayment?.status === 'submitted') {
         status = 'reported';
-      } else if (daysUntilDue < 0) {
+      } else if (!currentPayment && daysSincePrevious > 0 && daysSincePrevious <= 30) {
+        // Missed previous cycle — show overdue with the previous due date
         status = 'overdue';
+        daysUntilDue = -daysSincePrevious;
+        displayDate = previousPaymentDate;
       } else if (daysUntilDue === 0) {
         status = 'due_today';
       } else if (daysUntilDue <= 7) {
@@ -153,7 +183,7 @@ export async function GET() {
         project_name: account.project?.display_name || null,
         percentage: account.percentage,
         payment_frequency: frequency,
-        next_payment_date: nextPaymentDate.toISOString(),
+        next_payment_date: displayDate.toISOString(),
         days_until_due: daysUntilDue,
         status,
         current_payment_id: currentPayment?.id || null,
