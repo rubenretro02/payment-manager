@@ -45,7 +45,7 @@ import {
   Building2,
 } from 'lucide-react';
 import type { Payment } from '@/lib/types';
-import { format } from 'date-fns';
+import { format, startOfDay, startOfWeek, startOfMonth, startOfYear, endOfDay, isAfter, isBefore } from 'date-fns';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 
@@ -123,6 +123,9 @@ export default function DuePaymentsPage() {
   const [sendingReminders, setSendingReminders] = useState(false);
   const [selectedTab, setSelectedTab] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [dateRange, setDateRange] = useState<'today' | 'week' | 'month' | 'year' | 'all' | 'custom'>('all');
+  const [customFrom, setCustomFrom] = useState<string>('');
+  const [customTo, setCustomTo] = useState<string>('');
 
   // Report dialog state
   const [reportDialogOpen, setReportDialogOpen] = useState(false);
@@ -353,15 +356,43 @@ export default function DuePaymentsPage() {
     return map[selectedTab] || [];
   };
 
+  // Date filter window (filters by next_payment_date)
+  const dateFilter = (() => {
+    const now = new Date();
+    if (dateRange === 'all') return null;
+    if (dateRange === 'today') return { from: startOfDay(now), to: endOfDay(now) };
+    if (dateRange === 'week') return { from: startOfWeek(now, { weekStartsOn: 1 }), to: endOfDay(now) };
+    if (dateRange === 'month') return { from: startOfMonth(now), to: endOfDay(now) };
+    if (dateRange === 'year') return { from: startOfYear(now), to: endOfDay(now) };
+    if (dateRange === 'custom') {
+      const from = customFrom ? startOfDay(new Date(customFrom + 'T00:00:00')) : null;
+      const to = customTo ? endOfDay(new Date(customTo + 'T00:00:00')) : null;
+      if (!from && !to) return null;
+      return { from, to };
+    }
+    return null;
+  })();
+
   const filteredList = getList().filter(item => {
-    if (!searchQuery) return true;
-    const q = searchQuery.toLowerCase();
-    return (
-      item.account_name?.toLowerCase().includes(q) ||
-      item.user_name?.toLowerCase().includes(q) ||
-      item.platform_name?.toLowerCase().includes(q) ||
-      item.account_email?.toLowerCase().includes(q)
-    );
+    // Search filter
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      const matchesSearch =
+        item.account_name?.toLowerCase().includes(q) ||
+        item.user_name?.toLowerCase().includes(q) ||
+        item.platform_name?.toLowerCase().includes(q) ||
+        item.account_email?.toLowerCase().includes(q);
+      if (!matchesSearch) return false;
+    }
+
+    // Date filter
+    if (dateFilter) {
+      const d = new Date(item.next_payment_date);
+      if (dateFilter.from && isBefore(d, dateFilter.from)) return false;
+      if (dateFilter.to && isAfter(d, dateFilter.to)) return false;
+    }
+
+    return true;
   });
 
   const canReport = (item: DueAccountInfo) =>
@@ -443,6 +474,52 @@ export default function DuePaymentsPage() {
           </Button>
         </div>
       </div>
+
+      {/* Date filter */}
+      <Card>
+        <CardContent className="p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+              <Clock className="h-4 w-4" />
+              Filter by next payment date:
+            </div>
+            <div className="flex flex-wrap gap-2 items-center">
+              <Tabs value={dateRange} onValueChange={(v) => setDateRange(v as typeof dateRange)}>
+                <TabsList>
+                  <TabsTrigger value="today">Today</TabsTrigger>
+                  <TabsTrigger value="week">This Week</TabsTrigger>
+                  <TabsTrigger value="month">This Month</TabsTrigger>
+                  <TabsTrigger value="year">This Year</TabsTrigger>
+                  <TabsTrigger value="custom">Custom</TabsTrigger>
+                  <TabsTrigger value="all">All</TabsTrigger>
+                </TabsList>
+              </Tabs>
+              {dateRange === 'custom' && (
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="date"
+                    value={customFrom}
+                    onChange={(e) => setCustomFrom(e.target.value)}
+                    className="w-[150px]"
+                  />
+                  <span className="text-muted-foreground text-sm">to</span>
+                  <Input
+                    type="date"
+                    value={customTo}
+                    onChange={(e) => setCustomTo(e.target.value)}
+                    className="w-[150px]"
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+          {dateRange !== 'all' && (
+            <p className="text-xs text-muted-foreground mt-2">
+              Showing {filteredList.length} of {data?.all?.length || 0} accounts in selected range
+            </p>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Stats Cards */}
       <div className="grid gap-3 grid-cols-2 md:grid-cols-3 lg:grid-cols-6">

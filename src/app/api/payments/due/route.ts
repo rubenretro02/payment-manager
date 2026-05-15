@@ -156,8 +156,10 @@ export async function GET() {
         status = 'confirmed';
       } else if (currentPayment?.status === 'submitted') {
         status = 'reported';
-      } else if (!currentPayment && daysSincePrevious > 0 && daysSincePrevious <= 30) {
-        // Missed previous cycle — show overdue with the previous due date
+      } else if (!currentPayment && daysSincePrevious > 0 && daysSincePrevious <= 7) {
+        // Missed previous cycle (recently) — show overdue with the previous date.
+        // Window capped at 7 days so biweekly/monthly accounts whose previous
+        // due date is far in the past don't all get flagged as overdue.
         status = 'overdue';
         daysUntilDue = -daysSincePrevious;
         displayDate = previousPaymentDate;
