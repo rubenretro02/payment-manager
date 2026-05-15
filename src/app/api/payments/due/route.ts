@@ -38,13 +38,25 @@ function getPeriodStart(frequency: PaymentFrequency, today: Date): Date {
   return start;
 }
 
+/**
+ * Returns "today's calendar date in America/New_York" represented as
+ * midnight UTC. Avoids the bug where a Vercel function running in UTC
+ * thinks it's already tomorrow before the admin's local day is over.
+ */
+function getLocalToday(): Date {
+  const now = new Date();
+  const dateStr = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York',
+  }).format(now); // "2026-05-14"
+  return new Date(`${dateStr}T00:00:00.000Z`);
+}
+
 export async function GET() {
   try {
     const supabase = createAdminClient();
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const today = getLocalToday();
 
-    console.log('[due-payments] Querying accounts. Today:', today.toISOString());
+    console.log('[due-payments] Querying accounts. Today (NY local):', today.toISOString());
 
     // Include unassigned accounts too — admin still needs to see them and
     // report on their behalf. user_id may be null; we handle that downstream.

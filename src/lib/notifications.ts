@@ -356,8 +356,12 @@ export async function sendPaymentReminders(): Promise<{
   const results = { sent: 0, failed: 0, users: [] as string[] };
 
   try {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    // Use admin's local timezone so "today" matches their calendar day,
+    // not the Vercel server's UTC.
+    const todayDateStr = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/New_York',
+    }).format(new Date());
+    const today = new Date(`${todayDateStr}T00:00:00.000Z`);
 
     const { data: accounts } = await supabase
       .from('accounts')
