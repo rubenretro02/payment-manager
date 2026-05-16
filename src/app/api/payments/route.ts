@@ -37,6 +37,7 @@ export async function POST(request: NextRequest) {
           .single();
 
         const isBaseWallet = account?.wallet_address && (account.wallet_network || 'base') === 'base';
+        console.log('[auto-verify] account_id', body.account_id, 'wallet:', account?.wallet_address, 'network:', account?.wallet_network, 'isBaseWallet:', isBaseWallet, 'amount_paid:', body.amount_paid);
 
         if (isBaseWallet) {
           // Path 1: explicit tx hash provided
@@ -77,7 +78,7 @@ export async function POST(request: NextRequest) {
             const match = await findRecentIncomingMatch({
               walletAddress: account.wallet_address,
               expectedAmountUsd: Number(body.amount_paid),
-              hoursBack: 72,
+              // hoursBack/tolerance use the wider defaults (7d / $1) now
               excludeHashes,
             });
 
@@ -87,14 +88,16 @@ export async function POST(request: NextRequest) {
               body.payment_reference = match.tx_hash;
               body.admin_notes = `[AUTO-CONFIRMED via wallet scan] Matched ${match.amount_usd?.toFixed(2)} ${match.token_symbol} incoming to ${account.wallet_address.slice(0, 10)}...${account.wallet_address.slice(-6)}. From: ${match.from?.slice(0, 10)}...`;
               autoConfirmed = true;
-              console.log('Payment auto-confirmed via wallet scan:', match.tx_hash);
+              console.log('[auto-verify] AUTO-CONFIRMED via wallet scan:', match.tx_hash);
             } else {
-              console.log('Wallet scan found no match:', match);
+              console.log('[auto-verify] no match. Reason:', match.error || `candidates=${match.candidates_count || 0}`);
             }
           }
+        } else {
+          console.log('[auto-verify] Skipping — wallet not configured or not Base network');
         }
       } catch (verifyError) {
-        console.error('Server-side verification error (non-fatal):', verifyError);
+        console.error('[auto-verify] Server-side verification error (non-fatal):', verifyError);
       }
     }
 

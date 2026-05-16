@@ -13,8 +13,11 @@ const BASE_CHAIN_ID = 8453;
 const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
 
 // Known stablecoin contracts on Base (lowercased for comparison)
+// Both native USDC and the older bridged USDC (USDbC) are supported because
+// some fintech apps (Coinbase Wallet, some Pana flows) still emit USDbC.
 const KNOWN_TOKENS: Record<string, { symbol: string; decimals: number }> = {
   '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913': { symbol: 'USDC', decimals: 6 },
+  '0xd9aaec86b65d86f6a7b5b1b0c42ffa531710b6ca': { symbol: 'USDbC', decimals: 6 },
   '0xfde4c96c8593536e31f229ea8f37b2ada2699bb2': { symbol: 'USDT', decimals: 6 },
   '0x50c5725949a6f0c72e6c4a641f24049a917db0cb': { symbol: 'DAI', decimals: 18 },
 };
@@ -233,63 +236,87 @@ interface TokenTxItem {
 
 export async function findRecentIncomingMatch(opts: FindRecentMatchOptions): Promise<RecentMatchResult> {
   const wallet = opts.walletAddress.toLowerCase();
-  const hoursBack = opts.hoursBack ?? 72;
-  const tolerance = opts.tolerance ?? 0.5;
+  // 7-day default window — fintech apps (Pana etc.) sometimes settle late
+  const hoursBack = opts.hoursBack ?? 168;
+  // 1 USD default tolerance — covers fees/conversion the user can't predict
+  const tolerance = opts.tolerance ?? 1.0;
   const excludeSet = new Set((opts.excludeHashes || []).map(h => h.toLowerCase()));
-  const stablecoins = Object.keys(KNOWN_TOKENS); // lowercased
+  const stablecoins = Object.keys(KNOWN_TOKENS);
   const allowedContracts = new Set(
     (opts.tokenContracts || stablecoins).map(c => c.toLowerCase())
   );
 
   try {
+    if (!process.env.BASESCAN_API_KEY) {
+      console.error('[basescan] BASESCAN_API_KEY not set');
+      return { found: false, error: 'BASESCAN_API_KEY not configured' };
+    }
+
     const url = buildUrl({
       module: 'account',
       action: 'tokentx',
       address: wallet,
       page: '1',
-      offset: '100',
+      offset: '200',
       sort: 'desc',
     });
     const res = await fetch(url, { cache: 'no-store' });
     if (!res.ok) {
+      console.error(`[basescan] HTTP ${res.status} fetching ${url}`);
       return { found: false, error: `Basescan HTTP ${res.status}` };
     }
     const json = await res.json() as { status?: string; message?: string; result?: TokenTxItem[] };
 
     if (!Array.isArray(json.result)) {
+      console.error('[basescan] non-array result:', json);
       return { found: false, error: json.message || 'No data from Basescan' };
     }
 
+    console.log(`[basescan] Wallet ${wallet.slice(0, 10)}... has ${json.result.length} recent token transfers, looking for ~$${opts.expectedAmountUsd} within ${hoursBack}h`);
+
     const cutoffSec = Math.floor(Date.now() / 1000) - hoursBack * 3600;
     const candidates: Array<{ item: TokenTxItem; amountUsd: number; diff: number; ts: number }> = [];
+    const rejected: { tooOld: number; wrongToken: number; excluded: number; tooLittle: number } = {
+      tooOld: 0, wrongToken: 0, excluded: 0, tooLittle: 0,
+    };
 
     for (const item of json.result) {
       if (item.to?.toLowerCase() !== wallet) continue;
-      if (excludeSet.has(item.hash.toLowerCase())) continue;
-      const contract = item.contractAddress.toLowerCase();
-      if (!allowedContracts.has(contract)) continue;
 
       const ts = parseInt(item.timeStamp, 10);
-      if (Number.isNaN(ts) || ts < cutoffSec) continue;
+      if (Number.isNaN(ts) || ts < cutoffSec) { rejected.tooOld++; continue; }
+
+      const contract = item.contractAddress.toLowerCase();
+      if (!allowedContracts.has(contract)) {
+        console.log(`[basescan] Unknown token at ${item.hash.slice(0, 10)}...: ${item.tokenSymbol || contract}`);
+        rejected.wrongToken++;
+        continue;
+      }
+
+      if (excludeSet.has(item.hash.toLowerCase())) { rejected.excluded++; continue; }
 
       const decimals = parseInt(item.tokenDecimal, 10) || KNOWN_TOKENS[contract]?.decimals || 18;
       const amountUsd = formatTokenAmount(item.value, decimals);
 
       const diff = amountUsd - opts.expectedAmountUsd;
-      // accept exact-or-over, or under by up to `tolerance`
       if (diff >= -tolerance) {
         candidates.push({ item, amountUsd, diff: Math.abs(diff), ts });
+      } else {
+        rejected.tooLittle++;
+        console.log(`[basescan] Amount too low: $${amountUsd.toFixed(2)} vs expected $${opts.expectedAmountUsd} (diff $${diff.toFixed(2)})`);
       }
     }
 
     if (candidates.length === 0) {
+      console.log(`[basescan] No match. Rejected counts:`, rejected);
       return { found: false, candidates_count: 0 };
     }
 
-    // Prefer the candidate with the smallest amount diff; tiebreak by most recent
     candidates.sort((a, b) => a.diff - b.diff || b.ts - a.ts);
     const best = candidates[0];
     const tokenInfo = KNOWN_TOKENS[best.item.contractAddress.toLowerCase()];
+
+    console.log(`[basescan] MATCHED ${best.amountUsd} ${tokenInfo?.symbol || best.item.tokenSymbol} tx ${best.item.hash}`);
 
     return {
       found: true,
@@ -304,6 +331,7 @@ export async function findRecentIncomingMatch(opts: FindRecentMatchOptions): Pro
       candidates_count: candidates.length,
     };
   } catch (error) {
+    console.error('[basescan] findRecentIncomingMatch error:', error);
     return {
       found: false,
       error: error instanceof Error ? error.message : 'Unknown error',
