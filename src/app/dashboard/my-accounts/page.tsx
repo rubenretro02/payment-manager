@@ -273,6 +273,52 @@ export default function MyAccountsPage() {
     );
   };
 
+  /**
+   * Detect a missed previous cycle for this account — mirrors the admin
+   * Due Payments logic so the user sees the same overdue indicator the
+   * admin sees, with the previous due date (not the next one).
+   */
+  const getOverdueInfo = (account: Account): { isOverdue: boolean; missedDate: Date | null; daysOverdue: number } => {
+    const frequency = account.payment_frequency || 'weekly';
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const nextPaymentDate = getNextPayment(account);
+
+    // No payment record check here — we're just showing the user the
+    // visual indicator. If they already reported, the 'Reported' state
+    // elsewhere on the card hides this.
+    const previousPaymentDate = new Date(nextPaymentDate);
+    if (frequency === 'weekly') {
+      previousPaymentDate.setDate(previousPaymentDate.getDate() - 7);
+    } else if (frequency === 'biweekly') {
+      const firstDay = account.biweekly_first_day ?? 1;
+      const secondDay = account.biweekly_second_day ?? 16;
+      if (nextPaymentDate.getDate() === firstDay) {
+        previousPaymentDate.setMonth(previousPaymentDate.getMonth() - 1);
+        previousPaymentDate.setDate(secondDay);
+      } else {
+        previousPaymentDate.setDate(firstDay);
+      }
+    } else {
+      previousPaymentDate.setMonth(previousPaymentDate.getMonth() - 1);
+    }
+
+    const daysSincePrevious = Math.round(
+      (today.getTime() - previousPaymentDate.getTime()) / (1000 * 60 * 60 * 24)
+    );
+    const daysUntilNext = Math.round(
+      (nextPaymentDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)
+    );
+    // Only flag as overdue if the previous due slipped 1-7 days ago AND
+    // today is NOT the next payment day (in which case the user is on time).
+    const isOverdue = daysSincePrevious > 0 && daysSincePrevious <= 7 && daysUntilNext !== 0;
+    return {
+      isOverdue,
+      missedDate: isOverdue ? previousPaymentDate : null,
+      daysOverdue: isOverdue ? daysSincePrevious : 0,
+    };
+  };
+
   const calculateAmountOwed = (platformAmount: number, percentage: number) => {
     return (platformAmount * percentage) / 100;
   };
@@ -798,9 +844,12 @@ export default function MyAccountsPage() {
             const StatusIcon = statusIcons[account.status] || Briefcase;
             const nextPayment = getNextPayment(account);
             const isPaymentDue = nextPayment <= new Date();
+            const overdueInfo = getOverdueInfo(account);
+            const currentReport = getCurrentPeriodReport(account);
+            const showOverdueBanner = overdueInfo.isOverdue && !currentReport;
 
             return (
-              <Card key={account.id} className={isPaymentDue ? 'border-yellow-500' : ''}>
+              <Card key={account.id} className={showOverdueBanner ? 'border-red-500 border-2' : isPaymentDue ? 'border-yellow-500' : ''}>
                 <CardHeader className="pb-3">
                   <div className="flex items-start justify-between">
                     <div>
@@ -812,6 +861,19 @@ export default function MyAccountsPage() {
                       {statusLabels[account.status] || account.status}
                     </Badge>
                   </div>
+                  {showOverdueBanner && overdueInfo.missedDate && (
+                    <div className="mt-2 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-300 dark:border-red-800 p-2 flex items-center gap-2">
+                      <AlertTriangle className="h-4 w-4 text-red-600 shrink-0" />
+                      <div className="text-xs">
+                        <p className="font-semibold text-red-700 dark:text-red-400">
+                          Overdue {overdueInfo.daysOverdue} day{overdueInfo.daysOverdue !== 1 ? 's' : ''}
+                        </p>
+                        <p className="text-red-600 dark:text-red-400">
+                          Was due {format(overdueInfo.missedDate, 'MMMM d', { locale: enUS })} — please report your payment
+                        </p>
+                      </div>
+                    </div>
+                  )}
                 </CardHeader>
                 <CardContent className="space-y-4">
                   {/* Platform & Project */}

@@ -431,8 +431,12 @@ export async function sendPaymentReminders(): Promise<{
         console.log(`[reminders] SKIP ${account.full_name} — daysUntilDue=${daysUntilDue} (more than 2 days away)`);
         continue;
       }
+      // When the previous cycle was missed, use the previous date as the
+      // 'Was due' line in the Telegram message — not the future next date.
+      let displayDate = nextPaymentDate;
       if (isMissedPrevious && daysUntilDue > 2) {
         daysUntilDue = -daysSincePrevious;
+        displayDate = previousPaymentDate;
       }
 
       // Check if user already submitted/confirmed payment for the current period
@@ -458,7 +462,7 @@ export async function sendPaymentReminders(): Promise<{
         {
           accountName: account.full_name,
           platformName: account.platform?.display_name || 'Platform',
-          dueDate: nextPaymentDate.toLocaleDateString('en-US', {
+          dueDate: displayDate.toLocaleDateString('en-US', {
             weekday: 'long',
             month: 'short',
             day: 'numeric',
@@ -568,9 +572,41 @@ export async function sendReminderToAccount(
     account.biweekly_second_day
   );
 
-  const daysUntilDue = Math.round(
+  // Same missed-previous detection as the bulk cron, so the date in the
+  // Telegram message matches what admin sees in the Due Payments page.
+  const previousPaymentDate = new Date(nextPaymentDate);
+  switch (frequency) {
+    case 'weekly':
+      previousPaymentDate.setDate(previousPaymentDate.getDate() - 7);
+      break;
+    case 'biweekly': {
+      const firstDay = account.biweekly_first_day ?? 1;
+      const secondDay = account.biweekly_second_day ?? 16;
+      if (nextPaymentDate.getDate() === firstDay) {
+        previousPaymentDate.setMonth(previousPaymentDate.getMonth() - 1);
+        previousPaymentDate.setDate(secondDay);
+      } else {
+        previousPaymentDate.setDate(firstDay);
+      }
+      break;
+    }
+    case 'monthly':
+      previousPaymentDate.setMonth(previousPaymentDate.getMonth() - 1);
+      break;
+  }
+
+  let daysUntilDue = Math.round(
     (nextPaymentDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)
   );
+  const daysSincePrevious = Math.round(
+    (today.getTime() - previousPaymentDate.getTime()) / (1000 * 60 * 60 * 24)
+  );
+  const isMissedPrevious = daysSincePrevious > 0 && daysSincePrevious <= 7 && daysUntilDue !== 0;
+  let displayDate = nextPaymentDate;
+  if (isMissedPrevious && daysUntilDue > 2) {
+    daysUntilDue = -daysSincePrevious;
+    displayDate = previousPaymentDate;
+  }
 
   const success = await sendUserNotification(
     account.user.telegram_id,
@@ -578,7 +614,7 @@ export async function sendReminderToAccount(
     {
       accountName: account.full_name,
       platformName: account.platform?.display_name || 'Platform',
-      dueDate: nextPaymentDate.toLocaleDateString('en-US', {
+      dueDate: displayDate.toLocaleDateString('en-US', {
         weekday: 'long',
         month: 'short',
         day: 'numeric',
