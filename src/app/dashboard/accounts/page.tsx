@@ -199,6 +199,7 @@ export default function AccountsPage() {
     not_in_project: searchFilteredAccounts.filter(a => a.status === 'not_in_project').length,
     assigned: searchFilteredAccounts.filter(a => a.user_id).length,
     requiresPayment: searchFilteredAccounts.filter(a => PAYMENT_REQUIRED_STATUSES.includes(a.status)).length,
+    missingWallet: searchFilteredAccounts.filter(a => PAYMENT_REQUIRED_STATUSES.includes(a.status) && !a.wallet_address).length,
   };
 
   // Total stats (always show totals somewhere for reference)
@@ -209,6 +210,7 @@ export default function AccountsPage() {
     active: accounts.filter(a => a.status === 'active').length,
     drop: accounts.filter(a => a.status === 'drop').length,
     requiresPayment: accounts.filter(a => PAYMENT_REQUIRED_STATUSES.includes(a.status)).length,
+    missingWallet: accounts.filter(a => PAYMENT_REQUIRED_STATUSES.includes(a.status) && !a.wallet_address).length,
   };
 
   // Filter users who can be assigned (IBOs and users)
@@ -851,6 +853,38 @@ export default function AccountsPage() {
             </div>
           </CardContent>
         </Card>
+        <Card
+          className={`cursor-pointer transition-all border-2 ${
+            totalStats.missingWallet > 0
+              ? 'border-amber-400 bg-amber-50/50 dark:bg-amber-950/20 hover:border-amber-500'
+              : 'border-muted hover:border-primary/50'
+          } active:scale-[0.98]`}
+          onClick={() => {
+            // Filter to show only missing-wallet accounts
+            // Reuse the search box to filter visually since there's no
+            // explicit 'missing wallet' filter mode
+            setSearchQuery('');
+            setFilterStatus('production');
+          }}
+          title="Production/Nesting accounts without a crypto wallet — auto-confirm won't work for these"
+        >
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-muted-foreground">Missing Wallet</p>
+                <div className="flex items-baseline gap-2">
+                  <p className={`text-2xl font-bold ${totalStats.missingWallet > 0 ? 'text-amber-700 dark:text-amber-400' : 'text-muted-foreground'}`}>
+                    {stats.missingWallet}
+                  </p>
+                  {hasActiveFilter && stats.missingWallet !== totalStats.missingWallet && (
+                    <span className="text-sm text-muted-foreground">/ {totalStats.missingWallet}</span>
+                  )}
+                </div>
+              </div>
+              <AlertTriangle className={`h-8 w-8 ${totalStats.missingWallet > 0 ? 'text-amber-500/40' : 'text-muted-foreground/20'}`} />
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
       {/* Filters */}
@@ -1039,10 +1073,22 @@ export default function AccountsPage() {
                         <span className="font-semibold text-primary">{account.percentage}%</span>
                       </TableCell>
                       <TableCell>
-                        <Badge className={statusColors[account.status] || statusColors.not_in_project}>
-                          <StatusIcon className="h-3 w-3 mr-1" />
-                          {statusLabels[account.status] || account.status}
-                        </Badge>
+                        <div className="flex flex-wrap items-center gap-1">
+                          <Badge className={statusColors[account.status] || statusColors.not_in_project}>
+                            <StatusIcon className="h-3 w-3 mr-1" />
+                            {statusLabels[account.status] || account.status}
+                          </Badge>
+                          {(account.status === 'production' || account.status === 'nesting') && !account.wallet_address && (
+                            <Badge
+                              variant="outline"
+                              className="bg-amber-50 border-amber-300 text-amber-800 dark:bg-amber-950/30 dark:text-amber-300"
+                              title="This account has no crypto wallet — auto-confirm will not work for crypto payments here"
+                            >
+                              <AlertTriangle className="h-3 w-3 mr-1" />
+                              No wallet
+                            </Badge>
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell>
                         <DropdownMenu>
