@@ -595,55 +595,69 @@ export default function DuePaymentsPage() {
                   return (
                     <div
                       key={item.account_id}
-                      className="flex items-center gap-4 p-4 transition-colors hover:bg-muted/50"
+                      className="flex flex-col sm:flex-row sm:items-center gap-3 p-4 transition-colors hover:bg-muted/50"
                     >
-                      <Avatar className="h-10 w-10">
-                        <AvatarFallback className="bg-primary/10 text-primary">
-                          {getInitials(item.user_name)}
-                        </AvatarFallback>
-                      </Avatar>
+                      <div className="flex items-start gap-3 flex-1 min-w-0">
+                        <Avatar className="h-10 w-10 shrink-0">
+                          <AvatarFallback className="bg-primary/10 text-primary">
+                            {getInitials(item.user_name)}
+                          </AvatarFallback>
+                        </Avatar>
 
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <p className="font-medium truncate">{item.account_name}</p>
-                          {accountStatusConfig[item.account_status] && (
-                            <Badge variant="outline" className={`shrink-0 text-xs border ${accountStatusConfig[item.account_status].color}`}>
-                              {accountStatusConfig[item.account_status].label}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <p className="font-medium truncate">{item.account_name}</p>
+                            {accountStatusConfig[item.account_status] && (
+                              <Badge variant="outline" className={`shrink-0 text-xs border ${accountStatusConfig[item.account_status].color}`}>
+                                {accountStatusConfig[item.account_status].label}
+                              </Badge>
+                            )}
+                            <Badge variant="outline" className="shrink-0 text-xs">
+                              {item.platform_name}
                             </Badge>
-                          )}
-                          <Badge variant="outline" className="shrink-0 text-xs">
-                            {item.platform_name}
-                          </Badge>
-                          {item.project_name && (
-                            <Badge variant="outline" className="shrink-0 text-xs bg-teal-50">
-                              {item.project_name}
-                            </Badge>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                          {item.user_id ? (
-                            <>
-                              <span>{item.user_name || 'User'}</span>
-                              {item.user_username && (
-                                <>
-                                  <span>•</span>
-                                  <span>@{item.user_username}</span>
-                                </>
-                              )}
-                            </>
-                          ) : (
-                            <Badge variant="outline" className="text-xs bg-amber-50 border-amber-300 text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
-                              ⚠ Unassigned — assign a user first
-                            </Badge>
-                          )}
-                          <span>•</span>
-                          <span className="capitalize">{item.payment_frequency}</span>
-                          <span>•</span>
-                          <span>{item.percentage}%</span>
+                            {item.project_name && (
+                              <Badge variant="outline" className="shrink-0 text-xs bg-teal-50">
+                                {item.project_name}
+                              </Badge>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2 text-sm text-muted-foreground flex-wrap">
+                            {item.user_id ? (
+                              <>
+                                <span>{item.user_name || 'User'}</span>
+                                {item.user_username && (
+                                  <>
+                                    <span>•</span>
+                                    <span>@{item.user_username}</span>
+                                  </>
+                                )}
+                              </>
+                            ) : (
+                              <Badge variant="outline" className="text-xs bg-amber-50 border-amber-300 text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
+                                ⚠ Unassigned — assign a user first
+                              </Badge>
+                            )}
+                            <span>•</span>
+                            <span className="capitalize">{item.payment_frequency}</span>
+                            <span>•</span>
+                            <span>{item.percentage}%</span>
+                          </div>
+                          {/* Date/status info on mobile (below the user line) */}
+                          <div className="flex items-center gap-2 text-xs mt-1 sm:hidden">
+                            <span className="font-medium">{format(dueDate, 'MMM d, yyyy')}</span>
+                            <span className="text-muted-foreground">
+                              {item.days_until_due < 0
+                                ? `(${Math.abs(item.days_until_due)} days overdue)`
+                                : item.days_until_due === 0
+                                  ? '(Today)'
+                                  : `(In ${item.days_until_due} days)`}
+                            </span>
+                          </div>
                         </div>
                       </div>
 
-                      <div className="text-right hidden md:block">
+                      {/* Date column — only on desktop */}
+                      <div className="text-right hidden md:block shrink-0">
                         <p className="text-sm font-medium">
                           {format(dueDate, 'MMM d, yyyy')}
                         </p>
@@ -656,63 +670,66 @@ export default function DuePaymentsPage() {
                         </p>
                       </div>
 
-                      <Badge className={`${cfg.color} gap-1 border`}>
-                        <Icon className="h-3 w-3" />
-                        {cfg.label}
-                      </Badge>
+                      {/* Actions — wrap on mobile so the Report button is never hidden */}
+                      <div className="flex items-center gap-2 flex-wrap shrink-0">
+                        <Badge className={`${cfg.color} gap-1 border`}>
+                          <Icon className="h-3 w-3" />
+                          {cfg.label}
+                        </Badge>
 
-                      {(item.status === 'overdue' || item.status === 'due_today' || item.status === 'due_soon') && item.user_id && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => sendSingleReminder(item)}
-                          disabled={singleReminderLoading === item.account_id}
-                          className={`gap-1 ${item.user_telegram_id ? 'text-blue-700 border-blue-300 hover:bg-blue-50' : 'text-muted-foreground'}`}
-                          title={item.user_telegram_id ? 'Send Telegram reminder' : 'No Telegram linked'}
-                        >
-                          {singleReminderLoading === item.account_id ? (
-                            <Loader2 className="h-3 w-3 animate-spin" />
-                          ) : (
-                            <Bell className="h-3 w-3" />
-                          )}
-                          <span className="hidden sm:inline">Remind</span>
-                        </Button>
-                      )}
+                        {(item.status === 'overdue' || item.status === 'due_today' || item.status === 'due_soon') && item.user_id && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => sendSingleReminder(item)}
+                            disabled={singleReminderLoading === item.account_id}
+                            className={`gap-1 ${item.user_telegram_id ? 'text-blue-700 border-blue-300 hover:bg-blue-50' : 'text-muted-foreground'}`}
+                            title={item.user_telegram_id ? 'Send Telegram reminder' : 'No Telegram linked'}
+                          >
+                            {singleReminderLoading === item.account_id ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <Bell className="h-3 w-3" />
+                            )}
+                            <span className="hidden sm:inline">Remind</span>
+                          </Button>
+                        )}
 
-                      {(item.status === 'overdue' || item.status === 'due_today' || item.status === 'due_soon') && item.user_id && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => sendWhatsApp(item)}
-                          className={`gap-1 ${item.user_phone ? 'text-green-700 border-green-300 hover:bg-green-50' : 'text-muted-foreground'}`}
-                          title={item.user_phone ? `WhatsApp ${item.user_phone}` : 'No phone on file'}
-                        >
-                          <MessageCircle className="h-3 w-3" />
-                          <span className="hidden sm:inline">WhatsApp</span>
-                        </Button>
-                      )}
+                        {(item.status === 'overdue' || item.status === 'due_today' || item.status === 'due_soon') && item.user_id && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => sendWhatsApp(item)}
+                            className={`gap-1 ${item.user_phone ? 'text-green-700 border-green-300 hover:bg-green-50' : 'text-muted-foreground'}`}
+                            title={item.user_phone ? `WhatsApp ${item.user_phone}` : 'No phone on file'}
+                          >
+                            <MessageCircle className="h-3 w-3" />
+                            <span className="hidden sm:inline">WhatsApp</span>
+                          </Button>
+                        )}
 
-                      {canReport(item) && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => openReportDialog(item)}
-                          className="gap-1"
-                        >
-                          <DollarSign className="h-3 w-3" />
-                          Report
-                        </Button>
-                      )}
+                        {canReport(item) && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => openReportDialog(item)}
+                            className="gap-1 text-primary border-primary/30 hover:bg-primary/5"
+                          >
+                            <DollarSign className="h-3 w-3" />
+                            Report
+                          </Button>
+                        )}
 
-                      {item.current_payment_id && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => openPaymentView(item.current_payment_id!)}
-                        >
-                          View
-                        </Button>
-                      )}
+                        {item.current_payment_id && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => openPaymentView(item.current_payment_id!)}
+                          >
+                            View
+                          </Button>
+                        )}
+                      </div>
                     </div>
                   );
                 })}
