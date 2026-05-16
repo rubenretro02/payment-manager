@@ -220,6 +220,47 @@ export default function MyAccountsPage() {
     fetchData(true);
   };
 
+  /**
+   * Shrink a base64 image so the API request body stays well under
+   * Vercel's 4 MB limit. Used as a fallback when the Telegram upload
+   * failed (so we'd otherwise send the raw base64).
+   */
+  const compressBase64Image = (dataUrl: string, maxWidth = 1200, quality = 0.7): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const scale = Math.min(1, maxWidth / img.width);
+        const w = Math.round(img.width * scale);
+        const h = Math.round(img.height * scale);
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return reject(new Error('Canvas not supported'));
+        ctx.drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.onerror = () => reject(new Error('Failed to load image for compression'));
+      img.src = dataUrl;
+    });
+
+  // Decide which URL to send for a screenshot — prefer the Telegram URL,
+  // fall back to a compressed version of the base64 preview.
+  const getScreenshotUrl = async (img: UploadedImage): Promise<string> => {
+    if (img.telegramUrl) return img.telegramUrl;
+    if (!img.preview) return '';
+    // Only compress big base64 payloads (>500 KB). Skip already-tiny ones.
+    if (img.preview.startsWith('data:') && img.preview.length > 500_000) {
+      try {
+        return await compressBase64Image(img.preview);
+      } catch (err) {
+        console.warn('Image compression failed, using original base64:', err);
+        return img.preview;
+      }
+    }
+    return img.preview;
+  };
+
   // Get next payment date for an account (always calculates with weekend adjustment)
   const getNextPayment = (account: Account) => {
     // Always use calculateNextPaymentDate to ensure weekend/holiday adjustments are applied
@@ -390,7 +431,8 @@ export default function MyAccountsPage() {
     const platformAmt = parseFloat(paymentForm.platform_amount);
     const expectedOwed = calculateAmountOwed(platformAmt, selectedAccount.percentage);
     const sentAmt = parseFloat(paymentForm.amount_sent);
-    const hasMismatch = Math.abs(sentAmt - expectedOwed) > 0.001;
+    // 1-cent tolerance for floating-point precision
+    const hasMismatch = Math.abs(sentAmt - expectedOwed) >= 0.01;
     if (hasMismatch && !paymentForm.notes.trim()) {
       alert('You sent a different amount than owed. Please explain the reason in the Notes field.');
       return;
@@ -422,7 +464,12 @@ export default function MyAccountsPage() {
     const selectedMethod = getSelectedPaymentMethod();
 
     try {
-      // Only include fields that are safe for the database
+      // Prepare screenshot URLs — compress base64 fallbacks so the payload
+      // stays under Vercel's 4 MB body limit (root cause of the intermittent
+      // 'Error submitting' Rickens was hitting on flaky connections).
+      const companyUrl = await getScreenshotUrl(companyProofImage);
+      const paymentUrl = paymentProofImage ? await getScreenshotUrl(paymentProofImage) : null;
+
       const paymentData: Record<string, unknown> = {
         user_id: user?.id,
         account_id: selectedAccount.id,
@@ -433,13 +480,11 @@ export default function MyAccountsPage() {
         payment_method: selectedMethod?.type || 'other',
         payment_reference: refValue || null,
         user_notes: paymentForm.notes || null,
-        // Use Telegram URLs if available, otherwise use base64 preview
-        company_screenshot_url: companyProofImage.telegramUrl || companyProofImage.preview,
+        company_screenshot_url: companyUrl,
       };
 
-      // Payment screenshot only if user uploaded one
-      if (paymentProofImage) {
-        paymentData.payment_screenshot_url = paymentProofImage.telegramUrl || paymentProofImage.preview;
+      if (paymentUrl) {
+        paymentData.payment_screenshot_url = paymentUrl;
       }
 
       // If the reference field is a Base tx hash, let the server re-verify it
@@ -470,12 +515,16 @@ export default function MyAccountsPage() {
         );
         await fetchData();
       } else {
-        console.error('Payment error:', data.error);
-        alert('Error: ' + (data.error || 'Failed to submit payment'));
+        // Show the server's error so the user (and admin) knows what failed
+        const msg = data.error || data.message || 'Failed to submit payment';
+        console.error('Payment error:', data);
+        alert(`Error submitting payment:\n\n${msg}\n\nPlease screenshot this message and send it to admin if it keeps happening.`);
       }
     } catch (error) {
+      // Surface the network/runtime error instead of a generic 'try again'
+      const msg = error instanceof Error ? error.message : 'Unknown error';
       console.error('Error submitting payment:', error);
-      alert('Error submitting payment. Please try again.');
+      alert(`Could not submit payment.\n\nDetails: ${msg}\n\nThis usually means a slow connection or the screenshot was too large. Try again, or take a smaller screenshot.`);
     } finally {
       setIsSubmitting(false);
     }
@@ -1026,21 +1075,19 @@ export default function MyAccountsPage() {
                 onChange={(e) => setPaymentForm({ ...paymentForm, amount_sent: e.target.value })}
                 className="text-2xl font-bold h-14 bg-white dark:bg-background"
               />
-              {paymentForm.amount_sent && paymentForm.platform_amount && selectedAccount && (
-                <p className="text-sm font-semibold text-center">
-                  {parseFloat(paymentForm.amount_sent) === calculateAmountOwed(parseFloat(paymentForm.platform_amount), selectedAccount.percentage) ? (
-                    <span className="text-green-700 dark:text-green-400">✓ Exact amount</span>
-                  ) : parseFloat(paymentForm.amount_sent) < calculateAmountOwed(parseFloat(paymentForm.platform_amount), selectedAccount.percentage) ? (
-                    <span className="text-red-600 dark:text-red-400">
-                      ⚠ You sent ${(calculateAmountOwed(parseFloat(paymentForm.platform_amount), selectedAccount.percentage) - parseFloat(paymentForm.amount_sent)).toFixed(2)} LESS
-                    </span>
-                  ) : (
-                    <span className="text-blue-600 dark:text-blue-400">
-                      +${(parseFloat(paymentForm.amount_sent) - calculateAmountOwed(parseFloat(paymentForm.platform_amount), selectedAccount.percentage)).toFixed(2)} MORE than required
-                    </span>
-                  )}
-                </p>
-              )}
+              {paymentForm.amount_sent && paymentForm.platform_amount && selectedAccount && (() => {
+                const sentVal = parseFloat(paymentForm.amount_sent);
+                const owedVal = calculateAmountOwed(parseFloat(paymentForm.platform_amount), selectedAccount.percentage);
+                const diff = sentVal - owedVal;
+                // 1-cent tolerance to ignore floating-point precision issues
+                if (Math.abs(diff) < 0.01) {
+                  return <p className="text-sm font-semibold text-center"><span className="text-green-700 dark:text-green-400">✓ Exact amount</span></p>;
+                }
+                if (diff < 0) {
+                  return <p className="text-sm font-semibold text-center"><span className="text-red-600 dark:text-red-400">⚠ You sent ${Math.abs(diff).toFixed(2)} LESS</span></p>;
+                }
+                return <p className="text-sm font-semibold text-center"><span className="text-blue-600 dark:text-blue-400">+${diff.toFixed(2)} MORE than required</span></p>;
+              })()}
             </div>
 
             {/* Payment Method Selection */}
@@ -1199,8 +1246,10 @@ export default function MyAccountsPage() {
                 ? calculateAmountOwed(parseFloat(paymentForm.platform_amount), selectedAccount.percentage)
                 : 0;
               const sent = parseFloat(paymentForm.amount_sent || '0');
+              // 1-cent tolerance — anything within $0.01 counts as 'exact'
+              // (avoids false mismatches from $34.605 owed vs $34.60 sent)
               const amountMismatch =
-                paymentForm.amount_sent && paymentForm.platform_amount && Math.abs(sent - owed) > 0.001;
+                paymentForm.amount_sent && paymentForm.platform_amount && Math.abs(sent - owed) >= 0.01;
               const isLess = !!amountMismatch && sent < owed;
               const isMore = !!amountMismatch && sent > owed;
 
