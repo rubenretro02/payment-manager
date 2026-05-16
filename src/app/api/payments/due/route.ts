@@ -216,49 +216,34 @@ export async function GET() {
       confirmed: result.filter(r => r.status === 'confirmed'),
     };
 
-    // Build a forward-looking 'Upcoming' view that includes the next future
-    // cycle even for accounts already paid this period — otherwise admin
-    // can't see what's coming next week / month at a glance.
-    const upcomingFuture: DueAccountInfo[] = [];
+    // Duplicate Confirmed/Reported entries into their schedule bucket too —
+    // admin wants weekly accounts that already paid this period to also show
+    // up in 'Due Soon' (if next is <= 7 days) or 'Upcoming' (> 7 days).
+    // We push a synthetic copy with the same future nextPaymentDate, just
+    // categorised by daysUntilDue instead of payment status.
+    const scheduleEntries: DueAccountInfo[] = [];
     for (const item of result) {
       if (item.status !== 'confirmed' && item.status !== 'reported') continue;
-      // Already in those buckets — also project their next cycle into Upcoming
-      const baseDate = new Date(item.next_payment_date);
-      const next = new Date(baseDate);
-      switch (item.payment_frequency) {
-        case 'weekly':
-          next.setDate(next.getDate() + 7);
-          break;
-        case 'biweekly': {
-          // We don't have the biweekly day fields on DueAccountInfo, so step
-          // forward by ~15 days (close enough for the preview).
-          next.setDate(next.getDate() + 15);
-          break;
-        }
-        case 'monthly':
-          next.setMonth(next.getMonth() + 1);
-          break;
+      if (item.days_until_due <= 0) continue;
+
+      let scheduleStatus: DueAccountInfo['status'];
+      if (item.days_until_due <= 7) {
+        scheduleStatus = 'due_soon';
+      } else {
+        scheduleStatus = 'upcoming';
       }
-      const todayMidnight = new Date(today.getTime());
-      const daysUntilFuture = Math.round(
-        (next.getTime() - todayMidnight.getTime()) / (1000 * 60 * 60 * 24)
-      );
-      if (daysUntilFuture > 7) {
-        next.setUTCHours(12, 0, 0, 0);
-        upcomingFuture.push({
-          ...item,
-          status: 'upcoming',
-          next_payment_date: next.toISOString(),
-          days_until_due: daysUntilFuture,
-          // Strip current_payment refs since this row is about the NEXT cycle
-          current_payment_id: null,
-          current_payment_status: null,
-        });
-      }
+      scheduleEntries.push({ ...item, status: scheduleStatus });
     }
-    grouped.upcoming = [...grouped.upcoming, ...upcomingFuture].sort(
-      (a, b) => a.days_until_due - b.days_until_due
-    );
+
+    // Merge synthetic entries into the corresponding grouped buckets
+    grouped.dueSoon = [
+      ...grouped.dueSoon,
+      ...scheduleEntries.filter(e => e.status === 'due_soon'),
+    ].sort((a, b) => a.days_until_due - b.days_until_due);
+    grouped.upcoming = [
+      ...grouped.upcoming,
+      ...scheduleEntries.filter(e => e.status === 'upcoming'),
+    ].sort((a, b) => a.days_until_due - b.days_until_due);
 
     // Sort 'all' by urgency: overdue first, then today, then soon, then upcoming,
     // then reported, then confirmed; within each bucket, by date ascending.
@@ -270,7 +255,7 @@ export async function GET() {
       reported: 4,
       confirmed: 5,
     };
-    const sortedAll = [...result, ...upcomingFuture].sort((a, b) => {
+    const sortedAll = [...result, ...scheduleEntries].sort((a, b) => {
       const diff = statusPriority[a.status] - statusPriority[b.status];
       if (diff !== 0) return diff;
       return a.days_until_due - b.days_until_due;
