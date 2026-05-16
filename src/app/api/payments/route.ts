@@ -8,7 +8,8 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const status = searchParams.get('status') || undefined;
-    const payments = await getAllPayments(status);
+    const accountId = searchParams.get('account_id') || undefined;
+    const payments = await getAllPayments(status, accountId);
     return NextResponse.json({ success: true, data: payments });
   } catch (error) {
     console.error('Error fetching payments:', error);

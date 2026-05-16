@@ -198,10 +198,14 @@ export default function DuePaymentsPage() {
 
   const [singleReminderLoading, setSingleReminderLoading] = useState<string | null>(null);
 
-  // View Payment dialog
+  // Payment history dialog (full list for an account)
   const [viewPayment, setViewPayment] = useState<Payment | null>(null);
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [viewLoading, setViewLoading] = useState(false);
+  const [viewAccount, setViewAccount] = useState<DueAccountInfo | null>(null);
+  const [viewHistory, setViewHistory] = useState<Payment[]>([]);
+  const [historyDialogOpen, setHistoryDialogOpen] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
 
   const openPaymentView = async (paymentId: string) => {
     setViewDialogOpen(true);
@@ -221,6 +225,26 @@ export default function DuePaymentsPage() {
       setViewDialogOpen(false);
     } finally {
       setViewLoading(false);
+    }
+  };
+
+  const openAccountHistory = async (item: DueAccountInfo) => {
+    setViewAccount(item);
+    setHistoryDialogOpen(true);
+    setHistoryLoading(true);
+    setViewHistory([]);
+    try {
+      const res = await fetch(`/api/payments?account_id=${item.account_id}`);
+      const json = await res.json();
+      if (json.success) {
+        setViewHistory(json.data || []);
+      } else {
+        toast.error(json.error || 'Failed to load history');
+      }
+    } catch (error) {
+      toast.error('Failed to load history');
+    } finally {
+      setHistoryLoading(false);
     }
   };
 
@@ -720,15 +744,14 @@ export default function DuePaymentsPage() {
                           </Button>
                         )}
 
-                        {item.current_payment_id && (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => openPaymentView(item.current_payment_id!)}
-                          >
-                            View
-                          </Button>
-                        )}
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => openAccountHistory(item)}
+                          title="View all payment reports for this account"
+                        >
+                          View
+                        </Button>
                       </div>
                     </div>
                   );
@@ -1014,6 +1037,95 @@ export default function DuePaymentsPage() {
               </Button>
             )}
             <Button variant="outline" onClick={() => setViewDialogOpen(false)} className="w-full sm:w-auto">
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Payment History Dialog (all reports for an account) */}
+      <Dialog open={historyDialogOpen} onOpenChange={setHistoryDialogOpen}>
+        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Payment History</DialogTitle>
+            <DialogDescription>
+              {viewAccount?.account_name} — {viewAccount?.platform_name}
+            </DialogDescription>
+          </DialogHeader>
+
+          {historyLoading && (
+            <div className="flex justify-center py-8">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            </div>
+          )}
+
+          {!historyLoading && viewHistory.length === 0 && (
+            <div className="text-center py-8 text-muted-foreground">
+              <CheckCircle2 className="h-12 w-12 mx-auto mb-4 opacity-50" />
+              <p className="font-medium">No payment reports yet</p>
+              <p className="text-sm">This account hasn&apos;t submitted any payments.</p>
+            </div>
+          )}
+
+          {!historyLoading && viewHistory.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-sm text-muted-foreground">
+                {viewHistory.length} payment{viewHistory.length !== 1 ? 's' : ''} on record
+              </p>
+              {viewHistory.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => {
+                    setHistoryDialogOpen(false);
+                    openPaymentView(p.id);
+                  }}
+                  className="w-full text-left rounded-lg border p-3 hover:bg-muted/50 transition-colors"
+                >
+                  <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-medium text-sm">
+                          {format(new Date(p.created_at), "MMM d, yyyy")}
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          {format(new Date(p.created_at), "HH:mm")}
+                        </span>
+                        <Badge className={
+                          p.status === 'confirmed' ? 'bg-green-100 text-green-800' :
+                          p.status === 'rejected' ? 'bg-red-100 text-red-800' :
+                          p.status === 'submitted' ? 'bg-blue-100 text-blue-800' :
+                          'bg-yellow-100 text-yellow-800'
+                        }>
+                          {p.status === 'submitted' ? 'To Confirm' : p.status}
+                        </Badge>
+                      </div>
+                      <div className="text-xs text-muted-foreground mt-1 flex flex-wrap gap-2">
+                        <span>Owed: ${Number(p.amount_owed || 0).toFixed(2)}</span>
+                        <span>•</span>
+                        <span>Paid: ${Number(p.amount_paid || 0).toFixed(2)}</span>
+                        {p.payment_method && (
+                          <>
+                            <span>•</span>
+                            <span className="capitalize">{p.payment_method}</span>
+                          </>
+                        )}
+                      </div>
+                      {p.status === 'rejected' && p.rejection_reason && (
+                        <p className="text-xs text-red-700 dark:text-red-400 mt-1">
+                          ❌ {p.rejection_reason}
+                        </p>
+                      )}
+                    </div>
+                    <span className="text-xs text-primary shrink-0">View details →</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setHistoryDialogOpen(false)} className="w-full sm:w-auto">
               Close
             </Button>
           </DialogFooter>

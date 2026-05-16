@@ -37,7 +37,7 @@ export async function getAccountsByUser(userId: string): Promise<Account[]> {
   return (data || []) as Account[];
 }
 
-export async function getAllPayments(status?: string): Promise<Payment[]> {
+export async function getAllPayments(status?: string, accountId?: string): Promise<Payment[]> {
   const supabase = createAdminClient();
 
   // First get all payments without joins
@@ -48,6 +48,9 @@ export async function getAllPayments(status?: string): Promise<Payment[]> {
 
   if (status) {
     query = query.eq('status', status);
+  }
+  if (accountId) {
+    query = query.eq('account_id', accountId);
   }
 
   const { data: payments, error } = await query;

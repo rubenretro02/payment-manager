@@ -179,7 +179,12 @@ export async function GET() {
         displayDate = previousPaymentDate;
       } else if (daysUntilDue <= 7) {
         status = 'due_soon';
+      } else if (daysUntilDue <= 30) {
+        // Within a month → Upcoming
+        status = 'upcoming';
       } else {
+        // Further out than a month — still call it upcoming but it's a long
+        // way away. Could split into its own bucket later if needed.
         status = 'upcoming';
       }
 
@@ -218,13 +223,13 @@ export async function GET() {
 
     // Duplicate Confirmed/Reported entries into their schedule bucket too —
     // admin wants weekly accounts that already paid this period to also show
-    // up in 'Due Soon' (if next is <= 7 days) or 'Upcoming' (> 7 days).
-    // We push a synthetic copy with the same future nextPaymentDate, just
-    // categorised by daysUntilDue instead of payment status.
+    // up in 'Due Soon' (if next is <= 7 days) or 'Upcoming' (8-30 days).
+    // Beyond 30 days, the next cycle is too far out to clutter the schedule.
     const scheduleEntries: DueAccountInfo[] = [];
     for (const item of result) {
       if (item.status !== 'confirmed' && item.status !== 'reported') continue;
       if (item.days_until_due <= 0) continue;
+      if (item.days_until_due > 30) continue;
 
       let scheduleStatus: DueAccountInfo['status'];
       if (item.days_until_due <= 7) {
