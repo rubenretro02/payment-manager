@@ -166,12 +166,15 @@ export function calculateNextPaymentDate(
       const currentMonth = getMonth(today);
       const currentYear = getYear(today);
 
-      if (currentDate < firstDay) {
+      // <= so when today IS the payment day, it returns today instead of
+      // skipping to the next slot. Old code used '<' which made an account
+      // configured for day 16 with today=16 jump to next month's day 1.
+      if (currentDate <= firstDay) {
         paymentDate = new Date(currentYear, currentMonth, firstDay);
-      } else if (currentDate < secondDay) {
+      } else if (currentDate <= secondDay) {
         paymentDate = new Date(currentYear, currentMonth, secondDay);
       } else {
-        // Next month's first day
+        // Past both days this month — next month's first day
         paymentDate = new Date(currentYear, currentMonth + 1, firstDay);
       }
       break;
