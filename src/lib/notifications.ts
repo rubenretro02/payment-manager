@@ -1,6 +1,6 @@
 import { sendTelegramMessage } from './telegram';
 import { createAdminClient } from './supabase/server';
-import { calculateNextPaymentDate, type PaymentFrequency } from './payment-dates';
+import { calculateNextPaymentDate, getNextBusinessDay, type PaymentFrequency } from './payment-dates';
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 
@@ -343,11 +343,20 @@ function getPeriodStart(frequency: PaymentFrequency, today: Date): Date {
   return start;
 }
 
+export type ReminderMode = 'all' | 'overdue' | 'upcoming';
+
 /**
  * Send payment reminders to users with upcoming or overdue payments.
  * Call this from a cron job or scheduled task.
+ *
+ * Modes:
+ *   - 'overdue'  : only ping accounts whose previous cycle was missed.
+ *                  Intended to run frequently (e.g. every 2h) to apply pressure.
+ *   - 'upcoming' : only ping accounts where today/tomorrow/in 2 days is the
+ *                  payment day. Intended to run 1-2x per day, not every 2h.
+ *   - 'all'      : both, behaves like the original combined cron.
  */
-export async function sendPaymentReminders(): Promise<{
+export async function sendPaymentReminders(mode: ReminderMode = 'all'): Promise<{
   sent: number;
   failed: number;
   users: string[];
@@ -394,27 +403,30 @@ export async function sendPaymentReminders(): Promise<{
         account.biweekly_second_day
       );
 
-      // Previous scheduled due date — for detecting missed cycles
-      const previousPaymentDate = new Date(nextPaymentDate);
+      // Previous scheduled due date — walked back from the (already adjusted)
+      // next date, then re-adjusted for weekend/holiday so the date we quote
+      // matches what the admin sees in the Due Payments page.
+      const previousPaymentDateRaw = new Date(nextPaymentDate);
       switch (frequency) {
         case 'weekly':
-          previousPaymentDate.setDate(previousPaymentDate.getDate() - 7);
+          previousPaymentDateRaw.setDate(previousPaymentDateRaw.getDate() - 7);
           break;
         case 'biweekly': {
           const firstDay = account.biweekly_first_day ?? 1;
           const secondDay = account.biweekly_second_day ?? 16;
           if (nextPaymentDate.getDate() === firstDay) {
-            previousPaymentDate.setMonth(previousPaymentDate.getMonth() - 1);
-            previousPaymentDate.setDate(secondDay);
+            previousPaymentDateRaw.setMonth(previousPaymentDateRaw.getMonth() - 1);
+            previousPaymentDateRaw.setDate(secondDay);
           } else {
-            previousPaymentDate.setDate(firstDay);
+            previousPaymentDateRaw.setDate(firstDay);
           }
           break;
         }
         case 'monthly':
-          previousPaymentDate.setMonth(previousPaymentDate.getMonth() - 1);
+          previousPaymentDateRaw.setMonth(previousPaymentDateRaw.getMonth() - 1);
           break;
       }
+      const previousPaymentDate = getNextBusinessDay(previousPaymentDateRaw);
 
       let daysUntilDue = Math.round(
         (nextPaymentDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)
@@ -423,11 +435,24 @@ export async function sendPaymentReminders(): Promise<{
         (today.getTime() - previousPaymentDate.getTime()) / (1000 * 60 * 60 * 24)
       );
 
-      // Only nag for recent misses (max 7 days past previous due).
-      // BUT if today IS the next payment day, treat as 'reminder for today',
-      // not 'overdue from previous'.
-      const isMissedPrevious = daysSincePrevious > 0 && daysSincePrevious <= 7 && daysUntilDue !== 0;
-      if (daysUntilDue > 2 && !isMissedPrevious) {
+      // Overdue window scales with frequency: a monthly account stays 'overdue'
+      // for the full month, not just 7 days. If today IS the next payment day,
+      // treat as 'reminder for today', not 'overdue from previous'.
+      const overdueWindow = frequency === 'weekly' ? 7 : frequency === 'biweekly' ? 14 : 30;
+      const isMissedPrevious = daysSincePrevious > 0 && daysSincePrevious <= overdueWindow && daysUntilDue !== 0;
+      const isUpcoming = daysUntilDue >= 0 && daysUntilDue <= 2;
+
+      // Mode filter: overdue cron only nags missed cycles; upcoming cron only
+      // nags due-today / due-soon. Lets admin run different cadences.
+      if (mode === 'overdue' && !isMissedPrevious) {
+        console.log(`[reminders] SKIP ${account.full_name} — mode=overdue but not overdue (daysSincePrevious=${daysSincePrevious})`);
+        continue;
+      }
+      if (mode === 'upcoming' && !isUpcoming) {
+        console.log(`[reminders] SKIP ${account.full_name} — mode=upcoming but daysUntilDue=${daysUntilDue}`);
+        continue;
+      }
+      if (mode === 'all' && daysUntilDue > 2 && !isMissedPrevious) {
         console.log(`[reminders] SKIP ${account.full_name} — daysUntilDue=${daysUntilDue} (more than 2 days away)`);
         continue;
       }
@@ -574,26 +599,27 @@ export async function sendReminderToAccount(
 
   // Same missed-previous detection as the bulk cron, so the date in the
   // Telegram message matches what admin sees in the Due Payments page.
-  const previousPaymentDate = new Date(nextPaymentDate);
+  const previousPaymentDateRaw = new Date(nextPaymentDate);
   switch (frequency) {
     case 'weekly':
-      previousPaymentDate.setDate(previousPaymentDate.getDate() - 7);
+      previousPaymentDateRaw.setDate(previousPaymentDateRaw.getDate() - 7);
       break;
     case 'biweekly': {
       const firstDay = account.biweekly_first_day ?? 1;
       const secondDay = account.biweekly_second_day ?? 16;
       if (nextPaymentDate.getDate() === firstDay) {
-        previousPaymentDate.setMonth(previousPaymentDate.getMonth() - 1);
-        previousPaymentDate.setDate(secondDay);
+        previousPaymentDateRaw.setMonth(previousPaymentDateRaw.getMonth() - 1);
+        previousPaymentDateRaw.setDate(secondDay);
       } else {
-        previousPaymentDate.setDate(firstDay);
+        previousPaymentDateRaw.setDate(firstDay);
       }
       break;
     }
     case 'monthly':
-      previousPaymentDate.setMonth(previousPaymentDate.getMonth() - 1);
+      previousPaymentDateRaw.setMonth(previousPaymentDateRaw.getMonth() - 1);
       break;
   }
+  const previousPaymentDate = getNextBusinessDay(previousPaymentDateRaw);
 
   let daysUntilDue = Math.round(
     (nextPaymentDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)
@@ -601,7 +627,8 @@ export async function sendReminderToAccount(
   const daysSincePrevious = Math.round(
     (today.getTime() - previousPaymentDate.getTime()) / (1000 * 60 * 60 * 24)
   );
-  const isMissedPrevious = daysSincePrevious > 0 && daysSincePrevious <= 7 && daysUntilDue !== 0;
+  const overdueWindow = frequency === 'weekly' ? 7 : frequency === 'biweekly' ? 14 : 30;
+  const isMissedPrevious = daysSincePrevious > 0 && daysSincePrevious <= overdueWindow && daysUntilDue !== 0;
   let displayDate = nextPaymentDate;
   if (isMissedPrevious && daysUntilDue > 2) {
     daysUntilDue = -daysSincePrevious;

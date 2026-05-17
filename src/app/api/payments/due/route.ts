@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/server';
-import { calculateNextPaymentDate, type PaymentFrequency } from '@/lib/payment-dates';
+import { calculateNextPaymentDate, getNextBusinessDay, type PaymentFrequency } from '@/lib/payment-dates';
 
 interface DueAccountInfo {
   account_id: string;
@@ -107,28 +107,34 @@ export async function GET() {
       );
 
       // Also compute the PREVIOUS scheduled due date so we can detect
-      // a missed cycle (e.g. it was due yesterday, never reported, and
-      // the calculator already advanced to next week).
-      const previousPaymentDate = new Date(nextPaymentDate);
+      // a missed cycle. nextPaymentDate already has weekend/holiday
+      // adjustment applied, so we have to walk back from its RAW scheduled
+      // form, then re-apply the same adjustment — otherwise the reminder
+      // says 'May 18' (adjusted) but the overdue message says 'May 16'
+      // (raw Saturday). They have to match.
+      const previousPaymentDateRaw = new Date(nextPaymentDate);
       switch (frequency) {
         case 'weekly':
-          previousPaymentDate.setDate(previousPaymentDate.getDate() - 7);
+          previousPaymentDateRaw.setDate(previousPaymentDateRaw.getDate() - 7);
           break;
         case 'biweekly': {
           const firstDay = account.biweekly_first_day ?? 1;
           const secondDay = account.biweekly_second_day ?? 16;
           if (nextPaymentDate.getDate() === firstDay) {
-            previousPaymentDate.setMonth(previousPaymentDate.getMonth() - 1);
-            previousPaymentDate.setDate(secondDay);
+            previousPaymentDateRaw.setMonth(previousPaymentDateRaw.getMonth() - 1);
+            previousPaymentDateRaw.setDate(secondDay);
           } else {
-            previousPaymentDate.setDate(firstDay);
+            previousPaymentDateRaw.setDate(firstDay);
           }
           break;
         }
         case 'monthly':
-          previousPaymentDate.setMonth(previousPaymentDate.getMonth() - 1);
+          previousPaymentDateRaw.setMonth(previousPaymentDateRaw.getMonth() - 1);
           break;
       }
+      // Apply the same business-day adjustment so the display is consistent
+      // with what the user saw in the reminder.
+      const previousPaymentDate = getNextBusinessDay(previousPaymentDateRaw);
 
       let daysUntilDue = Math.round(
         (nextPaymentDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)
@@ -172,8 +178,14 @@ export async function GET() {
         // Today IS the payment day — not overdue yet, the admin still has
         // until end of day. Takes priority over the missed-previous check.
         status = 'due_today';
-      } else if (!currentPayment && daysSincePrevious > 0 && daysSincePrevious <= 7) {
-        // Missed previous cycle (recently) — show overdue with the previous date.
+      } else if (
+        !currentPayment &&
+        daysSincePrevious > 0 &&
+        // Overdue window = one full cycle. After that the next cycle's
+        // deadline becomes the relevant date, not the older miss.
+        daysSincePrevious <= (frequency === 'weekly' ? 7 : frequency === 'biweekly' ? 14 : 30)
+      ) {
+        // Missed previous cycle — show overdue with that adjusted past date.
         status = 'overdue';
         daysUntilDue = -daysSincePrevious;
         displayDate = previousPaymentDate;

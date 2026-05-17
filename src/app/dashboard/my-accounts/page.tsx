@@ -58,7 +58,8 @@ import {
   formatPaymentFrequency,
   formatPaymentSchedule,
   calculateNextPaymentDate,
-  getUpcomingPaymentDates
+  getUpcomingPaymentDates,
+  getNextBusinessDay,
 } from '@/lib/payment-dates';
 
 const statusColors: Record<string, string> = {
@@ -286,22 +287,25 @@ export default function MyAccountsPage() {
 
     // No payment record check here — we're just showing the user the
     // visual indicator. If they already reported, the 'Reported' state
-    // elsewhere on the card hides this.
-    const previousPaymentDate = new Date(nextPaymentDate);
+    // elsewhere on the card hides this. The raw previous date is walked
+    // back from nextPaymentDate, then weekend/holiday-adjusted so the
+    // message matches what admin sees in Due Payments.
+    const previousPaymentDateRaw = new Date(nextPaymentDate);
     if (frequency === 'weekly') {
-      previousPaymentDate.setDate(previousPaymentDate.getDate() - 7);
+      previousPaymentDateRaw.setDate(previousPaymentDateRaw.getDate() - 7);
     } else if (frequency === 'biweekly') {
       const firstDay = account.biweekly_first_day ?? 1;
       const secondDay = account.biweekly_second_day ?? 16;
       if (nextPaymentDate.getDate() === firstDay) {
-        previousPaymentDate.setMonth(previousPaymentDate.getMonth() - 1);
-        previousPaymentDate.setDate(secondDay);
+        previousPaymentDateRaw.setMonth(previousPaymentDateRaw.getMonth() - 1);
+        previousPaymentDateRaw.setDate(secondDay);
       } else {
-        previousPaymentDate.setDate(firstDay);
+        previousPaymentDateRaw.setDate(firstDay);
       }
     } else {
-      previousPaymentDate.setMonth(previousPaymentDate.getMonth() - 1);
+      previousPaymentDateRaw.setMonth(previousPaymentDateRaw.getMonth() - 1);
     }
+    const previousPaymentDate = getNextBusinessDay(previousPaymentDateRaw);
 
     const daysSincePrevious = Math.round(
       (today.getTime() - previousPaymentDate.getTime()) / (1000 * 60 * 60 * 24)
@@ -309,9 +313,10 @@ export default function MyAccountsPage() {
     const daysUntilNext = Math.round(
       (nextPaymentDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)
     );
-    // Only flag as overdue if the previous due slipped 1-7 days ago AND
-    // today is NOT the next payment day (in which case the user is on time).
-    const isOverdue = daysSincePrevious > 0 && daysSincePrevious <= 7 && daysUntilNext !== 0;
+    // Overdue window scales with frequency. Today === payment day still means
+    // 'on time', not overdue.
+    const overdueWindow = frequency === 'weekly' ? 7 : frequency === 'biweekly' ? 14 : 30;
+    const isOverdue = daysSincePrevious > 0 && daysSincePrevious <= overdueWindow && daysUntilNext !== 0;
     return {
       isOverdue,
       missedDate: isOverdue ? previousPaymentDate : null,
