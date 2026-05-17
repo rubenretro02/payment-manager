@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/server';
-import { calculateNextPaymentDate, getNextBusinessDay, type PaymentFrequency } from '@/lib/payment-dates';
+import { calculateNextPaymentDate, calculatePreviousPaymentDate, type PaymentFrequency } from '@/lib/payment-dates';
 
 interface DueAccountInfo {
   account_id: string;
@@ -106,35 +106,16 @@ export async function GET() {
         account.biweekly_second_day
       );
 
-      // Also compute the PREVIOUS scheduled due date so we can detect
-      // a missed cycle. nextPaymentDate already has weekend/holiday
-      // adjustment applied, so we have to walk back from its RAW scheduled
-      // form, then re-apply the same adjustment — otherwise the reminder
-      // says 'May 18' (adjusted) but the overdue message says 'May 16'
-      // (raw Saturday). They have to match.
-      const previousPaymentDateRaw = new Date(nextPaymentDate);
-      switch (frequency) {
-        case 'weekly':
-          previousPaymentDateRaw.setDate(previousPaymentDateRaw.getDate() - 7);
-          break;
-        case 'biweekly': {
-          const firstDay = account.biweekly_first_day ?? 1;
-          const secondDay = account.biweekly_second_day ?? 16;
-          if (nextPaymentDate.getDate() === firstDay) {
-            previousPaymentDateRaw.setMonth(previousPaymentDateRaw.getMonth() - 1);
-            previousPaymentDateRaw.setDate(secondDay);
-          } else {
-            previousPaymentDateRaw.setDate(firstDay);
-          }
-          break;
-        }
-        case 'monthly':
-          previousPaymentDateRaw.setMonth(previousPaymentDateRaw.getMonth() - 1);
-          break;
-      }
-      // Apply the same business-day adjustment so the display is consistent
-      // with what the user saw in the reminder.
-      const previousPaymentDate = getNextBusinessDay(previousPaymentDateRaw);
+      // Previous scheduled due date (business-day-adjusted) — used to
+      // detect a missed cycle. Same helper used everywhere so reminder
+      // and overdue display the SAME date.
+      const previousPaymentDate = calculatePreviousPaymentDate(
+        frequency,
+        account.payment_day,
+        today,
+        account.biweekly_first_day,
+        account.biweekly_second_day
+      );
 
       let daysUntilDue = Math.round(
         (nextPaymentDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)

@@ -3,7 +3,7 @@
  * Handles payment scheduling with US holidays and weekend detection
  */
 
-import { addDays, getDay, getMonth, getDate, getYear, setDate, addMonths, isWeekend, format, startOfDay, isBefore } from 'date-fns';
+import { addDays, getDay, getMonth, getYear, isWeekend, format, startOfDay, isBefore } from 'date-fns';
 
 export type PaymentFrequency = 'weekly' | 'biweekly' | 'monthly';
 
@@ -128,7 +128,63 @@ interface PaymentConfig {
 }
 
 /**
- * Calculate the next payment date based on frequency
+ * Build candidate RAW scheduled dates around today, spanning enough cycles
+ * back and forward that we always cover the immediate previous + next slot.
+ * Used by both calculateNextPaymentDate and calculatePreviousPaymentDate.
+ */
+function buildScheduledCandidates(
+  frequency: PaymentFrequency,
+  paymentDay: number | null,
+  today: Date,
+  biweeklyFirstDay?: number | null,
+  biweeklySecondDay?: number | null
+): Date[] {
+  const candidates: Date[] = [];
+
+  switch (frequency) {
+    case 'weekly': {
+      const targetDay = paymentDay ?? 5;
+      for (let offset = -14; offset <= 14; offset++) {
+        const candidate = addDays(today, offset);
+        if (getDay(candidate) === targetDay) {
+          candidates.push(startOfDay(candidate));
+        }
+      }
+      break;
+    }
+    case 'biweekly': {
+      const firstDay = biweeklyFirstDay ?? 1;
+      const secondDay = biweeklySecondDay ?? 16;
+      const y = getYear(today);
+      const m = getMonth(today);
+      for (let monthOffset = -1; monthOffset <= 1; monthOffset++) {
+        candidates.push(new Date(y, m + monthOffset, firstDay));
+        candidates.push(new Date(y, m + monthOffset, secondDay));
+      }
+      break;
+    }
+    case 'monthly': {
+      const monthlyDay = paymentDay ?? 1;
+      const y = getYear(today);
+      const m = getMonth(today);
+      for (let monthOffset = -1; monthOffset <= 1; monthOffset++) {
+        candidates.push(new Date(y, m + monthOffset, monthlyDay));
+      }
+      break;
+    }
+  }
+
+  return candidates;
+}
+
+/**
+ * Calculate the next payment date based on frequency.
+ *
+ * Compares against BUSINESS-DAY-ADJUSTED candidate dates, not raw ones.
+ * This fixes the bug where a biweekly account with second_day=16 and
+ * today=Sunday May 17 would skip past May 16 (Saturday) → June 1, even
+ * though the actual payment day was May 18 (Monday adjusted from May 16)
+ * which is still in the future.
  */
 export function calculateNextPaymentDate(
   frequency: PaymentFrequency,
@@ -138,84 +194,58 @@ export function calculateNextPaymentDate(
   biweeklySecondDay?: number | null
 ): Date {
   const today = startOfDay(fromDate);
-  let paymentDate: Date;
+  const candidates = buildScheduledCandidates(
+    frequency,
+    paymentDay,
+    today,
+    biweeklyFirstDay,
+    biweeklySecondDay
+  );
 
-  switch (frequency) {
-    case 'weekly':
-      // Default to Friday (day 5) if no day specified
-      const targetDay = paymentDay ?? 5;
-      const currentDay = getDay(today);
+  // Adjust each candidate to its business-day-of-record, sort ascending,
+  // and return the smallest that is >= today.
+  const adjusted = candidates
+    .map(c => getNextBusinessDay(c))
+    .sort((a, b) => a.getTime() - b.getTime());
 
-      if (currentDay === targetDay) {
-        // If today is the payment day, check if it's a business day
-        paymentDate = today;
-      } else if (currentDay < targetDay) {
-        // Payment day is later this week
-        paymentDate = addDays(today, targetDay - currentDay);
-      } else {
-        // Payment day is next week
-        paymentDate = addDays(today, 7 - (currentDay - targetDay));
-      }
-      break;
-
-    case 'biweekly':
-      // Custom biweekly days or default to 1st and 16th
-      const firstDay = biweeklyFirstDay ?? 1;
-      const secondDay = biweeklySecondDay ?? 16;
-      const currentDate = getDate(today);
-      const currentMonth = getMonth(today);
-      const currentYear = getYear(today);
-
-      // <= so when today IS the payment day, it returns today instead of
-      // skipping to the next slot. Old code used '<' which made an account
-      // configured for day 16 with today=16 jump to next month's day 1.
-      if (currentDate <= firstDay) {
-        paymentDate = new Date(currentYear, currentMonth, firstDay);
-      } else if (currentDate <= secondDay) {
-        paymentDate = new Date(currentYear, currentMonth, secondDay);
-      } else {
-        // Past both days this month — next month's first day
-        paymentDate = new Date(currentYear, currentMonth + 1, firstDay);
-      }
-      break;
-
-    case 'monthly':
-      // Payment on specific day of month (default to 1st)
-      const monthlyDay = paymentDay ?? 1;
-      const monthDate = getDate(today);
-
-      if (monthDate <= monthlyDay) {
-        // This month
-        paymentDate = setDate(today, monthlyDay);
-      } else {
-        // Next month
-        paymentDate = setDate(addMonths(today, 1), monthlyDay);
-      }
-      break;
-
-    default:
-      paymentDate = today;
+  for (const date of adjusted) {
+    if (!isBefore(date, today)) return date;
   }
+  return adjusted[adjusted.length - 1] || today;
+}
 
-  // Ensure it's not in the past
-  if (isBefore(paymentDate, today)) {
-    if (frequency === 'weekly') {
-      paymentDate = addDays(paymentDate, 7);
-    } else if (frequency === 'biweekly') {
-      const firstDay = biweeklyFirstDay ?? 1;
-      const secondDay = biweeklySecondDay ?? 16;
-      if (getDate(paymentDate) === firstDay) {
-        paymentDate = setDate(paymentDate, secondDay);
-      } else {
-        paymentDate = new Date(getYear(paymentDate), getMonth(paymentDate) + 1, firstDay);
-      }
-    } else {
-      paymentDate = addMonths(paymentDate, 1);
-    }
+/**
+ * Calculate the most recent SCHEDULED payment date before today.
+ *
+ * Used to detect missed cycles: if `daysSincePrevious` is small and no
+ * payment was recorded for that period, the account is overdue. Returns
+ * the same business-day-adjusted date that the user would have seen in
+ * their reminder, so the 'Was due' message stays consistent.
+ */
+export function calculatePreviousPaymentDate(
+  frequency: PaymentFrequency,
+  paymentDay: number | null,
+  fromDate: Date = new Date(),
+  biweeklyFirstDay?: number | null,
+  biweeklySecondDay?: number | null
+): Date {
+  const today = startOfDay(fromDate);
+  const candidates = buildScheduledCandidates(
+    frequency,
+    paymentDay,
+    today,
+    biweeklyFirstDay,
+    biweeklySecondDay
+  );
+
+  const adjusted = candidates
+    .map(c => getNextBusinessDay(c))
+    .sort((a, b) => b.getTime() - a.getTime());
+
+  for (const date of adjusted) {
+    if (isBefore(date, today)) return date;
   }
-
-  // Move to next business day if falls on weekend or holiday
-  return getNextBusinessDay(paymentDate);
+  return adjusted[0] || today;
 }
 
 /**

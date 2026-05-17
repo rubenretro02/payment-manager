@@ -58,8 +58,8 @@ import {
   formatPaymentFrequency,
   formatPaymentSchedule,
   calculateNextPaymentDate,
+  calculatePreviousPaymentDate,
   getUpcomingPaymentDates,
-  getNextBusinessDay,
 } from '@/lib/payment-dates';
 
 const statusColors: Record<string, string> = {
@@ -285,27 +285,16 @@ export default function MyAccountsPage() {
     today.setHours(0, 0, 0, 0);
     const nextPaymentDate = getNextPayment(account);
 
-    // No payment record check here — we're just showing the user the
-    // visual indicator. If they already reported, the 'Reported' state
-    // elsewhere on the card hides this. The raw previous date is walked
-    // back from nextPaymentDate, then weekend/holiday-adjusted so the
-    // message matches what admin sees in Due Payments.
-    const previousPaymentDateRaw = new Date(nextPaymentDate);
-    if (frequency === 'weekly') {
-      previousPaymentDateRaw.setDate(previousPaymentDateRaw.getDate() - 7);
-    } else if (frequency === 'biweekly') {
-      const firstDay = account.biweekly_first_day ?? 1;
-      const secondDay = account.biweekly_second_day ?? 16;
-      if (nextPaymentDate.getDate() === firstDay) {
-        previousPaymentDateRaw.setMonth(previousPaymentDateRaw.getMonth() - 1);
-        previousPaymentDateRaw.setDate(secondDay);
-      } else {
-        previousPaymentDateRaw.setDate(firstDay);
-      }
-    } else {
-      previousPaymentDateRaw.setMonth(previousPaymentDateRaw.getMonth() - 1);
-    }
-    const previousPaymentDate = getNextBusinessDay(previousPaymentDateRaw);
+    // No payment record check here — we're just showing the visual
+    // indicator. If they already reported, the 'Reported' state elsewhere
+    // on the card hides this. Same helper as admin Due Payments page.
+    const previousPaymentDate = calculatePreviousPaymentDate(
+      frequency,
+      account.payment_day,
+      today,
+      account.biweekly_first_day,
+      account.biweekly_second_day
+    );
 
     const daysSincePrevious = Math.round(
       (today.getTime() - previousPaymentDate.getTime()) / (1000 * 60 * 60 * 24)

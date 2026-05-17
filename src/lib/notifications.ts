@@ -1,6 +1,6 @@
 import { sendTelegramMessage } from './telegram';
 import { createAdminClient } from './supabase/server';
-import { calculateNextPaymentDate, getNextBusinessDay, type PaymentFrequency } from './payment-dates';
+import { calculateNextPaymentDate, calculatePreviousPaymentDate, type PaymentFrequency } from './payment-dates';
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 
@@ -403,30 +403,16 @@ export async function sendPaymentReminders(mode: ReminderMode = 'all'): Promise<
         account.biweekly_second_day
       );
 
-      // Previous scheduled due date — walked back from the (already adjusted)
-      // next date, then re-adjusted for weekend/holiday so the date we quote
-      // matches what the admin sees in the Due Payments page.
-      const previousPaymentDateRaw = new Date(nextPaymentDate);
-      switch (frequency) {
-        case 'weekly':
-          previousPaymentDateRaw.setDate(previousPaymentDateRaw.getDate() - 7);
-          break;
-        case 'biweekly': {
-          const firstDay = account.biweekly_first_day ?? 1;
-          const secondDay = account.biweekly_second_day ?? 16;
-          if (nextPaymentDate.getDate() === firstDay) {
-            previousPaymentDateRaw.setMonth(previousPaymentDateRaw.getMonth() - 1);
-            previousPaymentDateRaw.setDate(secondDay);
-          } else {
-            previousPaymentDateRaw.setDate(firstDay);
-          }
-          break;
-        }
-        case 'monthly':
-          previousPaymentDateRaw.setMonth(previousPaymentDateRaw.getMonth() - 1);
-          break;
-      }
-      const previousPaymentDate = getNextBusinessDay(previousPaymentDateRaw);
+      // Previous scheduled due date (business-day-adjusted), same helper
+      // the Due Payments page uses so the date in the Telegram message
+      // matches exactly.
+      const previousPaymentDate = calculatePreviousPaymentDate(
+        frequency,
+        account.payment_day,
+        today,
+        account.biweekly_first_day,
+        account.biweekly_second_day
+      );
 
       let daysUntilDue = Math.round(
         (nextPaymentDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)
@@ -599,27 +585,13 @@ export async function sendReminderToAccount(
 
   // Same missed-previous detection as the bulk cron, so the date in the
   // Telegram message matches what admin sees in the Due Payments page.
-  const previousPaymentDateRaw = new Date(nextPaymentDate);
-  switch (frequency) {
-    case 'weekly':
-      previousPaymentDateRaw.setDate(previousPaymentDateRaw.getDate() - 7);
-      break;
-    case 'biweekly': {
-      const firstDay = account.biweekly_first_day ?? 1;
-      const secondDay = account.biweekly_second_day ?? 16;
-      if (nextPaymentDate.getDate() === firstDay) {
-        previousPaymentDateRaw.setMonth(previousPaymentDateRaw.getMonth() - 1);
-        previousPaymentDateRaw.setDate(secondDay);
-      } else {
-        previousPaymentDateRaw.setDate(firstDay);
-      }
-      break;
-    }
-    case 'monthly':
-      previousPaymentDateRaw.setMonth(previousPaymentDateRaw.getMonth() - 1);
-      break;
-  }
-  const previousPaymentDate = getNextBusinessDay(previousPaymentDateRaw);
+  const previousPaymentDate = calculatePreviousPaymentDate(
+    frequency,
+    account.payment_day,
+    today,
+    account.biweekly_first_day,
+    account.biweekly_second_day
+  );
 
   let daysUntilDue = Math.round(
     (nextPaymentDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)
