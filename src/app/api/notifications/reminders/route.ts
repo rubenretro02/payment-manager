@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sendPaymentReminders } from '@/lib/notifications';
 
+export const maxDuration = 60;
+
 /**
  * Vercel Cron jobs send GET requests with a Bearer token (CRON_SECRET).
  * Manual triggers from clients can use POST. Both call the same logic.

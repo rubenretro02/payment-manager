@@ -499,7 +499,7 @@ export default function PaymentsPage() {
                         </Badge>
                       </div>
 
-                      {isAdmin && payment.status === 'submitted' && (
+                      {isAdmin && (payment.status === 'submitted' || payment.status === 'pending') && (
                         <div className="flex gap-1">
                           <Button
                             size="icon"
@@ -653,7 +653,7 @@ export default function PaymentsPage() {
             </div>
           </div>
 
-          {isAdmin && selectedPayment?.status === 'submitted' && (
+          {isAdmin && (selectedPayment?.status === 'submitted' || selectedPayment?.status === 'pending') && (
             <DialogFooter>
               <Button
                 variant="outline"
@@ -901,7 +901,7 @@ export default function PaymentsPage() {
                 View Screenshots
               </Button>
             )}
-            {isAdmin && selectedPayment?.status === 'submitted' && (
+            {isAdmin && (selectedPayment?.status === 'submitted' || selectedPayment?.status === 'pending') && (
               <>
                 <Button
                   variant="outline"

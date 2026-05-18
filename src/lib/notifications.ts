@@ -386,14 +386,15 @@ export async function sendPaymentReminders(mode: ReminderMode = 'all'): Promise<
 
     console.log(`[reminders] Eligible accounts (production/nesting): ${accounts.length}`);
 
-    for (const account of accounts) {
+    // Process accounts IN PARALLEL — sequential was hitting Vercel's 10s
+    // serverless timeout (50+ accounts × 1s/Telegram-send = >50s, only the
+    // first few got through before the function was killed).
+    const tasks = accounts.map(async (account) => {
       if (!account.user?.telegram_id) {
         console.log(`[reminders] SKIP ${account.full_name} (status=${account.status}) — no telegram_id`);
-        continue;
+        return null;
       }
-      console.log(`[reminders] Checking ${account.full_name} (status=${account.status}, payment_day=${account.payment_day}, frequency=${account.payment_frequency})`);
 
-      // Calculate next payment date in real time (don't rely on stored DB value)
       const frequency: PaymentFrequency = account.payment_frequency || 'weekly';
       const nextPaymentDate = calculateNextPaymentDate(
         frequency,
@@ -402,10 +403,6 @@ export async function sendPaymentReminders(mode: ReminderMode = 'all'): Promise<
         account.biweekly_first_day,
         account.biweekly_second_day
       );
-
-      // Previous scheduled due date (business-day-adjusted), same helper
-      // the Due Payments page uses so the date in the Telegram message
-      // matches exactly.
       const previousPaymentDate = calculatePreviousPaymentDate(
         frequency,
         account.payment_day,
@@ -421,36 +418,23 @@ export async function sendPaymentReminders(mode: ReminderMode = 'all'): Promise<
         (today.getTime() - previousPaymentDate.getTime()) / (1000 * 60 * 60 * 24)
       );
 
-      // Overdue window scales with frequency: a monthly account stays 'overdue'
-      // for the full month, not just 7 days. If today IS the next payment day,
-      // treat as 'reminder for today', not 'overdue from previous'.
       const overdueWindow = frequency === 'weekly' ? 7 : frequency === 'biweekly' ? 14 : 30;
       const isMissedPrevious = daysSincePrevious > 0 && daysSincePrevious <= overdueWindow && daysUntilDue !== 0;
       const isUpcoming = daysUntilDue >= 0 && daysUntilDue <= 2;
 
-      // Mode filter: overdue cron only nags missed cycles; upcoming cron only
-      // nags due-today / due-soon. Lets admin run different cadences.
-      if (mode === 'overdue' && !isMissedPrevious) {
-        console.log(`[reminders] SKIP ${account.full_name} — mode=overdue but not overdue (daysSincePrevious=${daysSincePrevious})`);
-        continue;
-      }
-      if (mode === 'upcoming' && !isUpcoming) {
-        console.log(`[reminders] SKIP ${account.full_name} — mode=upcoming but daysUntilDue=${daysUntilDue}`);
-        continue;
-      }
-      if (mode === 'all' && daysUntilDue > 2 && !isMissedPrevious) {
-        console.log(`[reminders] SKIP ${account.full_name} — daysUntilDue=${daysUntilDue} (more than 2 days away)`);
-        continue;
-      }
-      // When the previous cycle was missed, use the previous date as the
-      // 'Was due' line in the Telegram message — not the future next date.
+      if (mode === 'overdue' && !isMissedPrevious) return null;
+      if (mode === 'upcoming' && !isUpcoming) return null;
+      if (mode === 'all' && daysUntilDue > 2 && !isMissedPrevious) return null;
+
       let displayDate = nextPaymentDate;
       if (isMissedPrevious && daysUntilDue > 2) {
         daysUntilDue = -daysSincePrevious;
         displayDate = previousPaymentDate;
       }
 
-      // Check if user already submitted/confirmed payment for the current period
+      // Include 'pending' — that's a 'no payment / issue' report the user
+      // already filed. Don't nag them again about something admin needs to
+      // resolve.
       const periodStart = getPeriodStart(frequency, today);
       const { data: existingPayments } = await supabase
         .from('payments')
@@ -458,14 +442,11 @@ export async function sendPaymentReminders(mode: ReminderMode = 'all'): Promise<
         .eq('account_id', account.id)
         .eq('user_id', account.user.id)
         .gte('created_at', periodStart.toISOString())
-        .in('status', ['submitted', 'confirmed']);
+        .in('status', ['submitted', 'confirmed', 'pending']);
 
       if (existingPayments && existingPayments.length > 0) {
-        console.log(`[reminders] SKIP ${account.full_name} — already reported this period`);
-        continue;
+        return null;
       }
-
-      console.log(`[reminders] SEND to ${account.user.telegram_first_name} for ${account.full_name} (daysUntilDue=${daysUntilDue})`);
 
       const success = await sendUserNotification(
         account.user.telegram_id,
@@ -484,9 +465,23 @@ export async function sendPaymentReminders(mode: ReminderMode = 'all'): Promise<
         }
       );
 
-      if (success) {
+      return {
+        success,
+        userName: account.user.telegram_first_name || 'User',
+      };
+    });
+
+    const settled = await Promise.allSettled(tasks);
+    for (const r of settled) {
+      if (r.status === 'rejected') {
+        results.failed++;
+        continue;
+      }
+      const v = r.value;
+      if (!v) continue;
+      if (v.success) {
         results.sent++;
-        results.users.push(account.user.telegram_first_name || 'User');
+        results.users.push(v.userName);
       } else {
         results.failed++;
       }

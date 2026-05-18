@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sendPaymentReminders } from '@/lib/notifications';
 
+// Vercel hobby caps at 60s. Default 10s wasn't enough for the loop to
+// finish before being killed mid-send.
+export const maxDuration = 60;
+
 /**
  * Cron endpoint for OVERDUE reminders only. Intended to be called
  * frequently (e.g. every 2 hours from cron-job.org) so missed-cycle

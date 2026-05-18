@@ -155,6 +155,11 @@ export async function GET() {
         status = 'confirmed';
       } else if (currentPayment?.status === 'submitted') {
         status = 'reported';
+      } else if (currentPayment?.status === 'pending') {
+        // 'No payment received / issue' report from the mini-app — the user
+        // already raised the flag, admin just hasn't acted on it yet. Treat
+        // as Reported so the cron stops nagging and admin can find it.
+        status = 'reported';
       } else if (daysUntilDue === 0) {
         // Today IS the payment day — not overdue yet, the admin still has
         // until end of day. Takes priority over the missed-previous check.
@@ -253,7 +258,10 @@ export async function GET() {
       reported: 4,
       confirmed: 5,
     };
-    const sortedAll = [...result, ...scheduleEntries].sort((a, b) => {
+    // 'All' uses ONLY the real entries (one per account) — no synthetic
+    // duplicates. The synthetic projections still live in grouped.dueSoon
+    // and grouped.upcoming for those specific tabs.
+    const sortedAll = [...result].sort((a, b) => {
       const diff = statusPriority[a.status] - statusPriority[b.status];
       if (diff !== 0) return diff;
       return a.days_until_due - b.days_until_due;
