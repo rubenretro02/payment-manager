@@ -386,6 +386,25 @@ export async function sendPaymentReminders(mode: ReminderMode = 'all'): Promise<
 
     console.log(`[reminders] Eligible accounts (production/nesting): ${accounts.length}`);
 
+    // Batch the existingPayments check into ONE query instead of N per-account
+    // queries. This is the real bottleneck — 50 sequential round-trips to
+    // Supabase was eating the 10s budget. One query, filter in-memory.
+    const accountIds: string[] = accounts.map((a) => a.id);
+    const windowStart = new Date(today);
+    windowStart.setDate(windowStart.getDate() - 30); // widest possible period
+    const { data: recentPayments } = await supabase
+      .from('payments')
+      .select('account_id, user_id, created_at')
+      .in('account_id', accountIds)
+      .gte('created_at', windowStart.toISOString())
+      .in('status', ['submitted', 'confirmed', 'pending']);
+    const paymentsByAccount = new Map<string, Array<{ user_id: string; created_at: string }>>();
+    for (const p of recentPayments || []) {
+      const list = paymentsByAccount.get(p.account_id) || [];
+      list.push({ user_id: p.user_id, created_at: p.created_at });
+      paymentsByAccount.set(p.account_id, list);
+    }
+
     // Process accounts IN PARALLEL — sequential was hitting Vercel's 10s
     // serverless timeout (50+ accounts × 1s/Telegram-send = >50s, only the
     // first few got through before the function was killed).
@@ -432,19 +451,15 @@ export async function sendPaymentReminders(mode: ReminderMode = 'all'): Promise<
         displayDate = previousPaymentDate;
       }
 
-      // Include 'pending' — that's a 'no payment / issue' report the user
-      // already filed. Don't nag them again about something admin needs to
-      // resolve.
+      // Use the pre-fetched batch instead of a per-account DB query.
+      // Includes 'pending' so 'no payment / issue' reports stop reminders.
       const periodStart = getPeriodStart(frequency, today);
-      const { data: existingPayments } = await supabase
-        .from('payments')
-        .select('id')
-        .eq('account_id', account.id)
-        .eq('user_id', account.user.id)
-        .gte('created_at', periodStart.toISOString())
-        .in('status', ['submitted', 'confirmed', 'pending']);
-
-      if (existingPayments && existingPayments.length > 0) {
+      const periodStartIso = periodStart.toISOString();
+      const accountPayments = paymentsByAccount.get(account.id) || [];
+      const hasExisting = accountPayments.some(
+        (p) => p.user_id === account.user.id && p.created_at >= periodStartIso
+      );
+      if (hasExisting) {
         return null;
       }
 

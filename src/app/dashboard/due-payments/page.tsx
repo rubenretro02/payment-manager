@@ -936,9 +936,12 @@ export default function DuePaymentsPage() {
                 <Badge className={`text-sm px-4 py-1 ${
                   viewPayment.status === 'confirmed' ? 'bg-green-100 text-green-800' :
                   viewPayment.status === 'rejected' ? 'bg-red-100 text-red-800' :
+                  viewPayment.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
                   'bg-blue-100 text-blue-800'
                 }`}>
-                  {viewPayment.status === 'submitted' ? 'Awaiting Confirmation' : viewPayment.status}
+                  {viewPayment.status === 'submitted' ? 'Awaiting Confirmation' :
+                   viewPayment.status === 'pending' ? 'Issue Report — Action Needed' :
+                   viewPayment.status}
                 </Badge>
               </div>
 
@@ -1031,7 +1034,7 @@ export default function DuePaymentsPage() {
           )}
 
           <DialogFooter className="flex-col sm:flex-row gap-2">
-            {viewPayment?.status === 'submitted' && (
+            {(viewPayment?.status === 'submitted' || viewPayment?.status === 'pending') && (
               <Button onClick={() => router.push(`/dashboard/payments?payment=${viewPayment.id}`)} className="w-full sm:w-auto">
                 Review & Confirm in Payments →
               </Button>
@@ -1097,7 +1100,9 @@ export default function DuePaymentsPage() {
                           p.status === 'submitted' ? 'bg-blue-100 text-blue-800' :
                           'bg-yellow-100 text-yellow-800'
                         }>
-                          {p.status === 'submitted' ? 'To Confirm' : p.status}
+                          {p.status === 'submitted' ? 'To Confirm' :
+                           p.status === 'pending' ? 'Issue Report' :
+                           p.status}
                         </Badge>
                       </div>
                       <div className="text-xs text-muted-foreground mt-1 flex flex-wrap gap-2">
