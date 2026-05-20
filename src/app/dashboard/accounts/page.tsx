@@ -136,6 +136,13 @@ export default function AccountsPage() {
 
   const [assignUserId, setAssignUserId] = useState('');
 
+  // Commission project = no schedule. Hide payment config when selected.
+  const isCommissionSelected = (() => {
+    const project = projects.find((p) => p.id === newAccount.project_id);
+    const name = project?.display_name || project?.name || '';
+    return name.trim().toLowerCase() === 'commission';
+  })();
+
   useEffect(() => {
     fetchData();
   }, []);
@@ -503,7 +510,14 @@ export default function AccountsPage() {
                 </p>
               </div>
 
-              {/* Payment Configuration */}
+              {/* Payment Configuration — hidden for Commission projects (no schedule). */}
+              {isCommissionSelected ? (
+                <div className="border-t pt-4 mt-2 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 p-3">
+                  <p className="text-sm text-amber-800 dark:text-amber-300">
+                    <strong>Commission account.</strong> No payment schedule, no reminders. The user will report whenever they receive a commission payment.
+                  </p>
+                </div>
+              ) : (
               <div className="border-t pt-4 mt-2">
                 <h4 className="font-medium mb-3 flex items-center gap-2">
                   <Calendar className="h-4 w-4" />
@@ -635,6 +649,7 @@ export default function AccountsPage() {
                   </div>
                 </div>
               </div>
+              )}
 
               {/* Percentage */}
               <div className="border-t pt-4 mt-2">
@@ -1391,7 +1406,14 @@ export default function AccountsPage() {
               </div>
             </div>
 
-            {/* Payment Configuration */}
+            {/* Payment Configuration — hidden for Commission projects (no schedule). */}
+            {isCommissionSelected ? (
+              <div className="border-t pt-4 mt-2 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 p-3">
+                <p className="text-sm text-amber-800 dark:text-amber-300">
+                  <strong>Commission account.</strong> No payment schedule, no reminders.
+                </p>
+              </div>
+            ) : (
             <div className="border-t pt-4 mt-2">
               <h4 className="font-medium mb-3 flex items-center gap-2">
                 <Calendar className="h-4 w-4" />
@@ -1521,6 +1543,7 @@ export default function AccountsPage() {
                 </div>
               </div>
             </div>
+            )}
 
             {/* Crypto Wallet */}
             <div className="border-t pt-4 mt-2">

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/server';
 import { calculateNextPaymentDate, calculatePreviousPaymentDate, type PaymentFrequency } from '@/lib/payment-dates';
+import { isCommissionAccount } from '@/lib/account-utils';
 
 interface DueAccountInfo {
   account_id: string;
@@ -97,6 +98,10 @@ export async function GET() {
     const result: DueAccountInfo[] = [];
 
     for (const account of accounts) {
+      // Commission accounts don't have a payment schedule — user reports
+      // when they get a commission. Skip from the Due Payments screen.
+      if (isCommissionAccount(account)) continue;
+
       const frequency: PaymentFrequency = account.payment_frequency || 'weekly';
       const nextPaymentDate = calculateNextPaymentDate(
         frequency,

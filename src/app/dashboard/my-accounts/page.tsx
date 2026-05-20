@@ -61,6 +61,7 @@ import {
   calculatePreviousPaymentDate,
   getUpcomingPaymentDates,
 } from '@/lib/payment-dates';
+import { isCommissionAccount } from '@/lib/account-utils';
 
 const statusColors: Record<string, string> = {
   production: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400',
@@ -836,10 +837,14 @@ export default function MyAccountsPage() {
           <div className="grid gap-4 md:grid-cols-2">
             {filteredAccounts.map((account) => {
             const StatusIcon = statusIcons[account.status] || Briefcase;
-            const nextPayment = getNextPayment(account);
-            const isPaymentDue = nextPayment <= new Date();
-            const overdueInfo = getOverdueInfo(account);
-            const currentReport = getCurrentPeriodReport(account);
+            const isCommission = isCommissionAccount(account);
+            // Commission accounts have no schedule — skip date/overdue work.
+            const nextPayment = isCommission ? null : getNextPayment(account);
+            const isPaymentDue = nextPayment ? nextPayment <= new Date() : false;
+            const overdueInfo = isCommission
+              ? { isOverdue: false, missedDate: null, daysOverdue: 0 }
+              : getOverdueInfo(account);
+            const currentReport = isCommission ? null : getCurrentPeriodReport(account);
             const showOverdueBanner = overdueInfo.isOverdue && !currentReport;
 
             return (
@@ -876,7 +881,9 @@ export default function MyAccountsPage() {
                       {account.platform?.display_name || 'Platform'}
                     </Badge>
                     {account.project && (
-                      <Badge className="bg-teal-100 text-teal-800 dark:bg-teal-900/30 dark:text-teal-400">
+                      <Badge className={isCommission
+                        ? "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400"
+                        : "bg-teal-100 text-teal-800 dark:bg-teal-900/30 dark:text-teal-400"}>
                         <FolderOpen className="h-3 w-3 mr-1" />
                         {account.project.display_name}
                       </Badge>
@@ -889,20 +896,44 @@ export default function MyAccountsPage() {
                       <span className="text-muted-foreground">Your percentage:</span>
                       <span className="font-semibold text-primary">{account.percentage}%</span>
                     </div>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">Frequency:</span>
-                      <span>{formatPaymentFrequency(account.payment_frequency || 'weekly')}</span>
-                    </div>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">Next payment:</span>
-                      <span className={isPaymentDue ? 'text-yellow-600 font-medium' : ''}>
-                        {format(nextPayment, "MMM d, yyyy", { locale: enUS })}
-                      </span>
-                    </div>
+                    {isCommission ? (
+                      <div className="text-xs text-muted-foreground italic">
+                        Commission account — report whenever you receive a payment. No schedule, no reminders.
+                      </div>
+                    ) : (
+                      <>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground">Frequency:</span>
+                          <span>{formatPaymentFrequency(account.payment_frequency || 'weekly')}</span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground">Next payment:</span>
+                          <span className={isPaymentDue ? 'text-yellow-600 font-medium' : ''}>
+                            {nextPayment ? format(nextPayment, "MMM d, yyyy", { locale: enUS }) : '—'}
+                          </span>
+                        </div>
+                      </>
+                    )}
                   </div>
 
+                  {/* Commission accounts: always reportable (any status except drop). */}
+                  {isCommission && account.status !== 'drop' && (
+                    <div className="space-y-2">
+                      <Button
+                        className="w-full"
+                        onClick={() => {
+                          setSelectedAccount(account);
+                          setIsPaymentDialogOpen(true);
+                        }}
+                      >
+                        <DollarSign className="h-4 w-4 mr-2" />
+                        Report Commission Payment
+                      </Button>
+                    </div>
+                  )}
+
                   {/* Actions - Only show Report Payment for production/nesting accounts */}
-                  {(account.status === 'production' || account.status === 'nesting') && (() => {
+                  {!isCommission && (account.status === 'production' || account.status === 'nesting') && (() => {
                     const currentReport = getCurrentPeriodReport(account);
 
                     // Already reported for this period — show status + view + add another
@@ -1013,8 +1044,8 @@ export default function MyAccountsPage() {
                     );
                   })()}
 
-                  {/* For non-production/nesting accounts, only show schedule */}
-                  {account.status !== 'production' && account.status !== 'nesting' && (
+                  {/* For non-production/nesting regular accounts, only show schedule. */}
+                  {!isCommission && account.status !== 'production' && account.status !== 'nesting' && (
                     <Button
                       variant="outline"
                       className="w-full"

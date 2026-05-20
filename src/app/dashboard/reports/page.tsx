@@ -52,6 +52,7 @@ import {
 } from 'lucide-react';
 import { format, startOfDay, startOfWeek, startOfMonth, startOfYear, isAfter } from 'date-fns';
 import type { Payment } from '@/lib/types';
+import { isCommissionAccount } from '@/lib/account-utils';
 
 type DateRange = 'today' | 'week' | 'month' | 'year' | 'all';
 
@@ -160,29 +161,51 @@ export default function ReportsPage() {
     return payments.filter(p => isAfter(new Date(p.created_at), startDate));
   }, [payments, dateRange, selectedYear, selectedMonth]);
 
-  // Aggregate stats
+  // Split commission vs regular so income from Commission projects shows
+  // separately on the Reports page (admin wants to see commission inflow
+  // on its own, not mixed with payroll-style payments).
+  const isCommissionPayment = (p: Payment) =>
+    !!p.account && isCommissionAccount(p.account as { project?: { display_name?: string | null; name?: string | null } | null });
+
+  const regularPayments = useMemo(
+    () => filteredPayments.filter(p => !isCommissionPayment(p)),
+    [filteredPayments]
+  );
+  const commissionPayments = useMemo(
+    () => filteredPayments.filter(isCommissionPayment),
+    [filteredPayments]
+  );
+
+  // Aggregate stats — regular payments only. Commission has its own totals.
   const stats = useMemo(() => ({
-    totalPlatformEarnings: filteredPayments.reduce((s, p) => s + (Number(p.platform_amount) || 0), 0),
-    totalOwed: filteredPayments.reduce((s, p) => s + (Number(p.amount_owed) || 0), 0),
-    totalReceived: filteredPayments.filter(p => p.status === 'confirmed').reduce((s, p) => s + (Number(p.amount_paid) || 0), 0),
-    totalPending: filteredPayments.filter(p => p.status === 'submitted' || p.status === 'pending').reduce((s, p) => s + (Number(p.amount_owed) || 0), 0),
-    totalLoss: filteredPayments
+    totalPlatformEarnings: regularPayments.reduce((s, p) => s + (Number(p.platform_amount) || 0), 0),
+    totalOwed: regularPayments.reduce((s, p) => s + (Number(p.amount_owed) || 0), 0),
+    totalReceived: regularPayments.filter(p => p.status === 'confirmed').reduce((s, p) => s + (Number(p.amount_paid) || 0), 0),
+    totalPending: regularPayments.filter(p => p.status === 'submitted' || p.status === 'pending').reduce((s, p) => s + (Number(p.amount_owed) || 0), 0),
+    totalLoss: regularPayments
       .filter(p => p.status === 'confirmed')
       .reduce((s, p) => s + Math.max(0, (Number(p.amount_owed) || 0) - (Number(p.amount_paid) || 0)), 0),
     paymentsCount: {
-      total: filteredPayments.length,
-      confirmed: filteredPayments.filter(p => p.status === 'confirmed').length,
-      pending: filteredPayments.filter(p => p.status === 'submitted' || p.status === 'pending').length,
-      rejected: filteredPayments.filter(p => p.status === 'rejected').length,
+      total: regularPayments.length,
+      confirmed: regularPayments.filter(p => p.status === 'confirmed').length,
+      pending: regularPayments.filter(p => p.status === 'submitted' || p.status === 'pending').length,
+      rejected: regularPayments.filter(p => p.status === 'rejected').length,
     },
-  }), [filteredPayments]);
+  }), [regularPayments]);
+
+  const commissionStats = useMemo(() => ({
+    totalReceived: commissionPayments.filter(p => p.status === 'confirmed').reduce((s, p) => s + (Number(p.amount_paid) || 0), 0),
+    totalPending: commissionPayments.filter(p => p.status === 'submitted' || p.status === 'pending').reduce((s, p) => s + (Number(p.amount_owed) || 0), 0),
+    paymentsCount: commissionPayments.length,
+    confirmedCount: commissionPayments.filter(p => p.status === 'confirmed').length,
+  }), [commissionPayments]);
 
   const collectionRate = stats.totalOwed > 0 ? ((stats.totalReceived / stats.totalOwed) * 100).toFixed(1) : '0';
 
-  // Group by account
+  // Group by account — REGULAR accounts only. Commission has its own block.
   const accountSummaries = useMemo<AccountSummary[]>(() => {
     const map = new Map<string, AccountSummary>();
-    for (const p of filteredPayments) {
+    for (const p of regularPayments) {
       const accountId = p.account_id || 'no-account';
       if (!map.has(accountId)) {
         map.set(accountId, {
@@ -219,13 +242,13 @@ export default function ReportsPage() {
       }
     }
     return Array.from(map.values()).sort((a, b) => b.totalPaid - a.totalPaid);
-  }, [filteredPayments]);
+  }, [regularPayments]);
 
-  // Group by user
+  // Group by user — REGULAR accounts only.
   const userSummaries = useMemo<UserSummary[]>(() => {
     const map = new Map<string, UserSummary>();
     const accountsSeen = new Map<string, Set<string>>();
-    for (const p of filteredPayments) {
+    for (const p of regularPayments) {
       const userId = p.user_id;
       if (!userId) continue;
       if (!map.has(userId)) {
@@ -260,7 +283,7 @@ export default function ReportsPage() {
       s.complianceRate = s.totalOwed > 0 ? (s.totalPaid / s.totalOwed) * 100 : 0;
     }
     return Array.from(map.values()).sort((a, b) => b.totalPaid - a.totalPaid);
-  }, [filteredPayments]);
+  }, [regularPayments]);
 
   // Underpayers (people who consistently pay less than owed)
   const topUnderpayers = useMemo(() => {
@@ -270,16 +293,17 @@ export default function ReportsPage() {
       .slice(0, 10);
   }, [userSummaries]);
 
-  // Underpaid individual payments (clickable for screenshots)
+  // Underpaid individual payments — regular accounts only, commission
+  // doesn't have an 'amount_owed' baseline.
   const underpaidPayments = useMemo(() => {
-    return filteredPayments
+    return regularPayments
       .filter(p => p.status === 'confirmed' && (Number(p.amount_owed) || 0) > (Number(p.amount_paid) || 0))
       .sort((a, b) => {
         const lossA = (Number(a.amount_owed) || 0) - (Number(a.amount_paid) || 0);
         const lossB = (Number(b.amount_owed) || 0) - (Number(b.amount_paid) || 0);
         return lossB - lossA;
       });
-  }, [filteredPayments]);
+  }, [regularPayments]);
 
   // Pending individual payments (awaiting confirmation)
   const pendingPayments = useMemo(() => {
@@ -474,6 +498,48 @@ export default function ReportsPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Commission Income — kept separate from regular payments per admin
+          request. These come from accounts on the 'Commission' project. */}
+      {(commissionStats.paymentsCount > 0) && (
+        <Card className="border-amber-300 dark:border-amber-700 bg-amber-50/40 dark:bg-amber-950/20">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-medium flex items-center gap-2 text-amber-700 dark:text-amber-400">
+              <DollarSign className="h-4 w-4" />
+              Commission Income (separate from regular accounts)
+            </CardTitle>
+            <CardDescription className="text-xs">
+              Income from accounts on the &ldquo;Commission&rdquo; project. Not included in totals above.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-4 grid-cols-2 md:grid-cols-3">
+              <div>
+                <p className="text-xs text-muted-foreground">Received (confirmed)</p>
+                <p className="text-xl font-bold text-amber-700 dark:text-amber-400">
+                  ${commissionStats.totalReceived.toFixed(2)}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {commissionStats.confirmedCount} confirmed
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Pending</p>
+                <p className="text-xl font-bold text-yellow-700 dark:text-yellow-400">
+                  ${commissionStats.totalPending.toFixed(2)}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {commissionPayments.length - commissionStats.confirmedCount} awaiting
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Total reports</p>
+                <p className="text-xl font-bold">{commissionStats.paymentsCount}</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Active filter badge */}
       {cardFilter !== 'all' && activeView === 'overview' && (

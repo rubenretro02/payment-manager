@@ -1,6 +1,7 @@
 import { sendTelegramMessage } from './telegram';
 import { createAdminClient } from './supabase/server';
 import { calculateNextPaymentDate, calculatePreviousPaymentDate, type PaymentFrequency } from './payment-dates';
+import { isCommissionAccount } from './account-utils';
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 
@@ -372,19 +373,23 @@ export async function sendPaymentReminders(mode: ReminderMode = 'all'): Promise<
     }).format(new Date());
     const today = new Date(`${todayDateStr}T00:00:00.000Z`);
 
-    const { data: accounts } = await supabase
+    const { data: accountsRaw } = await supabase
       .from('accounts')
       .select(`
         *,
         user:users!user_id(id, telegram_id, telegram_first_name),
-        platform:platforms(display_name)
+        platform:platforms(display_name),
+        project:projects(display_name)
       `)
       .not('user_id', 'is', null)
       .in('status', ['production', 'nesting']);
 
-    if (!accounts) return results;
+    if (!accountsRaw) return results;
 
-    console.log(`[reminders] Eligible accounts (production/nesting): ${accounts.length}`);
+    // Commission accounts have no schedule, so they never get reminders.
+    const accounts = accountsRaw.filter((a) => !isCommissionAccount(a));
+
+    console.log(`[reminders] Eligible accounts (production/nesting): ${accounts.length} (excluded ${accountsRaw.length - accounts.length} commission)`);
 
     // Batch the existingPayments check into ONE query instead of N per-account
     // queries. This is the real bottleneck — 50 sequential round-trips to
@@ -568,7 +573,8 @@ export async function sendReminderToAccount(
     .select(`
       *,
       user:users!user_id(id, telegram_id, telegram_first_name),
-      platform:platforms(display_name)
+      platform:platforms(display_name),
+      project:projects(display_name)
     `)
     .eq('id', accountId)
     .single();
@@ -576,6 +582,9 @@ export async function sendReminderToAccount(
   if (error || !account) return { sent: false, error: 'Account not found' };
   if (!account.user?.telegram_id) {
     return { sent: false, error: 'User has no Telegram linked' };
+  }
+  if (isCommissionAccount(account)) {
+    return { sent: false, error: 'Commission accounts do not receive reminders' };
   }
 
   // Use admin's local timezone so Vercel's UTC doesn't roll the date early

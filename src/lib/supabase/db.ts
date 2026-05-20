@@ -83,7 +83,7 @@ export async function getAllPayments(status?: string, accountId?: string): Promi
   if (accountIds.length > 0) {
     const { data: accountsData } = await supabase
       .from('accounts')
-      .select('*, platform:platforms(*)')
+      .select('*, platform:platforms(*), project:projects(*)')
       .in('id', accountIds);
     accounts = accountsData || [];
   }
