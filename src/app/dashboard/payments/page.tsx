@@ -67,6 +67,9 @@ export default function PaymentsPage() {
   const [rejectionReason, setRejectionReason] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // One-shot backfill UI state
+  const [backfillSubmitting, setBackfillSubmitting] = useState(false);
+
   // Edit / Delete payment state — admin can correct or remove any report
   // straight from the UI instead of going into Supabase.
   const [editOpen, setEditOpen] = useState(false);
@@ -189,6 +192,28 @@ export default function PaymentsPage() {
 
   const getPaymentScreenshot = (payment: Payment) => {
     return payment.payment_screenshot_url || payment.screenshot_url;
+  };
+
+  const handleBackfillCycleDates = async () => {
+    if (!confirm('Tag every legacy payment with its nearest scheduled cycle date? This is a one-shot operation — re-runs are safe but only need to happen once.')) {
+      return;
+    }
+    setBackfillSubmitting(true);
+    try {
+      const res = await fetch('/api/admin/backfill-for-cycle-date', { method: 'POST' });
+      const data = await res.json();
+      if (!data.success) {
+        alert('Backfill failed: ' + (data.error || 'unknown error'));
+        return;
+      }
+      alert(`Backfill complete. Updated ${data.updated} / ${data.total} payments (skipped ${data.skipped}).`);
+      await fetchPayments();
+    } catch (e) {
+      console.error('Backfill error:', e);
+      alert('Backfill failed: ' + (e instanceof Error ? e.message : 'unknown error'));
+    } finally {
+      setBackfillSubmitting(false);
+    }
   };
 
   const openEditDialog = () => {
@@ -388,10 +413,27 @@ export default function PaymentsPage() {
             Manage and confirm user payments
           </p>
         </div>
-        <Button variant="outline" className="gap-2">
-          <Download className="h-4 w-4" />
-          Export
-        </Button>
+        <div className="flex gap-2">
+          {isAdmin && (
+            <Button
+              variant="outline"
+              className="gap-2"
+              onClick={handleBackfillCycleDates}
+              disabled={backfillSubmitting}
+              title="One-shot: tag every legacy payment with its nearest scheduled cycle date so attribution stops relying on the today-N-days heuristic"
+            >
+              {backfillSubmitting ? (
+                <><Loader2 className="h-4 w-4 animate-spin" /> Tagging...</>
+              ) : (
+                'Backfill cycle tags'
+              )}
+            </Button>
+          )}
+          <Button variant="outline" className="gap-2">
+            <Download className="h-4 w-4" />
+            Export
+          </Button>
+        </div>
       </div>
 
       {/* Date filter */}
