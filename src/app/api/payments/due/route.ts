@@ -165,6 +165,17 @@ export async function GET() {
           return p.created_at >= legacyStartIso;
         }) || null;
 
+      // Also check the previous cycle so a user who already filed for it
+      // (a 'No Payment / Issue' pending report, or just a late payment)
+      // doesn't get shown as Overdue. Only matters for tagged payments —
+      // a legacy payment without for_cycle_date can't be unambiguously
+      // attributed to the previous vs current cycle, so leave it alone.
+      const previousCycleDateStr = previousPaymentDate.toISOString().split('T')[0];
+      const previousCyclePayment =
+        (existingPayments || []).find(
+          (p) => p.for_cycle_date && p.for_cycle_date === previousCycleDateStr
+        ) || null;
+
       // Determine status. When there's no payment and the previous due date
       // already passed without one, this account is overdue from THAT date —
       // not 'due_soon' for next week.
@@ -185,6 +196,10 @@ export async function GET() {
         status = 'due_today';
       } else if (
         !currentPayment &&
+        // If the user already filed something for the previous cycle (even
+        // a 'No Payment / Issue' pending report), it's not really overdue
+        // anymore — admin just needs to act on the existing report.
+        !previousCyclePayment &&
         daysSincePrevious > 0 &&
         // Overdue window = one full cycle. After that the next cycle's
         // deadline becomes the relevant date, not the older miss.
