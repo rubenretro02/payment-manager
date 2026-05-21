@@ -3,7 +3,6 @@ import { createAdminClient } from './supabase/server';
 import {
   calculateNextPaymentDate,
   calculatePreviousPaymentDate,
-  getCycleWindow,
   type PaymentFrequency,
 } from './payment-dates';
 import { isCommissionAccount } from './account-utils';
@@ -324,6 +323,21 @@ export async function notifyAdminsNewPayment(data: {
 // REMINDER FUNCTIONS
 // =============================================
 
+/**
+ * Legacy fallback for payments without for_cycle_date set. Matches the
+ * pre-for_cycle_date heuristic so existing data keeps its classification.
+ */
+function getLegacyPeriodStart(frequency: PaymentFrequency, today: Date): Date {
+  const start = new Date(today);
+  start.setHours(0, 0, 0, 0);
+  switch (frequency) {
+    case 'weekly': start.setDate(start.getDate() - 5); break;
+    case 'biweekly': start.setDate(start.getDate() - 12); break;
+    case 'monthly': start.setDate(start.getDate() - 20); break;
+  }
+  return start;
+}
+
 export type ReminderMode = 'all' | 'overdue' | 'upcoming';
 
 /**
@@ -454,22 +468,22 @@ export async function sendPaymentReminders(mode: ReminderMode = 'all'): Promise<
       }
 
       // Decide which cycle we'd be nagging about: previous (overdue) or
-      // next (upcoming). Then check if the user already reported for that
-      // exact cycle. Prefer the explicit for_cycle_date tag; fall back to
-      // the cycle-window heuristic for legacy untagged payments.
+      // next (upcoming). Then check if the user already reported for it.
+      // New payments carry an explicit for_cycle_date — prefer that.
+      // Legacy payments (null tag) keep the original today-minus-N-days
+      // heuristic so existing data classification doesn't shift.
       const targetCycleDate =
         mode === 'overdue' || (mode === 'all' && isMissedPrevious)
           ? previousPaymentDate
           : nextPaymentDate;
       const targetCycleStr = targetCycleDate.toISOString().split('T')[0];
-      const cycleWindow = getCycleWindow(targetCycleDate, frequency);
-      const startIso = cycleWindow.start.toISOString();
-      const endIso = cycleWindow.end.toISOString();
+      const legacyPeriodStart = getLegacyPeriodStart(frequency, today);
+      const legacyStartIso = legacyPeriodStart.toISOString();
       const accountPayments = paymentsByAccount.get(account.id) || [];
       const hasExisting = accountPayments.some((p) => {
         if (p.user_id !== account.user.id) return false;
         if (p.for_cycle_date) return p.for_cycle_date === targetCycleStr;
-        return p.created_at >= startIso && p.created_at < endIso;
+        return p.created_at >= legacyStartIso;
       });
       if (hasExisting) {
         return null;

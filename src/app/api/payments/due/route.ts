@@ -3,10 +3,24 @@ import { createAdminClient } from '@/lib/supabase/server';
 import {
   calculateNextPaymentDate,
   calculatePreviousPaymentDate,
-  getCycleWindow,
   type PaymentFrequency,
 } from '@/lib/payment-dates';
 import { isCommissionAccount } from '@/lib/account-utils';
+
+/**
+ * Legacy fallback for payments without for_cycle_date set. Matches the
+ * pre-for_cycle_date heuristic so existing data keeps its classification.
+ */
+function getLegacyPeriodStart(frequency: PaymentFrequency, today: Date): Date {
+  const start = new Date(today);
+  start.setHours(0, 0, 0, 0);
+  switch (frequency) {
+    case 'weekly': start.setDate(start.getDate() - 5); break;
+    case 'biweekly': start.setDate(start.getDate() - 12); break;
+    case 'monthly': start.setDate(start.getDate() - 20); break;
+  }
+  return start;
+}
 
 interface DueAccountInfo {
   account_id: string;
@@ -124,12 +138,12 @@ export async function GET() {
       nextPaymentDate.setUTCHours(12, 0, 0, 0);
       previousPaymentDate.setUTCHours(12, 0, 0, 0);
 
-      // Find a payment that belongs to the CURRENT cycle. New payments are
-      // tagged at submission with for_cycle_date — match on that. Legacy
-      // payments fall back to the cycle-window heuristic. Fetch wide enough
-      // to catch a late tagged payment that landed outside the window.
-      const cycleWindow = getCycleWindow(nextPaymentDate, frequency);
+      // Find a payment for the CURRENT cycle. New payments carry the
+      // explicit for_cycle_date tag (set at submission) — prefer that.
+      // Legacy payments (null tag) keep the original today-minus-N-days
+      // heuristic so historical classification doesn't shift.
       const nextCycleDateStr = nextPaymentDate.toISOString().split('T')[0];
+      const legacyPeriodStart = getLegacyPeriodStart(frequency, today);
       const lookbackCutoff = new Date(today);
       lookbackCutoff.setDate(lookbackCutoff.getDate() - 60);
       let paymentsQuery = supabase
@@ -144,12 +158,11 @@ export async function GET() {
       }
       const { data: existingPayments } = await paymentsQuery;
 
-      const startIso = cycleWindow.start.toISOString();
-      const endIso = cycleWindow.end.toISOString();
+      const legacyStartIso = legacyPeriodStart.toISOString();
       const currentPayment =
         (existingPayments || []).find((p) => {
           if (p.for_cycle_date) return p.for_cycle_date === nextCycleDateStr;
-          return p.created_at >= startIso && p.created_at < endIso;
+          return p.created_at >= legacyStartIso;
         }) || null;
 
       // Determine status. When there's no payment and the previous due date
