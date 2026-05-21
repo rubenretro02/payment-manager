@@ -174,7 +174,11 @@ export async function GET() {
         daysSincePrevious > 0 &&
         // Overdue window = one full cycle. After that the next cycle's
         // deadline becomes the relevant date, not the older miss.
-        daysSincePrevious <= (frequency === 'weekly' ? 7 : frequency === 'biweekly' ? 14 : 30)
+        daysSincePrevious <= (frequency === 'weekly' ? 7 : frequency === 'biweekly' ? 14 : 30) &&
+        // Don't flag a cycle that's older than the account itself —
+        // newly-created or recently-promoted accounts shouldn't carry
+        // pre-existence overdue weight.
+        (!account.created_at || previousPaymentDate >= new Date(account.created_at))
       ) {
         // Missed previous cycle — show overdue with that adjusted past date.
         status = 'overdue';

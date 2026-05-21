@@ -281,6 +281,12 @@ export default function MyAccountsPage() {
    * admin sees, with the previous due date (not the next one).
    */
   const getOverdueInfo = (account: Account): { isOverdue: boolean; missedDate: Date | null; daysOverdue: number } => {
+    // Only payment-requiring statuses can be overdue. Active/drop/etc.
+    // aren't supposed to be paying right now, so don't flag them.
+    if (account.status !== 'production' && account.status !== 'nesting') {
+      return { isOverdue: false, missedDate: null, daysOverdue: 0 };
+    }
+
     const frequency = account.payment_frequency || 'weekly';
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -296,6 +302,18 @@ export default function MyAccountsPage() {
       account.biweekly_first_day,
       account.biweekly_second_day
     );
+
+    // If the 'previous' scheduled date is before the account existed, the
+    // user was never responsible for that cycle. Avoids flagging a brand-
+    // new account as immediately overdue, and stops a freshly-promoted
+    // active→production account from showing weeks of fake backlog.
+    if (account.created_at) {
+      const createdAt = new Date(account.created_at);
+      createdAt.setHours(0, 0, 0, 0);
+      if (previousPaymentDate < createdAt) {
+        return { isOverdue: false, missedDate: null, daysOverdue: 0 };
+      }
+    }
 
     const daysSincePrevious = Math.round(
       (today.getTime() - previousPaymentDate.getTime()) / (1000 * 60 * 60 * 24)

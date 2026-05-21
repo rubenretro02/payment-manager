@@ -443,7 +443,16 @@ export async function sendPaymentReminders(mode: ReminderMode = 'all'): Promise<
       );
 
       const overdueWindow = frequency === 'weekly' ? 7 : frequency === 'biweekly' ? 14 : 30;
-      const isMissedPrevious = daysSincePrevious > 0 && daysSincePrevious <= overdueWindow && daysUntilDue !== 0;
+      // Don't flag overdue for cycles before the account existed (avoids
+      // overdue spam when a brand-new account is created or when an active
+      // account is promoted to production).
+      const previousAfterCreation =
+        !account.created_at || previousPaymentDate >= new Date(account.created_at);
+      const isMissedPrevious =
+        daysSincePrevious > 0 &&
+        daysSincePrevious <= overdueWindow &&
+        daysUntilDue !== 0 &&
+        previousAfterCreation;
       const isUpcoming = daysUntilDue >= 0 && daysUntilDue <= 2;
 
       if (mode === 'overdue' && !isMissedPrevious) return null;
@@ -619,7 +628,13 @@ export async function sendReminderToAccount(
     (today.getTime() - previousPaymentDate.getTime()) / (1000 * 60 * 60 * 24)
   );
   const overdueWindow = frequency === 'weekly' ? 7 : frequency === 'biweekly' ? 14 : 30;
-  const isMissedPrevious = daysSincePrevious > 0 && daysSincePrevious <= overdueWindow && daysUntilDue !== 0;
+  const previousAfterCreation =
+    !account.created_at || previousPaymentDate >= new Date(account.created_at);
+  const isMissedPrevious =
+    daysSincePrevious > 0 &&
+    daysSincePrevious <= overdueWindow &&
+    daysUntilDue !== 0 &&
+    previousAfterCreation;
   let displayDate = nextPaymentDate;
   if (isMissedPrevious && daysUntilDue > 2) {
     daysUntilDue = -daysSincePrevious;
