@@ -200,6 +200,84 @@ export default function ReportsPage() {
     confirmedCount: commissionPayments.filter(p => p.status === 'confirmed').length,
   }), [commissionPayments]);
 
+  // Commission summaries — same shape as the regular By Account / By User
+  // tables but populated from commission payments only.
+  const commissionAccountSummaries = useMemo<AccountSummary[]>(() => {
+    const map = new Map<string, AccountSummary>();
+    for (const p of commissionPayments) {
+      const accountId = p.account_id || 'no-account';
+      if (!map.has(accountId)) {
+        map.set(accountId, {
+          accountId,
+          accountName: p.account?.full_name || 'No account',
+          accountEmail: p.account?.account_email || '',
+          platformName: p.account?.platform?.display_name || '-',
+          userName: p.user?.telegram_first_name || 'Unknown',
+          userUsername: p.user?.telegram_username || '',
+          payments: [],
+          totalEarned: 0,
+          totalOwed: 0,
+          totalPaid: 0,
+          totalLoss: 0,
+          paymentsCount: 0,
+          confirmedCount: 0,
+          pendingCount: 0,
+          rejectedCount: 0,
+        });
+      }
+      const s = map.get(accountId)!;
+      s.payments.push(p);
+      s.paymentsCount++;
+      // Commission has no platform_amount / amount_owed concept — the
+      // amount_paid IS the commission. Track it as totalPaid.
+      if (p.status === 'confirmed') {
+        s.confirmedCount++;
+        s.totalPaid += Number(p.amount_paid) || 0;
+      } else if (p.status === 'rejected') {
+        s.rejectedCount++;
+      } else {
+        s.pendingCount++;
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => b.totalPaid - a.totalPaid);
+  }, [commissionPayments]);
+
+  const commissionUserSummaries = useMemo<UserSummary[]>(() => {
+    const map = new Map<string, UserSummary>();
+    const accountsSeen = new Map<string, Set<string>>();
+    for (const p of commissionPayments) {
+      const userId = p.user_id;
+      if (!userId) continue;
+      if (!map.has(userId)) {
+        map.set(userId, {
+          userId,
+          userName: p.user?.telegram_first_name || 'Unknown',
+          userUsername: p.user?.telegram_username || '',
+          payments: [],
+          accountsCount: 0,
+          totalEarned: 0,
+          totalOwed: 0,
+          totalPaid: 0,
+          totalLoss: 0,
+          paymentsCount: 0,
+          complianceRate: 0,
+        });
+        accountsSeen.set(userId, new Set());
+      }
+      const s = map.get(userId)!;
+      s.payments.push(p);
+      s.paymentsCount++;
+      if (p.account_id) accountsSeen.get(userId)!.add(p.account_id);
+      if (p.status === 'confirmed') {
+        s.totalPaid += Number(p.amount_paid) || 0;
+      }
+    }
+    for (const [userId, s] of map.entries()) {
+      s.accountsCount = accountsSeen.get(userId)!.size;
+    }
+    return Array.from(map.values()).sort((a, b) => b.totalPaid - a.totalPaid);
+  }, [commissionPayments]);
+
   const collectionRate = stats.totalOwed > 0 ? ((stats.totalReceived / stats.totalOwed) * 100).toFixed(1) : '0';
 
   // Group by account — REGULAR accounts only. Commission has its own block.
@@ -499,42 +577,114 @@ export default function ReportsPage() {
         </Card>
       </div>
 
-      {/* Commission Income — kept separate from regular payments per admin
+      {/* Commission Income — separate from regular payments per admin
           request. These come from accounts on the 'Commission' project. */}
       {(commissionStats.paymentsCount > 0) && (
         <Card className="border-amber-300 dark:border-amber-700 bg-amber-50/40 dark:bg-amber-950/20">
           <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium flex items-center gap-2 text-amber-700 dark:text-amber-400">
-              <DollarSign className="h-4 w-4" />
+            <CardTitle className="text-base font-semibold flex items-center gap-2 text-amber-700 dark:text-amber-400">
+              <DollarSign className="h-5 w-5" />
               Commission Income (separate from regular accounts)
             </CardTitle>
             <CardDescription className="text-xs">
-              Income from accounts on the &ldquo;Commission&rdquo; project. Not included in totals above.
+              Income from accounts on the &ldquo;Commission&rdquo; project. Not included in the regular totals above or in the by-account / by-user breakdowns below.
             </CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-4">
+            {/* Top numbers */}
             <div className="grid gap-4 grid-cols-2 md:grid-cols-3">
-              <div>
+              <div className="rounded-lg bg-white dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 p-3">
                 <p className="text-xs text-muted-foreground">Received (confirmed)</p>
-                <p className="text-xl font-bold text-amber-700 dark:text-amber-400">
+                <p className="text-2xl font-bold text-amber-700 dark:text-amber-400">
                   ${commissionStats.totalReceived.toFixed(2)}
                 </p>
                 <p className="text-xs text-muted-foreground">
                   {commissionStats.confirmedCount} confirmed
                 </p>
               </div>
-              <div>
+              <div className="rounded-lg bg-white dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 p-3">
                 <p className="text-xs text-muted-foreground">Pending</p>
-                <p className="text-xl font-bold text-yellow-700 dark:text-yellow-400">
+                <p className="text-2xl font-bold text-yellow-700 dark:text-yellow-400">
                   ${commissionStats.totalPending.toFixed(2)}
                 </p>
                 <p className="text-xs text-muted-foreground">
                   {commissionPayments.length - commissionStats.confirmedCount} awaiting
                 </p>
               </div>
-              <div>
+              <div className="rounded-lg bg-white dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 p-3">
                 <p className="text-xs text-muted-foreground">Total reports</p>
-                <p className="text-xl font-bold">{commissionStats.paymentsCount}</p>
+                <p className="text-2xl font-bold">{commissionStats.paymentsCount}</p>
+              </div>
+            </div>
+
+            {/* By Account & By User tables side by side on desktop */}
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="rounded-lg bg-white dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 p-3">
+                <p className="text-sm font-semibold mb-2 text-amber-800 dark:text-amber-300">By Commission Account</p>
+                {commissionAccountSummaries.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">No commission accounts yet</p>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="text-xs">Account</TableHead>
+                        <TableHead className="text-xs text-right">Received</TableHead>
+                        <TableHead className="text-xs text-right">Reports</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {commissionAccountSummaries.map((s) => (
+                        <TableRow key={s.accountId}>
+                          <TableCell className="py-2">
+                            <div className="text-sm font-medium">{s.accountName}</div>
+                            <div className="text-xs text-muted-foreground">{s.platformName}</div>
+                          </TableCell>
+                          <TableCell className="py-2 text-right text-sm font-semibold text-amber-700 dark:text-amber-400">
+                            ${s.totalPaid.toFixed(2)}
+                          </TableCell>
+                          <TableCell className="py-2 text-right text-xs text-muted-foreground">
+                            {s.confirmedCount}/{s.paymentsCount}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </div>
+
+              <div className="rounded-lg bg-white dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 p-3">
+                <p className="text-sm font-semibold mb-2 text-amber-800 dark:text-amber-300">By User</p>
+                {commissionUserSummaries.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">No users reporting commission yet</p>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="text-xs">User</TableHead>
+                        <TableHead className="text-xs text-right">Received</TableHead>
+                        <TableHead className="text-xs text-right">Accts</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {commissionUserSummaries.map((s) => (
+                        <TableRow key={s.userId}>
+                          <TableCell className="py-2">
+                            <div className="text-sm font-medium">{s.userName}</div>
+                            {s.userUsername && (
+                              <div className="text-xs text-muted-foreground">@{s.userUsername}</div>
+                            )}
+                          </TableCell>
+                          <TableCell className="py-2 text-right text-sm font-semibold text-amber-700 dark:text-amber-400">
+                            ${s.totalPaid.toFixed(2)}
+                          </TableCell>
+                          <TableCell className="py-2 text-right text-xs text-muted-foreground">
+                            {s.accountsCount}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
               </div>
             </div>
           </CardContent>

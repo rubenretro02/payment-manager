@@ -175,10 +175,13 @@ export async function GET() {
         // Overdue window = one full cycle. After that the next cycle's
         // deadline becomes the relevant date, not the older miss.
         daysSincePrevious <= (frequency === 'weekly' ? 7 : frequency === 'biweekly' ? 14 : 30) &&
-        // Don't flag a cycle that's older than the account itself —
-        // newly-created or recently-promoted accounts shouldn't carry
-        // pre-existence overdue weight.
-        (!account.created_at || previousPaymentDate >= new Date(account.created_at))
+        // Don't flag a cycle that's older than the account's payment-active
+        // floor. Uses payment_active_since (refreshed on status transitions
+        // to production/nesting), falling back to created_at.
+        (() => {
+          const floorIso = account.payment_active_since || account.created_at;
+          return !floorIso || previousPaymentDate >= new Date(floorIso);
+        })()
       ) {
         // Missed previous cycle — show overdue with that adjusted past date.
         status = 'overdue';

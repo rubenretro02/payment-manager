@@ -446,8 +446,9 @@ export async function sendPaymentReminders(mode: ReminderMode = 'all'): Promise<
       // Don't flag overdue for cycles before the account existed (avoids
       // overdue spam when a brand-new account is created or when an active
       // account is promoted to production).
+      const floorIso = account.payment_active_since || account.created_at;
       const previousAfterCreation =
-        !account.created_at || previousPaymentDate >= new Date(account.created_at);
+        !floorIso || previousPaymentDate >= new Date(floorIso);
       const isMissedPrevious =
         daysSincePrevious > 0 &&
         daysSincePrevious <= overdueWindow &&

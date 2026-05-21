@@ -85,6 +85,11 @@ export interface Account {
   // Optional details
   notes: string | null;
 
+  // Floor for overdue calculations. Set to NOW() whenever status transitions
+  // to production/nesting. NULL for accounts that have never been in a
+  // payment-active status. Falls back to created_at when null.
+  payment_active_since: string | null;
+
   created_at: string;
   updated_at: string;
 

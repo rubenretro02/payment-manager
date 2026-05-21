@@ -303,14 +303,15 @@ export default function MyAccountsPage() {
       account.biweekly_second_day
     );
 
-    // If the 'previous' scheduled date is before the account existed, the
-    // user was never responsible for that cycle. Avoids flagging a brand-
-    // new account as immediately overdue, and stops a freshly-promoted
-    // active→production account from showing weeks of fake backlog.
-    if (account.created_at) {
-      const createdAt = new Date(account.created_at);
-      createdAt.setHours(0, 0, 0, 0);
-      if (previousPaymentDate < createdAt) {
+    // Floor: don't count cycles that happened before the account was
+    // payment-active. Uses payment_active_since (set when status transitions
+    // to production/nesting). Falls back to created_at for old rows that
+    // existed before that column was added.
+    const floorIso = account.payment_active_since || account.created_at;
+    if (floorIso) {
+      const floor = new Date(floorIso);
+      floor.setHours(0, 0, 0, 0);
+      if (previousPaymentDate < floor) {
         return { isOverdue: false, missedDate: null, daysOverdue: 0 };
       }
     }
@@ -914,11 +915,7 @@ export default function MyAccountsPage() {
                       <span className="text-muted-foreground">Your percentage:</span>
                       <span className="font-semibold text-primary">{account.percentage}%</span>
                     </div>
-                    {isCommission ? (
-                      <div className="text-xs text-muted-foreground italic">
-                        Commission account — report whenever you receive a payment. No schedule, no reminders.
-                      </div>
-                    ) : (
+                    {isCommission ? null : (
                       <>
                         <div className="flex justify-between text-sm">
                           <span className="text-muted-foreground">Frequency:</span>

@@ -80,12 +80,13 @@ export async function POST(request: NextRequest) {
       biweekly_second_day
     );
 
+    const initialStatus = status || 'production';
     const insertData: Record<string, unknown> = {
       full_name,
       account_email,
       platform_id,
       project_id: project_id || null,
-      status: status || 'production',
+      status: initialStatus,
       percentage: percentage || 50,
       payment_frequency: payment_frequency || 'weekly',
       payment_day: payment_day ?? 5,
@@ -95,6 +96,10 @@ export async function POST(request: NextRequest) {
     };
     if (wallet_address) insertData.wallet_address = wallet_address;
     if (wallet_network) insertData.wallet_network = wallet_network;
+    // Floor for overdue. Only set if creating in a payment-active status.
+    if (initialStatus === 'production' || initialStatus === 'nesting') {
+      insertData.payment_active_since = new Date().toISOString();
+    }
 
     const supabase = createAdminClient();
     const { data, error } = await supabase
