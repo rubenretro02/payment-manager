@@ -31,6 +31,8 @@ import {
   Building2,
   Send,
   ExternalLink,
+  Edit,
+  Trash2,
 } from 'lucide-react';
 import { format, startOfDay, startOfWeek, startOfMonth, startOfYear, isAfter, isBefore, endOfDay } from 'date-fns';
 import { useAuth } from '@/hooks/useAuth';
@@ -64,6 +66,22 @@ export default function PaymentsPage() {
   const [adminNotes, setAdminNotes] = useState('');
   const [rejectionReason, setRejectionReason] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Edit / Delete payment state — admin can correct or remove any report
+  // straight from the UI instead of going into Supabase.
+  const [editOpen, setEditOpen] = useState(false);
+  const [editForm, setEditForm] = useState({
+    platform_amount: '',
+    amount_owed: '',
+    amount_paid: '',
+    payment_method: 'other',
+    payment_reference: '',
+    user_notes: '',
+    admin_notes: '',
+  });
+  const [editSubmitting, setEditSubmitting] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteSubmitting, setDeleteSubmitting] = useState(false);
 
   const isAdmin = user?.role === 'admin';
 
@@ -170,6 +188,77 @@ export default function PaymentsPage() {
 
   const getPaymentScreenshot = (payment: Payment) => {
     return payment.payment_screenshot_url || payment.screenshot_url;
+  };
+
+  const openEditDialog = () => {
+    if (!selectedPayment) return;
+    setEditForm({
+      platform_amount: String(selectedPayment.platform_amount ?? ''),
+      amount_owed: String(selectedPayment.amount_owed ?? ''),
+      amount_paid: String(selectedPayment.amount_paid ?? ''),
+      payment_method: selectedPayment.payment_method || 'other',
+      payment_reference: selectedPayment.payment_reference || '',
+      user_notes: selectedPayment.user_notes || '',
+      admin_notes: selectedPayment.admin_notes || '',
+    });
+    setShowDetails(false);
+    setEditOpen(true);
+  };
+
+  const handleEditSubmit = async () => {
+    if (!selectedPayment) return;
+    setEditSubmitting(true);
+    try {
+      const res = await fetch(`/api/payments/${selectedPayment.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          platform_amount: parseFloat(editForm.platform_amount) || 0,
+          amount_owed: parseFloat(editForm.amount_owed) || 0,
+          amount_paid: parseFloat(editForm.amount_paid) || 0,
+          payment_method: editForm.payment_method,
+          payment_reference: editForm.payment_reference || null,
+          user_notes: editForm.user_notes || null,
+          admin_notes: editForm.admin_notes || null,
+        }),
+      });
+      const data = await res.json();
+      if (!data.success) {
+        alert('Error: ' + (data.error || 'Failed to update payment'));
+        return;
+      }
+      setEditOpen(false);
+      await fetchPayments();
+    } catch (e) {
+      console.error('Error updating payment:', e);
+      alert('Error updating payment');
+    } finally {
+      setEditSubmitting(false);
+    }
+  };
+
+  const handleDeletePayment = async () => {
+    if (!selectedPayment) return;
+    setDeleteSubmitting(true);
+    try {
+      const res = await fetch(`/api/payments/${selectedPayment.id}`, {
+        method: 'DELETE',
+      });
+      const data = await res.json();
+      if (!data.success) {
+        alert('Error: ' + (data.error || 'Failed to delete payment'));
+        return;
+      }
+      setDeleteOpen(false);
+      setShowDetails(false);
+      setSelectedPayment(null);
+      await fetchPayments();
+    } catch (e) {
+      console.error('Error deleting payment:', e);
+      alert('Error deleting payment');
+    } finally {
+      setDeleteSubmitting(false);
+    }
   };
 
   const handleConfirm = async () => {
@@ -901,6 +990,28 @@ export default function PaymentsPage() {
                 View Screenshots
               </Button>
             )}
+            {isAdmin && selectedPayment && (
+              <>
+                <Button
+                  variant="outline"
+                  onClick={openEditDialog}
+                >
+                  <Edit className="mr-2 h-4 w-4" />
+                  Edit
+                </Button>
+                <Button
+                  variant="outline"
+                  className="text-red-600 border-red-200 hover:bg-red-50"
+                  onClick={() => {
+                    setShowDetails(false);
+                    setDeleteOpen(true);
+                  }}
+                >
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Delete
+                </Button>
+              </>
+            )}
             {isAdmin && (selectedPayment?.status === 'submitted' || selectedPayment?.status === 'pending') && (
               <>
                 <Button
@@ -931,6 +1042,126 @@ export default function PaymentsPage() {
                 Close
               </Button>
             )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Payment dialog */}
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Edit Payment</DialogTitle>
+            <DialogDescription>
+              Fix amounts, method, reference, or notes. Status / screenshots are not editable here — reject and re-report instead.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="grid gap-1.5">
+              <Label htmlFor="edit_platform_amount">Platform earnings ($)</Label>
+              <Input
+                id="edit_platform_amount"
+                type="number"
+                step="0.01"
+                value={editForm.platform_amount}
+                onChange={(e) => setEditForm({ ...editForm, platform_amount: e.target.value })}
+              />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="edit_amount_owed">Amount owed ($)</Label>
+              <Input
+                id="edit_amount_owed"
+                type="number"
+                step="0.01"
+                value={editForm.amount_owed}
+                onChange={(e) => setEditForm({ ...editForm, amount_owed: e.target.value })}
+              />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="edit_amount_paid">Amount paid ($)</Label>
+              <Input
+                id="edit_amount_paid"
+                type="number"
+                step="0.01"
+                value={editForm.amount_paid}
+                onChange={(e) => setEditForm({ ...editForm, amount_paid: e.target.value })}
+              />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="edit_method">Payment method</Label>
+              <select
+                id="edit_method"
+                className="border rounded-md p-2 text-sm bg-background"
+                value={editForm.payment_method}
+                onChange={(e) => setEditForm({ ...editForm, payment_method: e.target.value })}
+              >
+                <option value="transfer">Bank transfer</option>
+                <option value="binance">Crypto / Binance</option>
+                <option value="zelle">Zelle</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="edit_reference">Reference / tx hash</Label>
+              <Input
+                id="edit_reference"
+                value={editForm.payment_reference}
+                onChange={(e) => setEditForm({ ...editForm, payment_reference: e.target.value })}
+              />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="edit_user_notes">User notes</Label>
+              <Textarea
+                id="edit_user_notes"
+                rows={2}
+                value={editForm.user_notes}
+                onChange={(e) => setEditForm({ ...editForm, user_notes: e.target.value })}
+              />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="edit_admin_notes">Admin notes</Label>
+              <Textarea
+                id="edit_admin_notes"
+                rows={2}
+                value={editForm.admin_notes}
+                onChange={(e) => setEditForm({ ...editForm, admin_notes: e.target.value })}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditOpen(false)} disabled={editSubmitting}>
+              Cancel
+            </Button>
+            <Button onClick={handleEditSubmit} disabled={editSubmitting}>
+              {editSubmitting ? (<><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Saving...</>) : 'Save changes'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Payment confirmation */}
+      <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Payment</DialogTitle>
+            <DialogDescription>
+              This permanently removes the payment report. Use this for duplicates or accidental submissions — to mark a payment as invalid, reject it instead.
+            </DialogDescription>
+          </DialogHeader>
+          {selectedPayment && (
+            <div className="rounded-lg bg-muted p-3 text-sm space-y-1">
+              <div className="flex justify-between"><span className="text-muted-foreground">Account:</span><span className="font-medium">{selectedPayment.account?.full_name || '—'}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">User:</span><span>{selectedPayment.user?.telegram_first_name || '—'}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Amount paid:</span><span className="font-medium">${Number(selectedPayment.amount_paid || 0).toFixed(2)}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Status:</span><span>{selectedPayment.status}</span></div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteOpen(false)} disabled={deleteSubmitting}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleDeletePayment} disabled={deleteSubmitting}>
+              {deleteSubmitting ? (<><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Deleting...</>) : 'Delete payment'}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
