@@ -78,6 +78,7 @@ export default function PaymentsPage() {
     payment_reference: '',
     user_notes: '',
     admin_notes: '',
+    for_cycle_date: '',
   });
   const [editSubmitting, setEditSubmitting] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -200,6 +201,7 @@ export default function PaymentsPage() {
       payment_reference: selectedPayment.payment_reference || '',
       user_notes: selectedPayment.user_notes || '',
       admin_notes: selectedPayment.admin_notes || '',
+      for_cycle_date: selectedPayment.for_cycle_date || '',
     });
     setShowDetails(false);
     setEditOpen(true);
@@ -220,6 +222,7 @@ export default function PaymentsPage() {
           payment_reference: editForm.payment_reference || null,
           user_notes: editForm.user_notes || null,
           admin_notes: editForm.admin_notes || null,
+          for_cycle_date: editForm.for_cycle_date || null,
         }),
       });
       const data = await res.json();
@@ -1125,6 +1128,18 @@ export default function PaymentsPage() {
                 value={editForm.admin_notes}
                 onChange={(e) => setEditForm({ ...editForm, admin_notes: e.target.value })}
               />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="edit_for_cycle_date">For cycle date</Label>
+              <Input
+                id="edit_for_cycle_date"
+                type="date"
+                value={editForm.for_cycle_date}
+                onChange={(e) => setEditForm({ ...editForm, for_cycle_date: e.target.value })}
+              />
+              <p className="text-xs text-muted-foreground">
+                Which scheduled cycle this payment covers. Set it to the date the user was supposed to pay — e.g. for a late payment for last Thursday, set this to last Thursday&apos;s date. Leave blank for commission/non-scheduled accounts.
+              </p>
             </div>
           </div>
           <DialogFooter>

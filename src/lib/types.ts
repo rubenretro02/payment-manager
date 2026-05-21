@@ -134,6 +134,10 @@ export interface Payment {
 
   payment_method: PaymentMethod | null;
   payment_reference: string | null;
+  // Scheduled cycle date this payment was made for. Set at submission time
+  // so attribution doesn't depend on fuzzy date-window matching. NULL on
+  // legacy rows that predate this column.
+  for_cycle_date: string | null;
   status: PaymentStatus;
   due_date: string | null;
   submitted_at: string | null;

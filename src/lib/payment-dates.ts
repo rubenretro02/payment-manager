@@ -223,6 +223,40 @@ export function calculateNextPaymentDate(
  * their reminder, so the 'Was due' message stays consistent.
  */
 /**
+ * Find the scheduled cycle date closest to a given report date. Used at
+ * payment creation time to tag the payment with for_cycle_date so the
+ * "which cycle was this for?" attribution doesn't depend on a fuzzy
+ * cycle-window heuristic anymore.
+ */
+export function findNearestCycleDate(
+  reportDate: Date,
+  frequency: PaymentFrequency,
+  paymentDay: number | null,
+  biweeklyFirstDay?: number | null,
+  biweeklySecondDay?: number | null
+): Date {
+  const today = startOfDay(reportDate);
+  const candidates = buildScheduledCandidates(
+    frequency,
+    paymentDay,
+    today,
+    biweeklyFirstDay,
+    biweeklySecondDay
+  );
+  const adjusted = candidates.map((c) => getNextBusinessDay(c));
+  let best = adjusted[0];
+  let bestDist = Math.abs(today.getTime() - best.getTime());
+  for (const date of adjusted) {
+    const dist = Math.abs(today.getTime() - date.getTime());
+    if (dist < bestDist) {
+      best = date;
+      bestDist = dist;
+    }
+  }
+  return best;
+}
+
+/**
  * Window around a scheduled cycle date in which a payment is considered
  * to "belong to" that cycle. Used so that a late cycle-1 payment doesn't
  * get mistakenly credited as a cycle-2 payment just because it happened

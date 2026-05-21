@@ -130,6 +130,9 @@ export async function createPayment(paymentData: Partial<Payment>): Promise<{ da
   if (paymentData.admin_notes) {
     basicData.admin_notes = paymentData.admin_notes;
   }
+  if (paymentData.for_cycle_date) {
+    basicData.for_cycle_date = paymentData.for_cycle_date;
+  }
 
   console.log('Creating payment with basic data:', basicData);
 

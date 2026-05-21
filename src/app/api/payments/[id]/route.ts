@@ -11,6 +11,7 @@ const EDITABLE_FIELDS = new Set([
   'user_notes',
   'admin_notes',
   'status',
+  'for_cycle_date',
 ]);
 
 /**

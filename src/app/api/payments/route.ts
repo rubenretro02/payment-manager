@@ -3,6 +3,8 @@ import { getAllPayments, createPayment } from '@/lib/supabase/db';
 import { sendUserNotification, notifyAdminsNewPayment } from '@/lib/notifications';
 import { createAdminClient } from '@/lib/supabase/server';
 import { matchTransactionToPayment, findRecentIncomingMatch } from '@/lib/basescan';
+import { findNearestCycleDate, type PaymentFrequency } from '@/lib/payment-dates';
+import { isCommissionAccount } from '@/lib/account-utils';
 
 export async function GET(request: NextRequest) {
   try {
@@ -33,9 +35,23 @@ export async function POST(request: NextRequest) {
         const supabase = createAdminClient();
         const { data: account } = await supabase
           .from('accounts')
-          .select('wallet_address, wallet_network')
+          .select('wallet_address, wallet_network, payment_frequency, payment_day, biweekly_first_day, biweekly_second_day, project:projects(display_name)')
           .eq('id', body.account_id)
           .single();
+
+        // Tag with for_cycle_date so attribution doesn't rely on the
+        // fuzzy cycle-window heuristic. Commission accounts have no
+        // schedule, so they stay null.
+        if (account && !isCommissionAccount(account) && !body.for_cycle_date) {
+          const cycle = findNearestCycleDate(
+            new Date(),
+            (account.payment_frequency as PaymentFrequency) || 'weekly',
+            account.payment_day ?? null,
+            account.biweekly_first_day ?? null,
+            account.biweekly_second_day ?? null
+          );
+          body.for_cycle_date = cycle.toISOString().split('T')[0];
+        }
 
         const isBaseWallet = account?.wallet_address && (account.wallet_network || 'base') === 'base';
         console.log('[auto-verify] account_id', body.account_id, 'wallet:', account?.wallet_address, 'network:', account?.wallet_network, 'isBaseWallet:', isBaseWallet, 'amount_paid:', body.amount_paid);

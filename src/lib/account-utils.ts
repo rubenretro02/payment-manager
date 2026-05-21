@@ -15,12 +15,15 @@ export function isCommissionProjectName(name?: string | null): boolean {
   return name.trim().toLowerCase() === 'commission';
 }
 
+type ProjectLike = { display_name?: string | null; name?: string | null };
 type AccountLike = {
-  project?: { display_name?: string | null; name?: string | null } | null;
+  // Supabase returns the FK relation as an array in some query shapes and
+  // an object in others. Accept both so callers don't need to cast.
+  project?: ProjectLike | ProjectLike[] | null;
 };
 
 export function isCommissionAccount(account: AccountLike): boolean {
-  const projectName =
-    account.project?.display_name || account.project?.name || null;
+  const project = Array.isArray(account.project) ? account.project[0] : account.project;
+  const projectName = project?.display_name || project?.name || null;
   return isCommissionProjectName(projectName);
 }

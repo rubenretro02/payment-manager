@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/server';
 import { sendUserNotification } from '@/lib/notifications';
+import { findNearestCycleDate, type PaymentFrequency } from '@/lib/payment-dates';
+import { isCommissionAccount } from '@/lib/account-utils';
 
 /**
  * POST /api/payments/admin-report
@@ -37,6 +39,26 @@ export async function POST(request: NextRequest) {
     const supabase = createAdminClient();
     const now = new Date().toISOString();
 
+    // Look up the account schedule so we can tag the payment with the
+    // cycle it's for. Commission accounts stay null.
+    const { data: scheduleAccount } = await supabase
+      .from('accounts')
+      .select('payment_frequency, payment_day, biweekly_first_day, biweekly_second_day, project:projects(display_name)')
+      .eq('id', account_id)
+      .single();
+
+    let forCycleDate: string | null = body.for_cycle_date || null;
+    if (!forCycleDate && scheduleAccount && !isCommissionAccount(scheduleAccount)) {
+      const cycle = findNearestCycleDate(
+        new Date(),
+        (scheduleAccount.payment_frequency as PaymentFrequency) || 'weekly',
+        scheduleAccount.payment_day ?? null,
+        scheduleAccount.biweekly_first_day ?? null,
+        scheduleAccount.biweekly_second_day ?? null
+      );
+      forCycleDate = cycle.toISOString().split('T')[0];
+    }
+
     const insertData: Record<string, unknown> = {
       user_id,
       account_id,
@@ -49,6 +71,7 @@ export async function POST(request: NextRequest) {
       submitted_at: now,
       admin_notes: `Submitted by admin on behalf of user.${notes ? ' Note: ' + notes : ''}`,
     };
+    if (forCycleDate) insertData.for_cycle_date = forCycleDate;
 
     if (payment_reference) insertData.payment_reference = payment_reference;
     if (auto_confirm) {

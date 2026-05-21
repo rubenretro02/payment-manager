@@ -379,14 +379,21 @@ export async function sendPaymentReminders(mode: ReminderMode = 'all'): Promise<
     windowStart.setDate(windowStart.getDate() - 30); // widest possible period
     const { data: recentPayments } = await supabase
       .from('payments')
-      .select('account_id, user_id, created_at')
+      .select('account_id, user_id, created_at, for_cycle_date')
       .in('account_id', accountIds)
       .gte('created_at', windowStart.toISOString())
       .in('status', ['submitted', 'confirmed', 'pending']);
-    const paymentsByAccount = new Map<string, Array<{ user_id: string; created_at: string }>>();
+    const paymentsByAccount = new Map<
+      string,
+      Array<{ user_id: string; created_at: string; for_cycle_date: string | null }>
+    >();
     for (const p of recentPayments || []) {
       const list = paymentsByAccount.get(p.account_id) || [];
-      list.push({ user_id: p.user_id, created_at: p.created_at });
+      list.push({
+        user_id: p.user_id,
+        created_at: p.created_at,
+        for_cycle_date: p.for_cycle_date,
+      });
       paymentsByAccount.set(p.account_id, list);
     }
 
@@ -446,24 +453,24 @@ export async function sendPaymentReminders(mode: ReminderMode = 'all'): Promise<
         displayDate = previousPaymentDate;
       }
 
-      // Check the cycle window for whichever cycle we're about to nag about.
-      // Overdue mode = the missed previous cycle. Upcoming/all = the next cycle.
-      // Using a window centered on the cycle date avoids crediting a late
-      // payment for one cycle to the wrong cycle.
+      // Decide which cycle we'd be nagging about: previous (overdue) or
+      // next (upcoming). Then check if the user already reported for that
+      // exact cycle. Prefer the explicit for_cycle_date tag; fall back to
+      // the cycle-window heuristic for legacy untagged payments.
       const targetCycleDate =
         mode === 'overdue' || (mode === 'all' && isMissedPrevious)
           ? previousPaymentDate
           : nextPaymentDate;
+      const targetCycleStr = targetCycleDate.toISOString().split('T')[0];
       const cycleWindow = getCycleWindow(targetCycleDate, frequency);
       const startIso = cycleWindow.start.toISOString();
       const endIso = cycleWindow.end.toISOString();
       const accountPayments = paymentsByAccount.get(account.id) || [];
-      const hasExisting = accountPayments.some(
-        (p) =>
-          p.user_id === account.user.id &&
-          p.created_at >= startIso &&
-          p.created_at < endIso
-      );
+      const hasExisting = accountPayments.some((p) => {
+        if (p.user_id !== account.user.id) return false;
+        if (p.for_cycle_date) return p.for_cycle_date === targetCycleStr;
+        return p.created_at >= startIso && p.created_at < endIso;
+      });
       if (hasExisting) {
         return null;
       }

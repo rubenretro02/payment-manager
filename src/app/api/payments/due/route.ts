@@ -124,18 +124,19 @@ export async function GET() {
       nextPaymentDate.setUTCHours(12, 0, 0, 0);
       previousPaymentDate.setUTCHours(12, 0, 0, 0);
 
-      // Check for a payment that belongs to the CURRENT cycle (the one
-      // nextPaymentDate represents). Using a window around nextPaymentDate
-      // prevents a late payment for the previous cycle from being miscredited
-      // here — e.g. a Mon-after-the-Thursday payment for last week's cycle
-      // would otherwise show this account as Confirmed for today's Thursday.
+      // Find a payment that belongs to the CURRENT cycle. New payments are
+      // tagged at submission with for_cycle_date — match on that. Legacy
+      // payments fall back to the cycle-window heuristic. Fetch wide enough
+      // to catch a late tagged payment that landed outside the window.
       const cycleWindow = getCycleWindow(nextPaymentDate, frequency);
+      const nextCycleDateStr = nextPaymentDate.toISOString().split('T')[0];
+      const lookbackCutoff = new Date(today);
+      lookbackCutoff.setDate(lookbackCutoff.getDate() - 60);
       let paymentsQuery = supabase
         .from('payments')
-        .select('id, status, amount_owed, created_at')
+        .select('id, status, amount_owed, created_at, for_cycle_date')
         .eq('account_id', account.id)
-        .gte('created_at', cycleWindow.start.toISOString())
-        .lt('created_at', cycleWindow.end.toISOString())
+        .gte('created_at', lookbackCutoff.toISOString())
         .in('status', ['submitted', 'confirmed', 'pending'])
         .order('created_at', { ascending: false });
       if (account.user_id) {
@@ -143,7 +144,13 @@ export async function GET() {
       }
       const { data: existingPayments } = await paymentsQuery;
 
-      const currentPayment = existingPayments?.[0] || null;
+      const startIso = cycleWindow.start.toISOString();
+      const endIso = cycleWindow.end.toISOString();
+      const currentPayment =
+        (existingPayments || []).find((p) => {
+          if (p.for_cycle_date) return p.for_cycle_date === nextCycleDateStr;
+          return p.created_at >= startIso && p.created_at < endIso;
+        }) || null;
 
       // Determine status. When there's no payment and the previous due date
       // already passed without one, this account is overdue from THAT date —
