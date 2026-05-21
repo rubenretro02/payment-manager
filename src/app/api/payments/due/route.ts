@@ -1,6 +1,11 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/server';
-import { calculateNextPaymentDate, calculatePreviousPaymentDate, type PaymentFrequency } from '@/lib/payment-dates';
+import {
+  calculateNextPaymentDate,
+  calculatePreviousPaymentDate,
+  getCycleWindow,
+  type PaymentFrequency,
+} from '@/lib/payment-dates';
 import { isCommissionAccount } from '@/lib/account-utils';
 
 interface DueAccountInfo {
@@ -23,20 +28,6 @@ interface DueAccountInfo {
   current_payment_id: string | null;
   current_payment_status: string | null;
   amount_owed: number | null;
-}
-
-function getPeriodStart(frequency: PaymentFrequency, today: Date): Date {
-  // Tight enough to exclude payments from the previous cycle (which would
-  // otherwise be mistakenly counted when the admin shifts payment_day),
-  // but lenient enough to still include early payments within the cycle.
-  const start = new Date(today);
-  start.setHours(0, 0, 0, 0);
-  switch (frequency) {
-    case 'weekly': start.setDate(start.getDate() - 5); break;
-    case 'biweekly': start.setDate(start.getDate() - 12); break;
-    case 'monthly': start.setDate(start.getDate() - 20); break;
-  }
-  return start;
 }
 
 /**
@@ -133,15 +124,18 @@ export async function GET() {
       nextPaymentDate.setUTCHours(12, 0, 0, 0);
       previousPaymentDate.setUTCHours(12, 0, 0, 0);
 
-      // Check if there's already a payment for the current period.
-      // For unassigned accounts (user_id null), just match on account_id —
-      // any admin-reported payment counts.
-      const periodStart = getPeriodStart(frequency, today);
+      // Check for a payment that belongs to the CURRENT cycle (the one
+      // nextPaymentDate represents). Using a window around nextPaymentDate
+      // prevents a late payment for the previous cycle from being miscredited
+      // here — e.g. a Mon-after-the-Thursday payment for last week's cycle
+      // would otherwise show this account as Confirmed for today's Thursday.
+      const cycleWindow = getCycleWindow(nextPaymentDate, frequency);
       let paymentsQuery = supabase
         .from('payments')
         .select('id, status, amount_owed, created_at')
         .eq('account_id', account.id)
-        .gte('created_at', periodStart.toISOString())
+        .gte('created_at', cycleWindow.start.toISOString())
+        .lt('created_at', cycleWindow.end.toISOString())
         .in('status', ['submitted', 'confirmed', 'pending'])
         .order('created_at', { ascending: false });
       if (account.user_id) {

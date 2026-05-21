@@ -1,6 +1,11 @@
 import { sendTelegramMessage } from './telegram';
 import { createAdminClient } from './supabase/server';
-import { calculateNextPaymentDate, calculatePreviousPaymentDate, type PaymentFrequency } from './payment-dates';
+import {
+  calculateNextPaymentDate,
+  calculatePreviousPaymentDate,
+  getCycleWindow,
+  type PaymentFrequency,
+} from './payment-dates';
 import { isCommissionAccount } from './account-utils';
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
@@ -319,31 +324,6 @@ export async function notifyAdminsNewPayment(data: {
 // REMINDER FUNCTIONS
 // =============================================
 
-/**
- * Get the start of the current payment period for a given frequency.
- * Used to check whether a payment has already been submitted/confirmed for the
- * period that the upcoming due date belongs to.
- */
-function getPeriodStart(frequency: PaymentFrequency, today: Date): Date {
-  // Match the Due Payments API: short windows so previous-cycle payments
-  // don't leak into the current period (e.g. after an admin shifts day).
-  const start = new Date(today);
-  start.setHours(0, 0, 0, 0);
-
-  switch (frequency) {
-    case 'weekly':
-      start.setDate(start.getDate() - 5);
-      break;
-    case 'biweekly':
-      start.setDate(start.getDate() - 12);
-      break;
-    case 'monthly':
-      start.setDate(start.getDate() - 20);
-      break;
-  }
-  return start;
-}
-
 export type ReminderMode = 'all' | 'overdue' | 'upcoming';
 
 /**
@@ -466,13 +446,23 @@ export async function sendPaymentReminders(mode: ReminderMode = 'all'): Promise<
         displayDate = previousPaymentDate;
       }
 
-      // Use the pre-fetched batch instead of a per-account DB query.
-      // Includes 'pending' so 'no payment / issue' reports stop reminders.
-      const periodStart = getPeriodStart(frequency, today);
-      const periodStartIso = periodStart.toISOString();
+      // Check the cycle window for whichever cycle we're about to nag about.
+      // Overdue mode = the missed previous cycle. Upcoming/all = the next cycle.
+      // Using a window centered on the cycle date avoids crediting a late
+      // payment for one cycle to the wrong cycle.
+      const targetCycleDate =
+        mode === 'overdue' || (mode === 'all' && isMissedPrevious)
+          ? previousPaymentDate
+          : nextPaymentDate;
+      const cycleWindow = getCycleWindow(targetCycleDate, frequency);
+      const startIso = cycleWindow.start.toISOString();
+      const endIso = cycleWindow.end.toISOString();
       const accountPayments = paymentsByAccount.get(account.id) || [];
       const hasExisting = accountPayments.some(
-        (p) => p.user_id === account.user.id && p.created_at >= periodStartIso
+        (p) =>
+          p.user_id === account.user.id &&
+          p.created_at >= startIso &&
+          p.created_at < endIso
       );
       if (hasExisting) {
         return null;

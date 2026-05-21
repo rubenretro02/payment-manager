@@ -222,6 +222,27 @@ export function calculateNextPaymentDate(
  * the same business-day-adjusted date that the user would have seen in
  * their reminder, so the 'Was due' message stays consistent.
  */
+/**
+ * Window around a scheduled cycle date in which a payment is considered
+ * to "belong to" that cycle. Used so that a late cycle-1 payment doesn't
+ * get mistakenly credited as a cycle-2 payment just because it happened
+ * to fall inside a fixed lookback window.
+ *
+ * Window = ±half-cycle around the cycle date. For weekly = ±3.5 days,
+ * biweekly = ±7 days, monthly = ±15 days.
+ */
+export function getCycleWindow(
+  cycleDate: Date,
+  frequency: PaymentFrequency
+): { start: Date; end: Date } {
+  const halfCycleDays = frequency === 'weekly' ? 3.5 : frequency === 'biweekly' ? 7 : 15;
+  const halfMs = halfCycleDays * 24 * 60 * 60 * 1000;
+  return {
+    start: new Date(cycleDate.getTime() - halfMs),
+    end: new Date(cycleDate.getTime() + halfMs),
+  };
+}
+
 export function calculatePreviousPaymentDate(
   frequency: PaymentFrequency,
   paymentDay: number | null,
