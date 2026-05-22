@@ -58,6 +58,7 @@ import {
   CreditCard,
   FolderOpen,
   DollarSign,
+  CheckSquare,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { enUS } from 'date-fns/locale';
@@ -149,6 +150,17 @@ export default function AccountsPage() {
   });
 
   const [assignUserId, setAssignUserId] = useState('');
+
+  // Bulk selection + bulk-action dialog state. Selecting a row only marks
+  // its id here; the actual mutation goes through /api/accounts/bulk when
+  // the admin picks an action.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkAction, setBulkAction] = useState<null | 'assign' | 'status' | 'platform' | 'project'>(null);
+  const [bulkAssignUserId, setBulkAssignUserId] = useState('unassigned');
+  const [bulkStatus, setBulkStatus] = useState<'production' | 'nesting' | 'active' | 'drop' | 'not_in_project'>('production');
+  const [bulkPlatformId, setBulkPlatformId] = useState('');
+  const [bulkProjectId, setBulkProjectId] = useState('none');
+  const [bulkSubmitting, setBulkSubmitting] = useState(false);
 
   // Commission project = no schedule. Hide payment config when selected.
   const isCommissionSelected = (() => {
@@ -309,6 +321,72 @@ export default function AccountsPage() {
     } catch (error) {
       console.error('Error assigning user:', error);
       alert('Error assigning user. Check console for details.');
+    }
+  };
+
+  // Bulk selection helpers ----------------------------------------------------
+
+  const toggleSelected = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const clearSelection = () => setSelectedIds(new Set());
+
+  const openBulk = (action: 'assign' | 'status' | 'platform' | 'project') => {
+    setBulkAssignUserId('unassigned');
+    setBulkStatus('production');
+    setBulkPlatformId(platforms[0]?.id || '');
+    setBulkProjectId('none');
+    setBulkAction(action);
+  };
+
+  const handleBulkSubmit = async () => {
+    if (selectedIds.size === 0 || !bulkAction) return;
+    const updates: Record<string, unknown> = {};
+    switch (bulkAction) {
+      case 'assign':
+        updates.user_id = bulkAssignUserId === 'unassigned' ? null : bulkAssignUserId;
+        break;
+      case 'status':
+        updates.status = bulkStatus;
+        break;
+      case 'platform':
+        if (!bulkPlatformId) {
+          alert('Pick a platform.');
+          return;
+        }
+        updates.platform_id = bulkPlatformId;
+        break;
+      case 'project':
+        updates.project_id = bulkProjectId === 'none' ? null : bulkProjectId;
+        break;
+    }
+
+    setBulkSubmitting(true);
+    try {
+      const response = await fetch('/api/accounts/bulk', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: Array.from(selectedIds), updates }),
+      });
+      const data = await response.json();
+      if (!data.success) {
+        alert('Bulk update failed: ' + (data.error || 'unknown error'));
+        return;
+      }
+      await fetchData();
+      clearSelection();
+      setBulkAction(null);
+    } catch (error) {
+      console.error('Bulk update error:', error);
+      alert('Bulk update failed. Check console for details.');
+    } finally {
+      setBulkSubmitting(false);
     }
   };
 
@@ -1054,6 +1132,42 @@ export default function AccountsPage() {
         </div>
       )}
 
+      {/* Bulk action toolbar — only visible when at least one row is selected */}
+      {selectedIds.size > 0 && (
+        <Card className="border-primary/40 bg-primary/5">
+          <CardContent className="flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-2">
+              <CheckSquare className="h-4 w-4 text-primary" />
+              <span className="text-sm font-medium">
+                {selectedIds.size} {selectedIds.size === 1 ? 'account' : 'accounts'} selected
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" variant="outline" onClick={() => openBulk('assign')}>
+                <UserPlus className="mr-2 h-4 w-4" />
+                Assign user
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => openBulk('status')}>
+                <Briefcase className="mr-2 h-4 w-4" />
+                Change status
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => openBulk('platform')}>
+                <CreditCard className="mr-2 h-4 w-4" />
+                Change platform
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => openBulk('project')}>
+                <FolderOpen className="mr-2 h-4 w-4" />
+                Change project
+              </Button>
+              <Button size="sm" variant="ghost" onClick={clearSelection}>
+                <X className="mr-2 h-4 w-4" />
+                Clear
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Table */}
       <Card>
         <CardContent className="p-0">
@@ -1089,6 +1203,34 @@ export default function AccountsPage() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-[40px]">
+                    <input
+                      type="checkbox"
+                      aria-label="Select all visible accounts"
+                      className="h-4 w-4 cursor-pointer accent-primary"
+                      checked={
+                        filteredAccounts.length > 0 &&
+                        filteredAccounts.every((a) => selectedIds.has(a.id))
+                      }
+                      ref={(el) => {
+                        if (!el) return;
+                        const visibleSelected = filteredAccounts.filter((a) => selectedIds.has(a.id)).length;
+                        el.indeterminate =
+                          visibleSelected > 0 && visibleSelected < filteredAccounts.length;
+                      }}
+                      onChange={(e) => {
+                        setSelectedIds((prev) => {
+                          const next = new Set(prev);
+                          if (e.target.checked) {
+                            filteredAccounts.forEach((a) => next.add(a.id));
+                          } else {
+                            filteredAccounts.forEach((a) => next.delete(a.id));
+                          }
+                          return next;
+                        });
+                      }}
+                    />
+                  </TableHead>
                   <TableHead>Name / Email</TableHead>
                   <TableHead>Platform</TableHead>
                   <TableHead>Project / Client</TableHead>
@@ -1103,8 +1245,18 @@ export default function AccountsPage() {
                 {filteredAccounts.map((account) => {
                   const StatusIcon = statusIcons[account.status] || Briefcase;
                   const nextPayment = getNextPayment(account);
+                  const isSelected = selectedIds.has(account.id);
                   return (
-                    <TableRow key={account.id}>
+                    <TableRow key={account.id} className={isSelected ? 'bg-primary/5' : undefined}>
+                      <TableCell>
+                        <input
+                          type="checkbox"
+                          aria-label={`Select ${account.full_name}`}
+                          className="h-4 w-4 cursor-pointer accent-primary"
+                          checked={isSelected}
+                          onChange={() => toggleSelected(account.id)}
+                        />
+                      </TableCell>
                       <TableCell>
                         <div>
                           <p className="font-medium">{account.full_name}</p>
@@ -1257,6 +1409,124 @@ export default function AccountsPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Bulk action dialog — one component for all four actions, the body
+          swaps based on bulkAction. Keeps the dialog count down and the
+          submit path uniform. */}
+      <Dialog open={bulkAction !== null} onOpenChange={(open) => !open && setBulkAction(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {bulkAction === 'assign' && 'Bulk assign user'}
+              {bulkAction === 'status' && 'Bulk change status'}
+              {bulkAction === 'platform' && 'Bulk change platform'}
+              {bulkAction === 'project' && 'Bulk change project'}
+            </DialogTitle>
+            <DialogDescription>
+              Applying to {selectedIds.size} {selectedIds.size === 1 ? 'account' : 'accounts'}.
+              This overwrites the current value on every selected row.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="py-4 grid gap-2">
+            {bulkAction === 'assign' && (
+              <>
+                <Label>Assign to</Label>
+                <Select value={bulkAssignUserId} onValueChange={setBulkAssignUserId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select IBO or user" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="unassigned">Unassigned</SelectItem>
+                    {assignableUsers.map((user) => (
+                      <SelectItem key={user.id} value={user.id}>
+                        {user.telegram_first_name}
+                        {user.telegram_username && ` (@${user.telegram_username})`}
+                        {' - '}
+                        {user.role === 'ibo' ? 'IBO' : 'User'}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </>
+            )}
+
+            {bulkAction === 'status' && (
+              <>
+                <Label>New status</Label>
+                <Select
+                  value={bulkStatus}
+                  onValueChange={(v) => setBulkStatus(v as typeof bulkStatus)}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="production">Production</SelectItem>
+                    <SelectItem value="nesting">Nesting</SelectItem>
+                    <SelectItem value="active">Active</SelectItem>
+                    <SelectItem value="drop">Drop</SelectItem>
+                    <SelectItem value="not_in_project">No Project</SelectItem>
+                  </SelectContent>
+                </Select>
+              </>
+            )}
+
+            {bulkAction === 'platform' && (
+              <>
+                <Label>New platform</Label>
+                <Select value={bulkPlatformId} onValueChange={setBulkPlatformId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select platform" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {platforms.map((p) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.display_name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </>
+            )}
+
+            {bulkAction === 'project' && (
+              <>
+                <Label>New project</Label>
+                <Select value={bulkProjectId} onValueChange={setBulkProjectId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select project" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No project</SelectItem>
+                    {projects.map((p) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.display_name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBulkAction(null)} disabled={bulkSubmitting}>
+              Cancel
+            </Button>
+            <Button onClick={handleBulkSubmit} disabled={bulkSubmitting}>
+              {bulkSubmitting ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Applying...
+                </>
+              ) : (
+                `Apply to ${selectedIds.size}`
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Assign User Dialog */}
       <Dialog open={isAssignDialogOpen} onOpenChange={setIsAssignDialogOpen}>
