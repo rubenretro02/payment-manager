@@ -146,16 +146,18 @@ export async function GET() {
       const legacyPeriodStart = getLegacyPeriodStart(frequency, today);
       const lookbackCutoff = new Date(today);
       lookbackCutoff.setDate(lookbackCutoff.getDate() - 60);
-      let paymentsQuery = supabase
+      // NOTE: don't filter by user_id here. A payment for an account+cycle
+      // counts as that cycle's payment regardless of who reported it. If we
+      // filter by account.user_id and the account was reassigned mid-cycle,
+      // the previous user's report disappears and the account flips to
+      // overdue even though the cycle is satisfied.
+      const paymentsQuery = supabase
         .from('payments')
         .select('id, status, amount_owed, created_at, for_cycle_date')
         .eq('account_id', account.id)
         .gte('created_at', lookbackCutoff.toISOString())
         .in('status', ['submitted', 'confirmed', 'pending'])
         .order('created_at', { ascending: false });
-      if (account.user_id) {
-        paymentsQuery = paymentsQuery.eq('user_id', account.user_id);
-      }
       const { data: existingPayments } = await paymentsQuery;
 
       const legacyStartIso = legacyPeriodStart.toISOString();

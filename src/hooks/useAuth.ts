@@ -24,30 +24,9 @@ export function useAuth() {
   const authenticate = useCallback(async () => {
     if (!isReady) return;
 
-    // Check localStorage first (for Supabase Auth sessions)
-    const storedUser = localStorage.getItem('auth_user');
-    if (storedUser) {
-      try {
-        const user = JSON.parse(storedUser);
-        // Verify Supabase session is still valid
-        const supabase = getSupabaseClient();
-        const { data: { session } } = await supabase.auth.getSession();
-
-        if (session || user.telegram_id) {
-          setAuthState({
-            user,
-            isLoading: false,
-            isAuthenticated: true,
-            error: null,
-          });
-          return;
-        }
-      } catch {
-        localStorage.removeItem('auth_user');
-      }
-    }
-
-    // If we're in Telegram, authenticate with the API
+    // In Telegram: always re-validate via the API. The auth route checks
+    // user.status, so a suspended user can't slide back in on a stale
+    // localStorage cache.
     if (isTelegramApp && telegramUser) {
       try {
         const response = await fetch('/api/auth/telegram', {
@@ -70,6 +49,9 @@ export function useAuth() {
             error: null,
           });
         } else {
+          // Server rejected us (suspended, inactive, etc.) — clear the cache
+          // so a stale session doesn't resurrect on the next mount.
+          localStorage.removeItem('auth_user');
           setAuthState({
             user: null,
             isLoading: false,
@@ -86,6 +68,29 @@ export function useAuth() {
         });
       }
       return;
+    }
+
+    // Outside Telegram (email auth flow) — trust localStorage as long as the
+    // Supabase session is still valid.
+    const storedUser = localStorage.getItem('auth_user');
+    if (storedUser) {
+      try {
+        const user = JSON.parse(storedUser);
+        const supabase = getSupabaseClient();
+        const { data: { session } } = await supabase.auth.getSession();
+
+        if (session) {
+          setAuthState({
+            user,
+            isLoading: false,
+            isAuthenticated: true,
+            error: null,
+          });
+          return;
+        }
+      } catch {
+        localStorage.removeItem('auth_user');
+      }
     }
 
     // Not authenticated

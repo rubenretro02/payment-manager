@@ -103,12 +103,27 @@ export async function POST(request: NextRequest) {
     // 1. Already linked? Use existing user.
     let user = await getUserByTelegramId(telegramUser.id);
     if (user) {
+      // Block suspended/inactive users from the mini app — same gate the
+      // email login enforces. Without this check a previously-active user
+      // who got suspended keeps walking back in through Telegram.
+      if (user.status === 'suspended' || user.status === 'inactive') {
+        return NextResponse.json(
+          { success: false, error: 'Your account is not active. Contact your admin.' },
+          { status: 403 }
+        );
+      }
       return NextResponse.json({ success: true, user, isNewUser: false });
     }
 
     // 2. Look for an existing email-only user that matches and link them.
     const unlinked = await findUnlinkedMatch(telegramUser);
     if (unlinked) {
+      if (unlinked.status === 'suspended' || unlinked.status === 'inactive') {
+        return NextResponse.json(
+          { success: false, error: 'Your account is not active. Contact your admin.' },
+          { status: 403 }
+        );
+      }
       const linked = await linkExistingUser(unlinked, telegramUser);
       if (linked) {
         // Fire-and-forget admin notification
