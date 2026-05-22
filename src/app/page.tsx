@@ -5,11 +5,11 @@ import { useRouter } from 'next/navigation';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useAuth } from '@/hooks/useAuth';
 import { useTelegram } from '@/components/providers/TelegramProvider';
-import { CreditCard, Loader2 } from 'lucide-react';
+import { Ban, CreditCard, Loader2 } from 'lucide-react';
 
 export default function HomePage() {
   const router = useRouter();
-  const { user, isLoading, isAuthenticated } = useAuth();
+  const { user, isLoading, isAuthenticated, error } = useAuth();
   const { isTelegramApp } = useTelegram();
 
   useEffect(() => {
@@ -25,11 +25,40 @@ export default function HomePage() {
       return;
     }
 
-    // Not authenticated and not inside Telegram → go to login
-    if (!isTelegramApp) {
+    // Not authenticated and not inside Telegram → go to login.
+    // If there's an error (e.g. suspended user) we stay here and render
+    // the message below instead of bouncing them around.
+    if (!isTelegramApp && !error) {
       router.push('/login');
     }
-  }, [isAuthenticated, user, isLoading, isTelegramApp, router]);
+  }, [isAuthenticated, user, isLoading, isTelegramApp, error, router]);
+
+  // Inside Telegram — auth failed (suspended / inactive / network). Show
+  // the message from the server instead of an infinite spinner so the user
+  // actually understands why nothing is loading.
+  if (isTelegramApp && !isLoading && error) {
+    return (
+      <div className="flex min-h-screen items-center justify-center p-4">
+        <Card className="w-full max-w-md border-red-200 dark:border-red-900">
+          <CardHeader className="text-center">
+            <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400">
+              <Ban className="h-8 w-8" />
+            </div>
+            <CardTitle className="text-2xl">Access denied</CardTitle>
+            <CardDescription>
+              {error}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <p className="text-center text-sm text-muted-foreground">
+              If you think this is a mistake, reach out to your admin and ask
+              them to re-activate your account.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   // Inside Telegram - authenticating
   if (isTelegramApp) {
