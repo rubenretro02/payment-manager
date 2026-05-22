@@ -1638,7 +1638,7 @@ export default function MyAccountsPage() {
 
       {/* View Report Dialog */}
       <Dialog open={isViewReportDialogOpen} onOpenChange={setIsViewReportDialogOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Payment Report</DialogTitle>
             <DialogDescription>

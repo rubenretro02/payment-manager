@@ -909,7 +909,7 @@ export default function PaymentsPage() {
 
       {/* Payment Details Dialog */}
       <Dialog open={showDetails && selectedPayment !== null} onOpenChange={setShowDetails}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="sm:max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Payment Details</DialogTitle>
             <DialogDescription>
@@ -1021,7 +1021,7 @@ export default function PaymentsPage() {
             </div>
           )}
 
-          <DialogFooter className="flex-col sm:flex-row gap-2">
+          <DialogFooter className="flex-col sm:flex-row sm:flex-wrap sm:justify-end gap-2">
             {selectedPayment && hasScreenshots(selectedPayment) && (
               <Button
                 variant="outline"
