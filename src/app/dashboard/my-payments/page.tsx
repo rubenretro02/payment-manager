@@ -31,6 +31,8 @@ import { format } from 'date-fns';
 import { enUS } from 'date-fns/locale';
 import { useAuth } from '@/hooks/useAuth';
 import type { Payment } from '@/lib/types';
+import { ScreenshotImage } from '@/components/ScreenshotImage';
+import { getScreenshotSrc } from '@/lib/screenshots';
 
 const statusConfig: Record<string, { label: string; color: string; icon: typeof Clock }> = {
   pending: { label: 'Pending', color: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400', icon: Clock },
@@ -396,46 +398,56 @@ export default function MyPaymentsPage() {
                       </TabsTrigger>
                     </TabsList>
                     <TabsContent value="company" className="mt-2">
-                      {selectedPayment.company_screenshot_url && (
-                        <div className="relative">
-                          <img
-                            src={selectedPayment.company_screenshot_url}
-                            alt="Company payment screenshot"
-                            className="w-full rounded-lg border"
-                          />
-                          {!selectedPayment.company_screenshot_url.startsWith('data:') && (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="absolute top-2 right-2"
-                              onClick={() => window.open(selectedPayment.company_screenshot_url!, '_blank')}
-                            >
-                              <ExternalLink className="h-4 w-4" />
-                            </Button>
-                          )}
-                        </div>
-                      )}
+                      {(() => {
+                        const src = getScreenshotSrc(selectedPayment.company_screenshot_url, selectedPayment.company_screenshot_file_id);
+                        if (!src) return null;
+                        return (
+                          <div className="relative">
+                            <ScreenshotImage
+                              url={selectedPayment.company_screenshot_url}
+                              fileId={selectedPayment.company_screenshot_file_id}
+                              alt="Company payment screenshot"
+                              className="w-full rounded-lg border"
+                            />
+                            {!src.startsWith('data:') && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="absolute top-2 right-2"
+                                onClick={() => window.open(src, '_blank')}
+                              >
+                                <ExternalLink className="h-4 w-4" />
+                              </Button>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </TabsContent>
                     <TabsContent value="sent" className="mt-2">
-                      {selectedPayment.payment_screenshot_url && (
-                        <div className="relative">
-                          <img
-                            src={selectedPayment.payment_screenshot_url}
-                            alt="Payment sent screenshot"
-                            className="w-full rounded-lg border"
-                          />
-                          {!selectedPayment.payment_screenshot_url.startsWith('data:') && (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="absolute top-2 right-2"
-                              onClick={() => window.open(selectedPayment.payment_screenshot_url!, '_blank')}
-                            >
-                              <ExternalLink className="h-4 w-4" />
-                            </Button>
-                          )}
-                        </div>
-                      )}
+                      {(() => {
+                        const src = getScreenshotSrc(selectedPayment.payment_screenshot_url, selectedPayment.payment_screenshot_file_id);
+                        if (!src) return null;
+                        return (
+                          <div className="relative">
+                            <ScreenshotImage
+                              url={selectedPayment.payment_screenshot_url}
+                              fileId={selectedPayment.payment_screenshot_file_id}
+                              alt="Payment sent screenshot"
+                              className="w-full rounded-lg border"
+                            />
+                            {!src.startsWith('data:') && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="absolute top-2 right-2"
+                                onClick={() => window.open(src, '_blank')}
+                              >
+                                <ExternalLink className="h-4 w-4" />
+                              </Button>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </TabsContent>
                   </Tabs>
                 </div>

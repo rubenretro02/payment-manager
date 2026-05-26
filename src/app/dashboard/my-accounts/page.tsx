@@ -62,6 +62,7 @@ import {
   getUpcomingPaymentDates,
 } from '@/lib/payment-dates';
 import { isCommissionAccount } from '@/lib/account-utils';
+import { ScreenshotImage } from '@/components/ScreenshotImage';
 
 const statusColors: Record<string, string> = {
   production: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400',
@@ -543,8 +544,17 @@ export default function MyAccountsPage() {
         company_screenshot_url: companyUrl,
       };
 
+      // file_id is the permanent Telegram handle — without it we can't
+      // regenerate a working URL after the original one expires.
+      if (companyProofImage.fileId) {
+        paymentData.company_screenshot_file_id = companyProofImage.fileId;
+      }
+
       if (paymentUrl) {
         paymentData.payment_screenshot_url = paymentUrl;
+      }
+      if (paymentProofImage?.fileId) {
+        paymentData.payment_screenshot_file_id = paymentProofImage.fileId;
       }
 
       // If the reference field is a Base tx hash, let the server re-verify it
@@ -1694,23 +1704,25 @@ export default function MyAccountsPage() {
               </div>
 
               {/* Screenshots */}
-              {(selectedReportPayment.company_screenshot_url || selectedReportPayment.payment_screenshot_url) && (
+              {(selectedReportPayment.company_screenshot_url || selectedReportPayment.payment_screenshot_url || selectedReportPayment.company_screenshot_file_id || selectedReportPayment.payment_screenshot_file_id) && (
                 <div className="grid grid-cols-2 gap-2">
-                  {selectedReportPayment.company_screenshot_url && (
+                  {(selectedReportPayment.company_screenshot_url || selectedReportPayment.company_screenshot_file_id) && (
                     <div>
                       <p className="text-xs text-muted-foreground mb-1">Company Payment</p>
-                      <img
-                        src={selectedReportPayment.company_screenshot_url}
+                      <ScreenshotImage
+                        url={selectedReportPayment.company_screenshot_url}
+                        fileId={selectedReportPayment.company_screenshot_file_id}
                         alt="Company"
                         className="w-full rounded-lg border"
                       />
                     </div>
                   )}
-                  {selectedReportPayment.payment_screenshot_url && (
+                  {(selectedReportPayment.payment_screenshot_url || selectedReportPayment.payment_screenshot_file_id) && (
                     <div>
                       <p className="text-xs text-muted-foreground mb-1">Payment Sent</p>
-                      <img
-                        src={selectedReportPayment.payment_screenshot_url}
+                      <ScreenshotImage
+                        url={selectedReportPayment.payment_screenshot_url}
+                        fileId={selectedReportPayment.payment_screenshot_file_id}
                         alt="Payment"
                         className="w-full rounded-lg border"
                       />

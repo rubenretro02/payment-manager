@@ -149,7 +149,7 @@ export async function createPayment(paymentData: Partial<Payment>): Promise<{ da
   }
 
   // If basic insert worked and we have screenshots, try to update with them
-  if (data && (paymentData.company_screenshot_url || paymentData.payment_screenshot_url)) {
+  if (data && (paymentData.company_screenshot_url || paymentData.payment_screenshot_url || paymentData.company_screenshot_file_id || paymentData.payment_screenshot_file_id)) {
     const screenshotUpdate: Record<string, unknown> = {};
 
     // Try new column names first
@@ -158,6 +158,14 @@ export async function createPayment(paymentData: Partial<Payment>): Promise<{ da
     }
     if (paymentData.payment_screenshot_url) {
       screenshotUpdate.payment_screenshot_url = paymentData.payment_screenshot_url;
+    }
+    // Telegram file_ids are PERMANENT (unlike the temporary URLs) — they're
+    // what lets us regenerate working URLs after the original ones expire.
+    if (paymentData.company_screenshot_file_id) {
+      screenshotUpdate.company_screenshot_file_id = paymentData.company_screenshot_file_id;
+    }
+    if (paymentData.payment_screenshot_file_id) {
+      screenshotUpdate.payment_screenshot_file_id = paymentData.payment_screenshot_file_id;
     }
 
     const { error: updateError } = await supabase

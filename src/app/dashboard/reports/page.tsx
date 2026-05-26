@@ -53,6 +53,8 @@ import {
 import { format, startOfDay, startOfWeek, startOfMonth, startOfYear, isAfter } from 'date-fns';
 import type { Payment } from '@/lib/types';
 import { isCommissionAccount } from '@/lib/account-utils';
+import { ScreenshotImage } from '@/components/ScreenshotImage';
+import { getScreenshotSrc } from '@/lib/screenshots';
 
 type DateRange = 'today' | 'week' | 'month' | 'year' | 'all';
 
@@ -1258,28 +1260,37 @@ export default function ReportsPage() {
               {/* Screenshots */}
               {(selectedPayment.company_screenshot_url || selectedPayment.payment_screenshot_url || selectedPayment.screenshot_url) && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {(selectedPayment.company_screenshot_url || selectedPayment.screenshot_url) && (
-                    <div>
-                      <div className="flex items-center justify-between mb-1">
-                        <p className="text-xs text-muted-foreground flex items-center gap-1"><Building2 className="h-3 w-3" /> Company Payment</p>
-                        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => openImageInNewTab((selectedPayment.company_screenshot_url || selectedPayment.screenshot_url) as string)}>
-                          <ExternalLink className="h-3 w-3" />
-                        </Button>
+                  {(() => {
+                    const companyUrl = selectedPayment.company_screenshot_url || selectedPayment.screenshot_url;
+                    const companySrc = getScreenshotSrc(companyUrl, selectedPayment.company_screenshot_file_id);
+                    if (!companySrc) return null;
+                    return (
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <p className="text-xs text-muted-foreground flex items-center gap-1"><Building2 className="h-3 w-3" /> Company Payment</p>
+                          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => openImageInNewTab(companySrc)}>
+                            <ExternalLink className="h-3 w-3" />
+                          </Button>
+                        </div>
+                        <ScreenshotImage url={companyUrl} fileId={selectedPayment.company_screenshot_file_id} alt="Company" className="w-full rounded-lg border" />
                       </div>
-                      <img src={(selectedPayment.company_screenshot_url || selectedPayment.screenshot_url) as string} alt="Company" className="w-full rounded-lg border" />
-                    </div>
-                  )}
-                  {selectedPayment.payment_screenshot_url && (
-                    <div>
-                      <div className="flex items-center justify-between mb-1">
-                        <p className="text-xs text-muted-foreground flex items-center gap-1"><Send className="h-3 w-3" /> Payment Sent</p>
-                        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => openImageInNewTab(selectedPayment.payment_screenshot_url as string)}>
-                          <ExternalLink className="h-3 w-3" />
-                        </Button>
+                    );
+                  })()}
+                  {(() => {
+                    const paymentSrc = getScreenshotSrc(selectedPayment.payment_screenshot_url, selectedPayment.payment_screenshot_file_id);
+                    if (!paymentSrc) return null;
+                    return (
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <p className="text-xs text-muted-foreground flex items-center gap-1"><Send className="h-3 w-3" /> Payment Sent</p>
+                          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => openImageInNewTab(paymentSrc)}>
+                            <ExternalLink className="h-3 w-3" />
+                          </Button>
+                        </div>
+                        <ScreenshotImage url={selectedPayment.payment_screenshot_url} fileId={selectedPayment.payment_screenshot_file_id} alt="Payment" className="w-full rounded-lg border" />
                       </div>
-                      <img src={selectedPayment.payment_screenshot_url} alt="Payment" className="w-full rounded-lg border" />
-                    </div>
-                  )}
+                    );
+                  })()}
                 </div>
               )}
 
