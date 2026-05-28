@@ -127,7 +127,7 @@ export async function GET() {
         account.biweekly_second_day
       );
 
-      let daysUntilDue = Math.round(
+      const daysUntilDue = Math.round(
         (nextPaymentDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)
       );
       const daysSincePrevious = Math.round(
