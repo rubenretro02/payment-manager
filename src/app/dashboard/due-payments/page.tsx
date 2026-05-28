@@ -337,6 +337,11 @@ export default function DuePaymentsPage() {
           notes: reportForm.notes || null,
           auto_confirm: reportForm.auto_confirm,
           admin_id: adminUser?.id,
+          // Tag the report with the cycle this row represents so reporting an
+          // Overdue row clears the PREVIOUS cycle, not today's. The row's
+          // next_payment_date is that cycle's date (noon-UTC) — the date part
+          // matches how /api/payments/due identifies the cycle.
+          for_cycle_date: selectedItem.next_payment_date?.split('T')[0],
         }),
       });
 
@@ -620,7 +625,7 @@ export default function DuePaymentsPage() {
                   const dueDate = new Date(item.next_payment_date);
                   return (
                     <div
-                      key={item.account_id}
+                      key={`${item.account_id}-${item.status}`}
                       className="flex flex-col sm:flex-row sm:items-center gap-3 p-4 transition-colors hover:bg-muted/50"
                     >
                       <div className="flex items-start gap-3 flex-1 min-w-0">

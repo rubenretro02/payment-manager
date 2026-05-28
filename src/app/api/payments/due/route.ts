@@ -178,58 +178,29 @@ export async function GET() {
           (p) => p.for_cycle_date && p.for_cycle_date === previousCycleDateStr
         ) || null;
 
-      // Determine status. When there's no payment and the previous due date
-      // already passed without one, this account is overdue from THAT date —
-      // not 'due_soon' for next week.
-      let status: DueAccountInfo['status'];
-      let displayDate = nextPaymentDate;
-      if (currentPayment?.status === 'confirmed') {
-        status = 'confirmed';
-      } else if (currentPayment?.status === 'submitted') {
-        status = 'reported';
-      } else if (currentPayment?.status === 'pending') {
-        // 'No payment received / issue' report from the mini-app — the user
-        // already raised the flag, admin just hasn't acted on it yet. Treat
-        // as Reported so the cron stops nagging and admin can find it.
-        status = 'reported';
-      } else if (daysUntilDue === 0) {
-        // Today IS the payment day — not overdue yet, the admin still has
-        // until end of day. Takes priority over the missed-previous check.
-        status = 'due_today';
-      } else if (
+      // Was the PREVIOUS scheduled cycle missed? Computed independently of
+      // the status chain below so we can surface it even when the current
+      // cycle is also due today. Otherwise an account that's both overdue
+      // (last cycle) AND due today collapses into one 'due_today' row and
+      // the older unpaid cycle silently disappears from the board.
+      const overdueWindow = frequency === 'weekly' ? 7 : frequency === 'biweekly' ? 14 : 30;
+      // Don't flag a cycle older than the account's payment-active floor
+      // (payment_active_since, refreshed on transitions to production/nesting,
+      // falling back to created_at).
+      const floorIso = account.payment_active_since || account.created_at;
+      const previousCycleMissed =
         !currentPayment &&
-        // If the user already filed something for the previous cycle (even
-        // a 'No Payment / Issue' pending report), it's not really overdue
-        // anymore — admin just needs to act on the existing report.
+        // If the user already filed something for the previous cycle (even a
+        // 'No Payment / Issue' pending report), it's not really overdue — the
+        // admin just needs to act on the existing report.
         !previousCyclePayment &&
         daysSincePrevious > 0 &&
-        // Overdue window = one full cycle. After that the next cycle's
-        // deadline becomes the relevant date, not the older miss.
-        daysSincePrevious <= (frequency === 'weekly' ? 7 : frequency === 'biweekly' ? 14 : 30) &&
-        // Don't flag a cycle that's older than the account's payment-active
-        // floor. Uses payment_active_since (refreshed on status transitions
-        // to production/nesting), falling back to created_at.
-        (() => {
-          const floorIso = account.payment_active_since || account.created_at;
-          return !floorIso || previousPaymentDate >= new Date(floorIso);
-        })()
-      ) {
-        // Missed previous cycle — show overdue with that adjusted past date.
-        status = 'overdue';
-        daysUntilDue = -daysSincePrevious;
-        displayDate = previousPaymentDate;
-      } else if (daysUntilDue <= 7) {
-        status = 'due_soon';
-      } else if (daysUntilDue <= 30) {
-        // Within a month → Upcoming
-        status = 'upcoming';
-      } else {
-        // Further out than a month — still call it upcoming but it's a long
-        // way away. Could split into its own bucket later if needed.
-        status = 'upcoming';
-      }
+        // Overdue window = one full cycle.
+        daysSincePrevious <= overdueWindow &&
+        (!floorIso || previousPaymentDate >= new Date(floorIso));
 
-      result.push({
+      // Static fields shared by every row we emit for this account.
+      const baseEntry = {
         account_id: account.id,
         account_name: account.full_name,
         account_email: account.account_email,
@@ -243,13 +214,50 @@ export async function GET() {
         project_name: account.project?.display_name || null,
         percentage: account.percentage,
         payment_frequency: frequency,
-        next_payment_date: displayDate.toISOString(),
-        days_until_due: daysUntilDue,
-        status,
         current_payment_id: currentPayment?.id || null,
         current_payment_status: currentPayment?.status || null,
         amount_owed: currentPayment?.amount_owed || null,
+      };
+      const makeEntry = (
+        entryStatus: DueAccountInfo['status'],
+        entryDaysUntilDue: number,
+        entryDate: Date
+      ): DueAccountInfo => ({
+        ...baseEntry,
+        status: entryStatus,
+        days_until_due: entryDaysUntilDue,
+        next_payment_date: entryDate.toISOString(),
       });
+
+      // A missed previous cycle, surfaced as its own Overdue row tied to the
+      // previous due date. Emitted whenever previousCycleMissed holds — even
+      // alongside today's row — so the overdue cycle never gets swallowed.
+      const overdueEntry = makeEntry('overdue', -daysSincePrevious, previousPaymentDate);
+
+      if (currentPayment?.status === 'confirmed') {
+        result.push(makeEntry('confirmed', daysUntilDue, nextPaymentDate));
+      } else if (
+        currentPayment?.status === 'submitted' ||
+        currentPayment?.status === 'pending'
+      ) {
+        // 'submitted' = reported; 'pending' = 'No payment / issue' flag from
+        // the mini-app. Both surface as Reported so the cron stops nagging
+        // and the admin can find the open report.
+        result.push(makeEntry('reported', daysUntilDue, nextPaymentDate));
+      } else if (daysUntilDue === 0) {
+        // Today IS the payment day — the current cycle isn't overdue yet, the
+        // admin still has until end of day.
+        result.push(makeEntry('due_today', 0, nextPaymentDate));
+        // ...but a previously missed cycle stays on the board as its own row.
+        if (previousCycleMissed) result.push(overdueEntry);
+      } else if (previousCycleMissed) {
+        result.push(overdueEntry);
+      } else if (daysUntilDue <= 7) {
+        result.push(makeEntry('due_soon', daysUntilDue, nextPaymentDate));
+      } else {
+        // Anything more than a week out is Upcoming.
+        result.push(makeEntry('upcoming', daysUntilDue, nextPaymentDate));
+      }
     }
 
     // Group by status
