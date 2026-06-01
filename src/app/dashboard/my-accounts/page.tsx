@@ -191,22 +191,43 @@ export default function MyAccountsPage() {
     }
   }
 
-  // Get the most recent payment for the CURRENT cycle of an account.
-  // Returns null if there's no submitted/confirmed payment tagged for the
-  // current cycle (or only a rejected one — user should report again).
+  // Get the most recent payment for the cycle the user owes RIGHT NOW.
+  // Returns null if there's no submitted/confirmed payment tagged for that
+  // cycle (or only a rejected one — user should report again).
   //
   // Matches on for_cycle_date (set at submission) instead of a rolling
-  // today-minus-N-days window. The old window credited a report filed for
-  // the PREVIOUS cycle to the current one, so when a new cycle came due the
-  // card wrongly showed "Reported / Add another" instead of "Report Payment".
-  // Legacy untagged payments fall back to a tight window — same cutoffs the
-  // admin Due Payments route uses — so historical rows keep their behavior.
+  // today-minus-N-days window. The old window credited a report filed for the
+  // PREVIOUS cycle to the current one, so when a new cycle came due the card
+  // wrongly showed "Reported / Add another" instead of "Report Payment".
+  //
+  // The "due cycle" = the latest scheduled cycle on or before today:
+  //   - on a due date  → that cycle (today),
+  //   - between cycles → the previous one (still in its grace/overdue window
+  //     until the next due date arrives).
+  // This keeps the report visible after a user pays a day or two LATE (their
+  // report is tagged to the just-passed cycle), without letting last cycle's
+  // report satisfy a brand-new due day. Legacy untagged payments fall back to
+  // a tight window — same cutoffs the admin Due Payments route uses.
   const getCurrentPeriodReport = (account: Account): Payment | null => {
     const frequency = account.payment_frequency || 'weekly';
-    const currentCycleStr = format(getNextPayment(account), 'yyyy-MM-dd');
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
+
+    const nextCycle = new Date(getNextPayment(account));
+    nextCycle.setHours(0, 0, 0, 0);
+    const isDueToday = nextCycle.getTime() === today.getTime();
+    const dueCycle = isDueToday
+      ? nextCycle
+      : calculatePreviousPaymentDate(
+          frequency,
+          account.payment_day,
+          today,
+          account.biweekly_first_day,
+          account.biweekly_second_day
+        );
+    const dueCycleStr = format(dueCycle, 'yyyy-MM-dd');
+
     const legacyStart = new Date(today);
     if (frequency === 'weekly') legacyStart.setDate(legacyStart.getDate() - 5);
     else if (frequency === 'biweekly') legacyStart.setDate(legacyStart.getDate() - 12);
@@ -217,7 +238,7 @@ export default function MyAccountsPage() {
         p.account_id === account.id &&
         (p.status === 'submitted' || p.status === 'confirmed') &&
         (p.for_cycle_date
-          ? p.for_cycle_date === currentCycleStr
+          ? p.for_cycle_date === dueCycleStr
           : new Date(p.created_at) >= legacyStart)
       )
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0] || null;
