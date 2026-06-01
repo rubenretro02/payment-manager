@@ -208,6 +208,11 @@ export default function MyAccountsPage() {
   // report is tagged to the just-passed cycle), without letting last cycle's
   // report satisfy a brand-new due day. Legacy untagged payments fall back to
   // a tight window — same cutoffs the admin Due Payments route uses.
+  //
+  // Counts 'pending' too: a 'No Payment / Issue' report is stored as a pending
+  // payment, so it must satisfy the cycle as well — otherwise the card stays
+  // on "Report Payment / No Payment" and users file duplicate issue reports
+  // thinking the first didn't go through.
   const getCurrentPeriodReport = (account: Account): Payment | null => {
     const frequency = account.payment_frequency || 'weekly';
 
@@ -236,7 +241,7 @@ export default function MyAccountsPage() {
     return payments
       .filter(p =>
         p.account_id === account.id &&
-        (p.status === 'submitted' || p.status === 'confirmed') &&
+        (p.status === 'submitted' || p.status === 'confirmed' || p.status === 'pending') &&
         (p.for_cycle_date
           ? p.for_cycle_date === dueCycleStr
           : new Date(p.created_at) >= legacyStart)
@@ -993,29 +998,42 @@ export default function MyAccountsPage() {
                   {!isCommission && (account.status === 'production' || account.status === 'nesting') && (() => {
                     const currentReport = getCurrentPeriodReport(account);
 
-                    // Already reported for this period — show status + view + add another
+                    // Already reported for this period — show status + view + add another.
+                    // 'pending' = a 'No Payment / Issue' report; render it distinctly
+                    // (amber, no amount) so it's clearly a reported issue, not a payment.
                     if (currentReport) {
                       const isConfirmed = currentReport.status === 'confirmed';
+                      const isNoPayment = currentReport.status === 'pending';
                       return (
                         <div className="space-y-2">
                           <div className={`rounded-lg border p-3 flex items-center gap-2 ${
                             isConfirmed
                               ? 'bg-green-50 border-green-200 dark:bg-green-950/30 dark:border-green-800'
+                              : isNoPayment
+                              ? 'bg-amber-50 border-amber-200 dark:bg-amber-950/30 dark:border-amber-800'
                               : 'bg-purple-50 border-purple-200 dark:bg-purple-950/30 dark:border-purple-800'
                           }`}>
                             {isConfirmed ? (
                               <CheckCircle2 className="h-4 w-4 text-green-600 shrink-0" />
+                            ) : isNoPayment ? (
+                              <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
                             ) : (
                               <Send className="h-4 w-4 text-purple-600 shrink-0" />
                             )}
                             <div className="flex-1 min-w-0">
                               <p className={`text-sm font-medium ${
-                                isConfirmed ? 'text-green-700 dark:text-green-400' : 'text-purple-700 dark:text-purple-400'
+                                isConfirmed ? 'text-green-700 dark:text-green-400'
+                                  : isNoPayment ? 'text-amber-700 dark:text-amber-400'
+                                  : 'text-purple-700 dark:text-purple-400'
                               }`}>
-                                {isConfirmed ? 'Reported & Confirmed' : 'Reported – Awaiting Confirmation'}
+                                {isConfirmed ? 'Reported & Confirmed'
+                                  : isNoPayment ? 'No Payment / Issue reported'
+                                  : 'Reported – Awaiting Confirmation'}
                               </p>
                               <p className="text-xs text-muted-foreground">
-                                ${Number(currentReport.amount_paid || 0).toFixed(2)} on {format(new Date(currentReport.created_at), 'MMM d')}
+                                {isNoPayment
+                                  ? `Awaiting admin review · ${format(new Date(currentReport.created_at), 'MMM d')}`
+                                  : `$${Number(currentReport.amount_paid || 0).toFixed(2)} on ${format(new Date(currentReport.created_at), 'MMM d')}`}
                               </p>
                             </div>
                           </div>
@@ -1042,8 +1060,11 @@ export default function MyAccountsPage() {
                                 setIsPaymentDialogOpen(true);
                               }}
                             >
-                              <Plus className="h-4 w-4 mr-2" />
-                              Add another
+                              {isNoPayment ? (
+                                <><DollarSign className="h-4 w-4 mr-2" />Report Payment</>
+                              ) : (
+                                <><Plus className="h-4 w-4 mr-2" />Add another</>
+                              )}
                             </Button>
                             <Button
                               variant="outline"
