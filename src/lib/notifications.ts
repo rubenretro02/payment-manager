@@ -367,16 +367,32 @@ export async function sendPaymentReminders(mode: ReminderMode = 'all'): Promise<
     }).format(new Date());
     const today = new Date(`${todayDateStr}T00:00:00.000Z`);
 
-    const { data: accountsRaw } = await supabase
-      .from('accounts')
-      .select(`
+    const reminderSelect = `
         *,
         user:users!user_id(id, telegram_id, telegram_first_name),
         platform:platforms(display_name),
         project:projects(display_name)
-      `)
+      `;
+    // production/nesting get reminders by default; also remind any account an
+    // admin forced to keep requesting payment regardless of status.
+    let { data: accountsRaw, error: accountsErr } = await supabase
+      .from('accounts')
+      .select(reminderSelect)
       .not('user_id', 'is', null)
-      .in('status', ['production', 'nesting']);
+      .or('status.in.(production,nesting),force_payment_request.eq.true');
+
+    // Resilience: before the migration runs, the force_payment_request column
+    // doesn't exist and the .or() errors — fall back to status-only so
+    // production/nesting reminders keep going out.
+    if (accountsErr && /force_payment_request/i.test(accountsErr.message || '')) {
+      console.warn('[reminders] force_payment_request column missing — falling back to status-only. Run migration-add-force-payment-request.sql.');
+      ({ data: accountsRaw, error: accountsErr } = await supabase
+        .from('accounts')
+        .select(reminderSelect)
+        .not('user_id', 'is', null)
+        .in('status', ['production', 'nesting']));
+    }
+    void accountsErr;
 
     if (!accountsRaw) return results;
 
