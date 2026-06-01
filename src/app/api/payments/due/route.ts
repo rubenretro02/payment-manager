@@ -67,17 +67,29 @@ export async function GET() {
 
     // Include unassigned accounts too — admin still needs to see them and
     // report on their behalf. user_id may be null; we handle that downstream.
-    const { data: accounts, error } = await supabase
-      .from('accounts')
-      .select(`
+    const accountSelect = `
         *,
         user:users!user_id(id, telegram_id, telegram_first_name, telegram_username, phone),
         platform:platforms(display_name),
         project:projects(display_name)
-      `)
-      // production/nesting report by default; also include any account an admin
-      // forced to keep requesting payment regardless of status.
+      `;
+    // production/nesting report by default; also include any account an admin
+    // forced to keep requesting payment regardless of status.
+    let { data: accounts, error } = await supabase
+      .from('accounts')
+      .select(accountSelect)
       .or('status.in.(production,nesting),force_payment_request.eq.true');
+
+    // Resilience: if the force_payment_request column hasn't been migrated yet,
+    // the .or() above errors — fall back to the status-only query so the board
+    // keeps working until the migration runs.
+    if (error && /force_payment_request/i.test(error.message || '')) {
+      console.warn('[due-payments] force_payment_request column missing — falling back to status-only query. Run migration-add-force-payment-request.sql.');
+      ({ data: accounts, error } = await supabase
+        .from('accounts')
+        .select(accountSelect)
+        .in('status', ['production', 'nesting']));
+    }
 
     if (error) {
       console.error('[due-payments] Error fetching accounts:', error);
