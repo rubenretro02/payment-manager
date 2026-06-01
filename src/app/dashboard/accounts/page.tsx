@@ -31,6 +31,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -387,6 +388,30 @@ export default function AccountsPage() {
       alert('Bulk update failed. Check console for details.');
     } finally {
       setBulkSubmitting(false);
+    }
+  };
+
+  // Flip the "force payment request" override for one account. Optimistic:
+  // update local state immediately, PATCH in the background, revert on error.
+  const handleToggleForce = async (account: Account, next: boolean) => {
+    setAccounts(prev =>
+      prev.map(a => (a.id === account.id ? { ...a, force_payment_request: next } : a))
+    );
+    try {
+      const res = await fetch(`/api/accounts/${account.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force_payment_request: next }),
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || 'Update failed');
+    } catch (error) {
+      console.error('Error toggling force_payment_request:', error);
+      // Revert the optimistic change so the UI matches the server.
+      setAccounts(prev =>
+        prev.map(a => (a.id === account.id ? { ...a, force_payment_request: !next } : a))
+      );
+      alert('Could not update "Force payment request". Please try again.');
     }
   };
 
@@ -1325,6 +1350,21 @@ export default function AccountsPage() {
                             </Badge>
                           )}
                         </div>
+                        {/* For statuses that normally can't report, let the admin
+                            force it to keep requesting payment (e.g. dropped but
+                            still owes a report). */}
+                        {!PAYMENT_REQUIRED_STATUSES.includes(account.status) && (
+                          <label
+                            className="mt-1.5 flex items-center gap-1.5 cursor-pointer"
+                            title="Force this account to keep requesting payment even though its status isn't Production/Nesting"
+                          >
+                            <Switch
+                              checked={!!account.force_payment_request}
+                              onCheckedChange={(v) => handleToggleForce(account, v)}
+                            />
+                            <span className="text-xs text-muted-foreground">Force request</span>
+                          </label>
+                        )}
                       </TableCell>
                       <TableCell>
                         <DropdownMenu>

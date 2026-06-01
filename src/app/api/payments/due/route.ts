@@ -75,7 +75,9 @@ export async function GET() {
         platform:platforms(display_name),
         project:projects(display_name)
       `)
-      .in('status', ['production', 'nesting']);
+      // production/nesting report by default; also include any account an admin
+      // forced to keep requesting payment regardless of status.
+      .or('status.in.(production,nesting),force_payment_request.eq.true');
 
     if (error) {
       console.error('[due-payments] Error fetching accounts:', error);

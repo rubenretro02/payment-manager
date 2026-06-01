@@ -90,6 +90,11 @@ export interface Account {
   // payment-active status. Falls back to created_at when null.
   payment_active_since: string | null;
 
+  // Admin override: keep requesting payment even when status isn't
+  // production/nesting (e.g. a dropped account that still owes a report).
+  // Optional — absent on rows that predate the column.
+  force_payment_request?: boolean;
+
   created_at: string;
   updated_at: string;
 

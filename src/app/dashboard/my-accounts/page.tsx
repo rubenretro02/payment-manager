@@ -321,7 +321,7 @@ export default function MyAccountsPage() {
   const getOverdueInfo = (account: Account): { isOverdue: boolean; missedDate: Date | null; daysOverdue: number } => {
     // Only payment-requiring statuses can be overdue. Active/drop/etc.
     // aren't supposed to be paying right now, so don't flag them.
-    if (account.status !== 'production' && account.status !== 'nesting') {
+    if (account.status !== 'production' && account.status !== 'nesting' && !account.force_payment_request) {
       return { isOverdue: false, missedDate: null, daysOverdue: 0 };
     }
 
@@ -995,7 +995,7 @@ export default function MyAccountsPage() {
                   )}
 
                   {/* Actions - Only show Report Payment for production/nesting accounts */}
-                  {!isCommission && (account.status === 'production' || account.status === 'nesting') && (() => {
+                  {!isCommission && (account.status === 'production' || account.status === 'nesting' || account.force_payment_request) && (() => {
                     const currentReport = getCurrentPeriodReport(account);
 
                     // Already reported for this period — show status + view + add another.
@@ -1123,7 +1123,7 @@ export default function MyAccountsPage() {
                   })()}
 
                   {/* For non-production/nesting regular accounts, only show schedule. */}
-                  {!isCommission && account.status !== 'production' && account.status !== 'nesting' && (
+                  {!isCommission && account.status !== 'production' && account.status !== 'nesting' && !account.force_payment_request && (
                     <Button
                       variant="outline"
                       className="w-full"

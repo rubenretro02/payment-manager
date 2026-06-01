@@ -88,6 +88,52 @@ export async function PUT(
   }
 }
 
+/**
+ * PATCH /api/accounts/[id]
+ * Partial update for single-field toggles (currently force_payment_request)
+ * without going through the full edit form. Only whitelisted fields are
+ * applied, so a stray body can't overwrite arbitrary columns.
+ */
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id } = await params;
+    const body = await request.json();
+
+    const updateData: Record<string, unknown> = {};
+    if (typeof body.force_payment_request === 'boolean') {
+      updateData.force_payment_request = body.force_payment_request;
+    }
+
+    if (Object.keys(updateData).length === 0) {
+      return NextResponse.json(
+        { success: false, error: 'No supported fields to update' },
+        { status: 400 }
+      );
+    }
+
+    const supabase = createAdminClient();
+    const { data, error } = await supabase
+      .from('accounts')
+      .update(updateData)
+      .eq('id', id)
+      .select('*, platform:platforms(*), project:projects(*)')
+      .single();
+
+    if (error) throw error;
+
+    return NextResponse.json({ success: true, data });
+  } catch (error) {
+    console.error('Error patching account:', error);
+    return NextResponse.json(
+      { success: false, error: 'Failed to update account' },
+      { status: 500 }
+    );
+  }
+}
+
 export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
