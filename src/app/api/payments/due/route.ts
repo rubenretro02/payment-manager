@@ -3,6 +3,7 @@ import { createAdminClient } from '@/lib/supabase/server';
 import {
   calculateNextPaymentDate,
   calculatePreviousPaymentDate,
+  getCycleWindow,
   type PaymentFrequency,
 } from '@/lib/payment-dates';
 import { isCommissionAccount } from '@/lib/account-utils';
@@ -116,27 +117,12 @@ export async function GET() {
         account.biweekly_second_day
       );
 
-      // Previous scheduled due date (business-day-adjusted) — used to
-      // detect a missed cycle. Same helper used everywhere so reminder
-      // and overdue display the SAME date.
-      const previousPaymentDate = calculatePreviousPaymentDate(
-        frequency,
-        account.payment_day,
-        today,
-        account.biweekly_first_day,
-        account.biweekly_second_day
-      );
-
       const daysUntilDue = Math.round(
         (nextPaymentDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)
       );
-      const daysSincePrevious = Math.round(
-        (today.getTime() - previousPaymentDate.getTime()) / (1000 * 60 * 60 * 24)
-      );
 
-      // Shift both dates to noon UTC so the calendar date renders correctly
+      // Shift the next date to noon UTC so the calendar date renders correctly
       nextPaymentDate.setUTCHours(12, 0, 0, 0);
-      previousPaymentDate.setUTCHours(12, 0, 0, 0);
 
       // Find a payment for the CURRENT cycle. New payments carry the
       // explicit for_cycle_date tag (set at submission) — prefer that.
@@ -144,8 +130,19 @@ export async function GET() {
       // heuristic so historical classification doesn't shift.
       const nextCycleDateStr = nextPaymentDate.toISOString().split('T')[0];
       const legacyPeriodStart = getLegacyPeriodStart(frequency, today);
+      // Lookback covers ~6 cycles of THIS account's frequency so multi-cycle
+      // overdue detection behaves the same for weekly, biweekly and monthly:
+      // a fixed 60 days is ~8 weekly cycles but only ~2 monthly ones, which
+      // would silently cap a monthly account at two overdue rows. Bounds both
+      // the payments query and the missed-cycle walk — a cycle older than this
+      // can't be classified anyway because we didn't load its payment.
+      const cycleDays = frequency === 'weekly' ? 7 : frequency === 'biweekly' ? 14 : 31;
+      // At least the original 60 days (≈8 weekly cycles), but extend so even
+      // monthly covers ~6 cycles. max() means weekly keeps its old window —
+      // pure extension for the slower frequencies, no regression.
+      const lookbackDays = Math.max(60, cycleDays * 6);
       const lookbackCutoff = new Date(today);
-      lookbackCutoff.setDate(lookbackCutoff.getDate() - 60);
+      lookbackCutoff.setDate(lookbackCutoff.getDate() - lookbackDays);
       // NOTE: don't filter by user_id here. A payment for an account+cycle
       // counts as that cycle's payment regardless of who reported it. If we
       // filter by account.user_id and the account was reassigned mid-cycle,
@@ -167,37 +164,90 @@ export async function GET() {
           return p.created_at >= legacyStartIso;
         }) || null;
 
-      // Also check the previous cycle so a user who already filed for it
-      // (a 'No Payment / Issue' pending report, or just a late payment)
-      // doesn't get shown as Overdue. Only matters for tagged payments —
-      // a legacy payment without for_cycle_date can't be unambiguously
-      // attributed to the previous vs current cycle, so leave it alone.
-      const previousCycleDateStr = previousPaymentDate.toISOString().split('T')[0];
-      const previousCyclePayment =
-        (existingPayments || []).find(
-          (p) => p.for_cycle_date && p.for_cycle_date === previousCycleDateStr
-        ) || null;
+      // Has a given past cycle already been satisfied? Prefer the explicit
+      // for_cycle_date tag; fall back to the ±half-cycle window for legacy
+      // untagged payments (getCycleWindow tiles the timeline, so adjacent
+      // cycles don't overlap). A 'pending' No-Payment/Issue report counts as
+      // handled too — the admin just needs to act on the existing report.
+      const cycleDateStr = (d: Date): string => {
+        const noon = new Date(d);
+        noon.setUTCHours(12, 0, 0, 0);
+        return noon.toISOString().split('T')[0];
+      };
+      const isCyclePaid = (cycleDate: Date): boolean => {
+        const str = cycleDateStr(cycleDate);
+        const { start, end } = getCycleWindow(cycleDate, frequency);
+        return (existingPayments || []).some((p) => {
+          if (p.for_cycle_date) return p.for_cycle_date === str;
+          const created = new Date(p.created_at);
+          return created >= start && created <= end;
+        });
+      };
 
-      // Was the PREVIOUS scheduled cycle missed? Computed independently of
-      // the status chain below so we can surface it even when the current
-      // cycle is also due today. Otherwise an account that's both overdue
-      // (last cycle) AND due today collapses into one 'due_today' row and
-      // the older unpaid cycle silently disappears from the board.
-      const overdueWindow = frequency === 'weekly' ? 7 : frequency === 'biweekly' ? 14 : 30;
-      // Don't flag a cycle older than the account's payment-active floor
-      // (payment_active_since, refreshed on transitions to production/nesting,
-      // falling back to created_at).
+      // Walk backwards through scheduled cycles strictly before today and
+      // collect EVERY unpaid one — each becomes its own Overdue row. This is
+      // what lets an account that skipped several cycles show each missed gap
+      // (e.g. both the May 28 AND the May 21 cycle) instead of only the most
+      // recent. Bounded by the payment-active floor (payment_active_since,
+      // refreshed on transitions to production/nesting, falling back to
+      // created_at) and the 60-day payments lookback, so the board can't fill
+      // with ancient cycles we have no payment records for.
       const floorIso = account.payment_active_since || account.created_at;
-      const previousCycleMissed =
-        !currentPayment &&
-        // If the user already filed something for the previous cycle (even a
-        // 'No Payment / Issue' pending report), it's not really overdue — the
-        // admin just needs to act on the existing report.
-        !previousCyclePayment &&
-        daysSincePrevious > 0 &&
-        // Overdue window = one full cycle.
-        daysSincePrevious <= overdueWindow &&
-        (!floorIso || previousPaymentDate >= new Date(floorIso));
+      const floorDate = floorIso ? new Date(floorIso) : null;
+      if (floorDate) floorDate.setHours(0, 0, 0, 0);
+      const missedCycles: Date[] = [];
+      let cursor = today;
+      // Safety cap: roughly one cycle per iteration, never beyond lookback.
+      for (let i = 0; i < 12; i++) {
+        const prev = calculatePreviousPaymentDate(
+          frequency,
+          account.payment_day,
+          cursor,
+          account.biweekly_first_day,
+          account.biweekly_second_day
+        );
+        if (prev.getTime() >= today.getTime()) break;
+        if (prev.getTime() < lookbackCutoff.getTime()) break;
+        if (floorDate && prev.getTime() < floorDate.getTime()) break;
+        if (!isCyclePaid(prev)) missedCycles.push(new Date(prev));
+        cursor = prev;
+      }
+
+      // An OPEN report (submitted/pending) filed for the cycle that just
+      // passed — when today now sits BETWEEN cycles — belongs to neither the
+      // current cycle (board already rolled to the next one) nor the overdue
+      // list (it's reported, so isCyclePaid skipped it). Without this it
+      // silently vanishes and the admin never sees it under Reported even
+      // though they still have to confirm it. findNearestCycleDate tags a
+      // report to the nearest cycle, which is the just-passed one whenever a
+      // user reports on/just after the due date. Surface it as Reported,
+      // anchored to the cycle it was actually for.
+      type ExistingPayment = NonNullable<typeof existingPayments>[number];
+      let previousReport: ExistingPayment | null = null;
+      let previousReportDate: Date | null = null;
+      if (!currentPayment) {
+        const prevCycle = calculatePreviousPaymentDate(
+          frequency,
+          account.payment_day,
+          today,
+          account.biweekly_first_day,
+          account.biweekly_second_day
+        );
+        const prevStr = cycleDateStr(prevCycle);
+        const { start, end } = getCycleWindow(prevCycle, frequency);
+        const match =
+          (existingPayments || []).find((p) => {
+            if (p.status !== 'submitted' && p.status !== 'pending') return false;
+            if (p.for_cycle_date) return p.for_cycle_date === prevStr;
+            const created = new Date(p.created_at);
+            return created >= start && created <= end;
+          }) || null;
+        if (match) {
+          previousReport = match;
+          previousReportDate = new Date(prevCycle);
+          previousReportDate.setUTCHours(12, 0, 0, 0);
+        }
+      }
 
       // Static fields shared by every row we emit for this account.
       const baseEntry = {
@@ -229,13 +279,20 @@ export async function GET() {
         next_payment_date: entryDate.toISOString(),
       });
 
-      // A missed previous cycle, surfaced as its own Overdue row tied to the
-      // previous due date. Emitted whenever previousCycleMissed holds — even
-      // alongside today's row — so the overdue cycle never gets swallowed.
-      const overdueEntry = makeEntry('overdue', -daysSincePrevious, previousPaymentDate);
+      // One Overdue row per missed cycle, tied to that cycle's own due date.
+      // Emitted alongside the current-cycle row (when it's confirmed/reported/
+      // due today) so an overdue cycle never gets swallowed by a newer one.
+      const DAY = 1000 * 60 * 60 * 24;
+      const missedCycleEntries = missedCycles.map((d) => {
+        const days = Math.round((today.getTime() - d.getTime()) / DAY);
+        const noon = new Date(d);
+        noon.setUTCHours(12, 0, 0, 0);
+        return makeEntry('overdue', -days, noon);
+      });
 
       if (currentPayment?.status === 'confirmed') {
         result.push(makeEntry('confirmed', daysUntilDue, nextPaymentDate));
+        result.push(...missedCycleEntries);
       } else if (
         currentPayment?.status === 'submitted' ||
         currentPayment?.status === 'pending'
@@ -244,14 +301,29 @@ export async function GET() {
         // the mini-app. Both surface as Reported so the cron stops nagging
         // and the admin can find the open report.
         result.push(makeEntry('reported', daysUntilDue, nextPaymentDate));
+        result.push(...missedCycleEntries);
       } else if (daysUntilDue === 0) {
         // Today IS the payment day — the current cycle isn't overdue yet, the
         // admin still has until end of day.
         result.push(makeEntry('due_today', 0, nextPaymentDate));
-        // ...but a previously missed cycle stays on the board as its own row.
-        if (previousCycleMissed) result.push(overdueEntry);
-      } else if (previousCycleMissed) {
-        result.push(overdueEntry);
+        // ...but any previously missed cycles stay on the board as their own rows.
+        result.push(...missedCycleEntries);
+      } else if (previousReport && previousReportDate) {
+        // Open report for the just-passed cycle — show it as Reported so the
+        // admin can confirm it, anchored to that cycle's date and carrying
+        // that payment's id (so the confirm/view actions target it).
+        const days = Math.round(
+          (today.getTime() - previousReportDate.getTime()) / DAY
+        );
+        result.push({
+          ...makeEntry('reported', -days, previousReportDate),
+          current_payment_id: previousReport.id,
+          current_payment_status: previousReport.status,
+          amount_owed: previousReport.amount_owed,
+        });
+        result.push(...missedCycleEntries);
+      } else if (missedCycleEntries.length > 0) {
+        result.push(...missedCycleEntries);
       } else if (daysUntilDue <= 7) {
         result.push(makeEntry('due_soon', daysUntilDue, nextPaymentDate));
       } else {

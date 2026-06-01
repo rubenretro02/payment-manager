@@ -191,23 +191,34 @@ export default function MyAccountsPage() {
     }
   }
 
-  // Get the most recent payment for the current period of an account.
-  // Returns null if there's no submitted/confirmed payment in the current period
-  // (or only a rejected one — in that case user should report again).
+  // Get the most recent payment for the CURRENT cycle of an account.
+  // Returns null if there's no submitted/confirmed payment tagged for the
+  // current cycle (or only a rejected one — user should report again).
+  //
+  // Matches on for_cycle_date (set at submission) instead of a rolling
+  // today-minus-N-days window. The old window credited a report filed for
+  // the PREVIOUS cycle to the current one, so when a new cycle came due the
+  // card wrongly showed "Reported / Add another" instead of "Report Payment".
+  // Legacy untagged payments fall back to a tight window — same cutoffs the
+  // admin Due Payments route uses — so historical rows keep their behavior.
   const getCurrentPeriodReport = (account: Account): Payment | null => {
     const frequency = account.payment_frequency || 'weekly';
+    const currentCycleStr = format(getNextPayment(account), 'yyyy-MM-dd');
+
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const periodStart = new Date(today);
-    if (frequency === 'weekly') periodStart.setDate(periodStart.getDate() - 7);
-    else if (frequency === 'biweekly') periodStart.setDate(periodStart.getDate() - 14);
-    else periodStart.setDate(periodStart.getDate() - 31);
+    const legacyStart = new Date(today);
+    if (frequency === 'weekly') legacyStart.setDate(legacyStart.getDate() - 5);
+    else if (frequency === 'biweekly') legacyStart.setDate(legacyStart.getDate() - 12);
+    else legacyStart.setDate(legacyStart.getDate() - 20);
 
     return payments
       .filter(p =>
         p.account_id === account.id &&
         (p.status === 'submitted' || p.status === 'confirmed') &&
-        new Date(p.created_at) >= periodStart
+        (p.for_cycle_date
+          ? p.for_cycle_date === currentCycleStr
+          : new Date(p.created_at) >= legacyStart)
       )
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0] || null;
   };

@@ -625,7 +625,7 @@ export default function DuePaymentsPage() {
                   const dueDate = new Date(item.next_payment_date);
                   return (
                     <div
-                      key={`${item.account_id}-${item.status}`}
+                      key={`${item.account_id}-${item.status}-${item.next_payment_date}`}
                       className="flex flex-col sm:flex-row sm:items-center gap-3 p-4 transition-colors hover:bg-muted/50"
                     >
                       <div className="flex items-start gap-3 flex-1 min-w-0">
