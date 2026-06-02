@@ -392,16 +392,18 @@ export async function sendPaymentReminders(mode: ReminderMode = 'all'): Promise<
     // Supabase was eating the 10s budget. One query, filter in-memory.
     const accountIds: string[] = accounts.map((a) => a.id);
     const windowStart = new Date(today);
-    windowStart.setDate(windowStart.getDate() - 30); // widest possible period
+    // Cover the full overdue lookback (60 days) plus a margin, so payments for
+    // older cycles in the walk are actually loaded and counted as reported.
+    windowStart.setDate(windowStart.getDate() - 75);
     const { data: recentPayments } = await supabase
       .from('payments')
-      .select('account_id, user_id, created_at, for_cycle_date')
+      .select('account_id, user_id, created_at, for_cycle_date, status')
       .in('account_id', accountIds)
       .gte('created_at', windowStart.toISOString())
       .in('status', ['submitted', 'confirmed', 'pending']);
     const paymentsByAccount = new Map<
       string,
-      Array<{ user_id: string; created_at: string; for_cycle_date: string | null }>
+      Array<{ user_id: string; created_at: string; for_cycle_date: string | null; status: string }>
     >();
     for (const p of recentPayments || []) {
       const list = paymentsByAccount.get(p.account_id) || [];
@@ -409,6 +411,7 @@ export async function sendPaymentReminders(mode: ReminderMode = 'all'): Promise<
         user_id: p.user_id,
         created_at: p.created_at,
         for_cycle_date: p.for_cycle_date,
+        status: p.status,
       });
       paymentsByAccount.set(p.account_id, list);
     }
@@ -453,6 +456,16 @@ export async function sendPaymentReminders(mode: ReminderMode = 'all'): Promise<
         });
       };
 
+      // An OPEN No Payment / Issue (a pending payment) means the user already
+      // flagged a problem for that period — stop nagging that cycle AND every
+      // older one as overdue, until the admin resolves it. (yyyy-MM-dd strings
+      // sort chronologically, so a string compare is timezone-proof.)
+      const cycleStr = (d: Date) => d.toISOString().split('T')[0];
+      const issueCutoffStr = accountPayments
+        .filter((p) => p.status === 'pending')
+        .map((p) => p.for_cycle_date || p.created_at.split('T')[0])
+        .reduce<string | null>((max, s) => (!max || s > max ? s : max), null);
+
       // Build the list of cycles to remind about — ONE message per cycle, so an
       // account two cycles overdue gets two alerts, not one.
       const reminders: Array<{ date: Date; daysUntilDue: number; overdue: boolean }> = [];
@@ -474,6 +487,9 @@ export async function sendPaymentReminders(mode: ReminderMode = 'all'): Promise<
           if (prev.getTime() >= today.getTime()) break;
           if (prev.getTime() < lookbackCutoff.getTime()) break;
           if (floor && prev.getTime() < floor.getTime()) break;
+          // Once we reach (or pass) an open issue's cycle, every older cycle is
+          // covered by that issue too — stop.
+          if (issueCutoffStr && cycleStr(prev) <= issueCutoffStr) break;
           if (!cycleReported(prev)) {
             const daysSince = Math.round((today.getTime() - prev.getTime()) / DAY);
             reminders.push({ date: prev, daysUntilDue: -daysSince, overdue: true });
@@ -482,10 +498,12 @@ export async function sendPaymentReminders(mode: ReminderMode = 'all'): Promise<
         }
       }
 
-      // Upcoming: the next cycle, if it's due within 2 days and unpaid.
+      // Upcoming: the next cycle, if it's due within 2 days, unpaid, and not
+      // already covered by an open issue.
       if (mode === 'upcoming' || mode === 'all') {
         const daysUntilNext = Math.round((nextPaymentDate.getTime() - today.getTime()) / DAY);
-        if (daysUntilNext >= 0 && daysUntilNext <= 2 && !cycleReported(nextPaymentDate)) {
+        const coveredByIssue = !!issueCutoffStr && cycleStr(nextPaymentDate) <= issueCutoffStr;
+        if (daysUntilNext >= 0 && daysUntilNext <= 2 && !coveredByIssue && !cycleReported(nextPaymentDate)) {
           reminders.push({ date: nextPaymentDate, daysUntilDue: daysUntilNext, overdue: false });
         }
       }

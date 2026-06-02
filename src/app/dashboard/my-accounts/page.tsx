@@ -308,7 +308,21 @@ export default function MyAccountsPage() {
       if (prev.getTime() >= cursor.getTime()) break;
       cursor = prev;
     }
-    return owed.reverse(); // oldest first
+
+    // An OPEN No Payment / Issue (a pending payment) means the user already
+    // flagged a problem for that period. Stop nagging that cycle AND every
+    // older one as overdue — the admin resolves the issue by talking to them;
+    // reporting a real payment later stays optional. (yyyy-MM-dd strings sort
+    // chronologically, so a string compare is enough and timezone-proof.)
+    const issueCutoffStr = payments
+      .filter(p => p.account_id === account.id && p.status === 'pending')
+      .map(p => p.for_cycle_date || format(new Date(p.created_at), 'yyyy-MM-dd'))
+      .reduce<string | null>((max, s) => (!max || s > max ? s : max), null);
+    const filtered = issueCutoffStr
+      ? owed.filter(c => c.str > issueCutoffStr)
+      : owed;
+
+    return filtered.reverse(); // oldest first
   };
 
   useEffect(() => {
