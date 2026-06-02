@@ -3,6 +3,7 @@ import { createAdminClient } from './supabase/server';
 import {
   calculateNextPaymentDate,
   calculatePreviousPaymentDate,
+  getCycleWindow,
   type PaymentFrequency,
 } from './payment-dates';
 import { isCommissionAccount } from './account-utils';
@@ -323,21 +324,6 @@ export async function notifyAdminsNewPayment(data: {
 // REMINDER FUNCTIONS
 // =============================================
 
-/**
- * Legacy fallback for payments without for_cycle_date set. Matches the
- * pre-for_cycle_date heuristic so existing data keeps its classification.
- */
-function getLegacyPeriodStart(frequency: PaymentFrequency, today: Date): Date {
-  const start = new Date(today);
-  start.setHours(0, 0, 0, 0);
-  switch (frequency) {
-    case 'weekly': start.setDate(start.getDate() - 5); break;
-    case 'biweekly': start.setDate(start.getDate() - 12); break;
-    case 'monthly': start.setDate(start.getDate() - 20); break;
-  }
-  return start;
-}
-
 export type ReminderMode = 'all' | 'overdue' | 'upcoming';
 
 /**
@@ -437,6 +423,7 @@ export async function sendPaymentReminders(mode: ReminderMode = 'all'): Promise<
       }
 
       const frequency: PaymentFrequency = account.payment_frequency || 'weekly';
+      const DAY = 1000 * 60 * 60 * 24;
       const nextPaymentDate = calculateNextPaymentDate(
         frequency,
         account.payment_day,
@@ -444,86 +431,95 @@ export async function sendPaymentReminders(mode: ReminderMode = 'all'): Promise<
         account.biweekly_first_day,
         account.biweekly_second_day
       );
-      const previousPaymentDate = calculatePreviousPaymentDate(
-        frequency,
-        account.payment_day,
-        today,
-        account.biweekly_first_day,
-        account.biweekly_second_day
-      );
 
-      let daysUntilDue = Math.round(
-        (nextPaymentDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)
-      );
-      const daysSincePrevious = Math.round(
-        (today.getTime() - previousPaymentDate.getTime()) / (1000 * 60 * 60 * 24)
-      );
-
-      const overdueWindow = frequency === 'weekly' ? 7 : frequency === 'biweekly' ? 14 : 30;
-      // Don't flag overdue for cycles before the account existed (avoids
-      // overdue spam when a brand-new account is created or when an active
-      // account is promoted to production).
+      // Floor: don't nag about cycles from before the account became
+      // payment-active (avoids spam on brand-new / just-promoted accounts).
       const floorIso = account.payment_active_since || account.created_at;
-      const previousAfterCreation =
-        !floorIso || previousPaymentDate >= new Date(floorIso);
-      const isMissedPrevious =
-        daysSincePrevious > 0 &&
-        daysSincePrevious <= overdueWindow &&
-        daysUntilDue !== 0 &&
-        previousAfterCreation;
-      const isUpcoming = daysUntilDue >= 0 && daysUntilDue <= 2;
+      const floor = floorIso ? new Date(floorIso) : null;
+      if (floor) floor.setHours(0, 0, 0, 0);
 
-      if (mode === 'overdue' && !isMissedPrevious) return null;
-      if (mode === 'upcoming' && !isUpcoming) return null;
-      if (mode === 'all' && daysUntilDue > 2 && !isMissedPrevious) return null;
-
-      let displayDate = nextPaymentDate;
-      if (isMissedPrevious && daysUntilDue > 2) {
-        daysUntilDue = -daysSincePrevious;
-        displayDate = previousPaymentDate;
-      }
-
-      // Decide which cycle we'd be nagging about: previous (overdue) or
-      // next (upcoming). Then check if the user already reported for it.
-      // New payments carry an explicit for_cycle_date — prefer that.
-      // Legacy payments (null tag) keep the original today-minus-N-days
-      // heuristic so existing data classification doesn't shift.
-      const targetCycleDate =
-        mode === 'overdue' || (mode === 'all' && isMissedPrevious)
-          ? previousPaymentDate
-          : nextPaymentDate;
-      const targetCycleStr = targetCycleDate.toISOString().split('T')[0];
-      const legacyPeriodStart = getLegacyPeriodStart(frequency, today);
-      const legacyStartIso = legacyPeriodStart.toISOString();
+      // Has the user already reported for a given cycle? Prefer the explicit
+      // for_cycle_date tag; legacy untagged rows fall back to the ±half-cycle
+      // window. A payment counts regardless of who filed it (the account may
+      // have been reassigned mid-cycle).
       const accountPayments = paymentsByAccount.get(account.id) || [];
-      const hasExisting = accountPayments.some((p) => {
-        if (p.user_id !== account.user.id) return false;
-        if (p.for_cycle_date) return p.for_cycle_date === targetCycleStr;
-        return p.created_at >= legacyStartIso;
-      });
-      if (hasExisting) {
-        return null;
+      const cycleReported = (cycleDate: Date): boolean => {
+        const cycleStr = cycleDate.toISOString().split('T')[0];
+        const { start, end } = getCycleWindow(cycleDate, frequency);
+        return accountPayments.some((p) => {
+          if (p.for_cycle_date) return p.for_cycle_date === cycleStr;
+          const c = new Date(p.created_at);
+          return c >= start && c <= end;
+        });
+      };
+
+      // Build the list of cycles to remind about — ONE message per cycle, so an
+      // account two cycles overdue gets two alerts, not one.
+      const reminders: Array<{ date: Date; daysUntilDue: number; overdue: boolean }> = [];
+
+      // Overdue: every unpaid scheduled cycle strictly before today, walking
+      // back (frequency-aware), bounded by the floor and a 60-day lookback.
+      if (mode === 'overdue' || mode === 'all') {
+        const lookbackCutoff = new Date(today);
+        lookbackCutoff.setDate(lookbackCutoff.getDate() - 60);
+        let cursor = today;
+        for (let i = 0; i < 12; i++) {
+          const prev = calculatePreviousPaymentDate(
+            frequency,
+            account.payment_day,
+            cursor,
+            account.biweekly_first_day,
+            account.biweekly_second_day
+          );
+          if (prev.getTime() >= today.getTime()) break;
+          if (prev.getTime() < lookbackCutoff.getTime()) break;
+          if (floor && prev.getTime() < floor.getTime()) break;
+          if (!cycleReported(prev)) {
+            const daysSince = Math.round((today.getTime() - prev.getTime()) / DAY);
+            reminders.push({ date: prev, daysUntilDue: -daysSince, overdue: true });
+          }
+          cursor = prev;
+        }
       }
 
-      const success = await sendUserNotification(
-        account.user.telegram_id,
-        daysUntilDue < 0 ? 'payment_overdue' : 'payment_reminder',
-        {
-          accountName: account.full_name,
-          platformName: account.platform?.display_name || 'Platform',
-          dueDate: displayDate.toLocaleDateString('en-US', {
-            weekday: 'long',
-            month: 'short',
-            day: 'numeric',
-            timeZone: 'UTC',
-          }),
-          daysUntilDue: Math.max(0, daysUntilDue),
-          percentage: account.percentage,
+      // Upcoming: the next cycle, if it's due within 2 days and unpaid.
+      if (mode === 'upcoming' || mode === 'all') {
+        const daysUntilNext = Math.round((nextPaymentDate.getTime() - today.getTime()) / DAY);
+        if (daysUntilNext >= 0 && daysUntilNext <= 2 && !cycleReported(nextPaymentDate)) {
+          reminders.push({ date: nextPaymentDate, daysUntilDue: daysUntilNext, overdue: false });
         }
-      );
+      }
+
+      if (reminders.length === 0) return null;
+
+      // One Telegram message per cycle, oldest first.
+      reminders.sort((a, b) => a.date.getTime() - b.date.getTime());
+      let sent = 0;
+      let failed = 0;
+      for (const r of reminders) {
+        const ok = await sendUserNotification(
+          account.user.telegram_id,
+          r.overdue ? 'payment_overdue' : 'payment_reminder',
+          {
+            accountName: account.full_name,
+            platformName: account.platform?.display_name || 'Platform',
+            dueDate: r.date.toLocaleDateString('en-US', {
+              weekday: 'long',
+              month: 'short',
+              day: 'numeric',
+              timeZone: 'UTC',
+            }),
+            daysUntilDue: Math.max(0, r.daysUntilDue),
+            percentage: account.percentage,
+          }
+        );
+        if (ok) sent++;
+        else failed++;
+      }
 
       return {
-        success,
+        sent,
+        failed,
         userName: account.user.telegram_first_name || 'User',
       };
     });
@@ -536,12 +532,9 @@ export async function sendPaymentReminders(mode: ReminderMode = 'all'): Promise<
       }
       const v = r.value;
       if (!v) continue;
-      if (v.success) {
-        results.sent++;
-        results.users.push(v.userName);
-      } else {
-        results.failed++;
-      }
+      results.sent += v.sent;
+      results.failed += v.failed;
+      if (v.sent > 0) results.users.push(v.userName);
     }
   } catch (error) {
     console.error('Error sending reminders:', error);
