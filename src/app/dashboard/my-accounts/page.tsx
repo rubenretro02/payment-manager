@@ -325,6 +325,97 @@ export default function MyAccountsPage() {
     return filtered.reverse(); // oldest first
   };
 
+  // Best payment tied to a given cycle (confirmed > submitted > pending, then
+  // most recent). Used to label the schedule timeline.
+  const getCyclePayment = (account: Account, cycleDate: Date, cycleStr: string): Payment | null => {
+    const frequency = account.payment_frequency || 'weekly';
+    const { start, end } = getCycleWindow(cycleDate, frequency);
+    const rank = (s: string) => (s === 'confirmed' ? 0 : s === 'submitted' ? 1 : 2);
+    return payments
+      .filter(p =>
+        p.account_id === account.id &&
+        (p.status === 'submitted' || p.status === 'confirmed' || p.status === 'pending') &&
+        (p.for_cycle_date
+          ? p.for_cycle_date === cycleStr
+          : (new Date(p.created_at) >= start && new Date(p.created_at) <= end))
+      )
+      .sort((a, b) => rank(a.status) - rank(b.status) || new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0] || null;
+  };
+
+  // A timeline of cycles for the schedule dialog: a few past/current cycles
+  // (mapped to their payment status) plus the upcoming ones, with the real
+  // "Next" = the first UNPAID cycle on/after today (so a cycle already paid
+  // today doesn't keep showing as Next).
+  type CycleStatus = 'paid' | 'reported' | 'issue' | 'missed' | 'due' | 'upcoming';
+  const getScheduleTimeline = (
+    account: Account
+  ): { date: Date; str: string; status: CycleStatus; isNext: boolean }[] => {
+    const frequency = account.payment_frequency || 'weekly';
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const nextCycle = new Date(getNextPayment(account));
+    nextCycle.setHours(0, 0, 0, 0);
+    const isDueToday = nextCycle.getTime() === today.getTime();
+    const dueCycle = isDueToday
+      ? nextCycle
+      : calculatePreviousPaymentDate(frequency, account.payment_day, today, account.biweekly_first_day, account.biweekly_second_day);
+
+    const floorIso = account.payment_active_since || account.created_at;
+    const floor = floorIso ? new Date(floorIso) : null;
+    if (floor) floor.setHours(0, 0, 0, 0);
+
+    // Past + current cycles: walk back from dueCycle up to 4 (bounded by floor).
+    const dates: Date[] = [];
+    let cursor = new Date(dueCycle);
+    for (let i = 0; i < 4; i++) {
+      if (floor && cursor.getTime() < floor.getTime()) break;
+      dates.unshift(new Date(cursor));
+      const prev = calculatePreviousPaymentDate(frequency, account.payment_day, cursor, account.biweekly_first_day, account.biweekly_second_day);
+      if (prev.getTime() >= cursor.getTime()) break;
+      cursor = prev;
+    }
+
+    // Upcoming cycles strictly after dueCycle.
+    const afterDue = new Date(dueCycle);
+    afterDue.setDate(afterDue.getDate() + 1);
+    const upcoming = getUpcomingPaymentDates(
+      frequency,
+      account.payment_day ?? 5,
+      5,
+      afterDue,
+      account.biweekly_first_day,
+      account.biweekly_second_day
+    );
+    for (const d of upcoming) dates.push(d);
+
+    let nextMarked = false;
+    return dates.map((raw) => {
+      const date = new Date(raw);
+      date.setHours(0, 0, 0, 0);
+      const str = format(date, 'yyyy-MM-dd');
+      const payment = getCyclePayment(account, date, str);
+      const isPast = date.getTime() < today.getTime();
+      const isToday = date.getTime() === today.getTime();
+
+      let status: CycleStatus;
+      if (payment?.status === 'confirmed') status = 'paid';
+      else if (payment?.status === 'submitted') status = 'reported';
+      else if (payment?.status === 'pending') status = 'issue';
+      else if (isPast) status = 'missed';
+      else if (isToday) status = 'due';
+      else status = 'upcoming';
+
+      // Next = first unpaid cycle on/after today.
+      let isNext = false;
+      if (!nextMarked && !isPast && (status === 'upcoming' || status === 'due')) {
+        isNext = true;
+        nextMarked = true;
+      }
+      return { date, str, status, isNext };
+    });
+  };
+
   useEffect(() => {
     if (user?.id) {
       fetchData();
@@ -1097,13 +1188,13 @@ export default function MyAccountsPage() {
                             return (
                               <div
                                 key={c.str}
-                                className={`rounded-lg border p-2.5 flex items-center gap-2 ${
+                                className={`rounded-lg border p-2.5 space-y-2 ${
                                   overdue
                                     ? 'bg-red-50 border-red-300 dark:bg-red-950/30 dark:border-red-800'
                                     : 'bg-yellow-50 border-yellow-300 dark:bg-yellow-950/30 dark:border-yellow-800'
                                 }`}
                               >
-                                <div className="flex-1 min-w-0">
+                                <div className="min-w-0">
                                   <p className="text-sm font-medium">
                                     {format(c.date, 'MMM d, yyyy', { locale: enUS })}
                                   </p>
@@ -1111,33 +1202,36 @@ export default function MyAccountsPage() {
                                     {overdue ? `${c.daysOverdue} day${c.daysOverdue !== 1 ? 's' : ''} overdue` : 'Due today'}
                                   </p>
                                 </div>
-                                <Button
-                                  size="sm"
-                                  onClick={() => {
-                                    setSelectedAccount(account);
-                                    setSelectedCycleStr(c.str);
-                                    setIsPaymentDialogOpen(true);
-                                  }}
-                                >
-                                  <DollarSign className="h-4 w-4 mr-1.5" />
-                                  Report
-                                </Button>
-                                {/* Per-cycle No Payment / Issue — tags the issue to
-                                    THIS cycle so it clears exactly this one. */}
-                                <Button
-                                  size="icon"
-                                  variant="outline"
-                                  title="No Payment / Issue for this cycle"
-                                  className="shrink-0 border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950"
-                                  onClick={() => {
-                                    setSelectedAccount(account);
-                                    setSelectedCycleStr(c.str);
-                                    setNoPaymentForm({ reason: '' });
-                                    setIsNoPaymentDialogOpen(true);
-                                  }}
-                                >
-                                  <AlertTriangle className="h-4 w-4" />
-                                </Button>
+                                {/* Two clearly-labelled buttons per cycle so nobody
+                                    confuses them. No Payment is red, tags THIS cycle. */}
+                                <div className="flex gap-2">
+                                  <Button
+                                    size="sm"
+                                    className="flex-1"
+                                    onClick={() => {
+                                      setSelectedAccount(account);
+                                      setSelectedCycleStr(c.str);
+                                      setIsPaymentDialogOpen(true);
+                                    }}
+                                  >
+                                    <DollarSign className="h-4 w-4 mr-1.5" />
+                                    Report Payment
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="flex-1 border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950"
+                                    onClick={() => {
+                                      setSelectedAccount(account);
+                                      setSelectedCycleStr(c.str);
+                                      setNoPaymentForm({ reason: '' });
+                                      setIsNoPaymentDialogOpen(true);
+                                    }}
+                                  >
+                                    <AlertTriangle className="h-4 w-4 mr-1.5" />
+                                    No Payment / Issue
+                                  </Button>
+                                </div>
                               </div>
                             );
                           })}
@@ -1704,38 +1798,43 @@ export default function MyAccountsPage() {
               </div>
             </div>
 
-            <h4 className="font-medium mb-3">Upcoming payment dates:</h4>
+            <h4 className="font-medium mb-3">Payment cycles:</h4>
             <div className="space-y-2">
-              {selectedAccount && getUpcomingPaymentDates(
-                selectedAccount.payment_frequency || 'weekly',
-                selectedAccount.payment_day ?? 5,
-                6,
-                new Date(),
-                selectedAccount.biweekly_first_day,
-                selectedAccount.biweekly_second_day
-              ).map((date, i) => (
-                <div
-                  key={i}
-                  className={`flex items-center justify-between p-3 rounded-lg ${
-                    i === 0 ? 'bg-green-100 dark:bg-green-900/30' : 'bg-muted'
-                  }`}
-                >
-                  <div className="flex items-center gap-3">
-                    <Calendar className={`h-4 w-4 ${i === 0 ? 'text-green-600' : 'text-muted-foreground'}`} />
-                    <div>
-                      <p className={`font-medium ${i === 0 ? 'text-green-800 dark:text-green-300' : ''}`}>
-                        {format(date, "EEEE, MMMM d", { locale: enUS })}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        {format(date, 'yyyy')}
-                      </p>
+              {selectedAccount && getScheduleTimeline(selectedAccount).map((c) => {
+                const cfg = {
+                  paid:     { badge: 'Confirmed', badgeClass: 'bg-green-600',  rowClass: 'bg-green-50 dark:bg-green-950/30', iconClass: 'text-green-600' },
+                  reported: { badge: 'Reported',  badgeClass: 'bg-purple-600', rowClass: 'bg-purple-50 dark:bg-purple-950/30', iconClass: 'text-purple-600' },
+                  issue:    { badge: 'Issue',     badgeClass: 'bg-amber-500',  rowClass: 'bg-amber-50 dark:bg-amber-950/30', iconClass: 'text-amber-600' },
+                  missed:   { badge: 'Missed',    badgeClass: 'bg-red-600',    rowClass: 'bg-red-50 dark:bg-red-950/30', iconClass: 'text-red-600' },
+                  due:      { badge: 'Due today', badgeClass: 'bg-yellow-500', rowClass: 'bg-yellow-50 dark:bg-yellow-950/30', iconClass: 'text-yellow-600' },
+                  upcoming: { badge: '',          badgeClass: 'bg-muted',      rowClass: 'bg-muted', iconClass: 'text-muted-foreground' },
+                }[c.status];
+                return (
+                  <div
+                    key={c.str}
+                    className={`flex items-center justify-between p-3 rounded-lg ${
+                      c.isNext ? 'bg-green-100 dark:bg-green-900/30 ring-1 ring-green-400' : cfg.rowClass
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <Calendar className={`h-4 w-4 ${c.isNext ? 'text-green-600' : cfg.iconClass}`} />
+                      <div>
+                        <p className={`font-medium ${c.isNext ? 'text-green-800 dark:text-green-300' : ''}`}>
+                          {format(c.date, "EEEE, MMMM d", { locale: enUS })}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {format(c.date, 'yyyy')}
+                        </p>
+                      </div>
                     </div>
+                    {c.isNext ? (
+                      <Badge className="bg-green-600">{c.status === 'due' ? 'Due today' : 'Next'}</Badge>
+                    ) : cfg.badge ? (
+                      <Badge className={cfg.badgeClass}>{cfg.badge}</Badge>
+                    ) : null}
                   </div>
-                  {i === 0 && (
-                    <Badge className="bg-green-600">Next</Badge>
-                  )}
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
           <DialogFooter>
