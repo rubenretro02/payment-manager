@@ -60,6 +60,7 @@ import {
   calculateNextPaymentDate,
   calculatePreviousPaymentDate,
   getUpcomingPaymentDates,
+  getCycleWindow,
 } from '@/lib/payment-dates';
 import { isCommissionAccount } from '@/lib/account-utils';
 import { ScreenshotImage } from '@/components/ScreenshotImage';
@@ -130,6 +131,9 @@ export default function MyAccountsPage() {
   const [isViewReportDialogOpen, setIsViewReportDialogOpen] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
+  // Which cycle a report is being filed for (yyyy-MM-dd), so the user can
+  // clear a specific overdue cycle. null = let the server auto-tag the nearest.
+  const [selectedCycleStr, setSelectedCycleStr] = useState<string | null>(null);
 
   // Refs for file inputs
   const companyProofInputRef = useRef<HTMLInputElement>(null);
@@ -247,6 +251,64 @@ export default function MyAccountsPage() {
           : new Date(p.created_at) >= legacyStart)
       )
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0] || null;
+  };
+
+  // Does this account already have a submitted/confirmed/pending report for a
+  // given scheduled cycle? Prefer the for_cycle_date tag; legacy untagged rows
+  // fall back to the ±half-cycle window (same logic as the admin route).
+  const cycleHasReport = (account: Account, cycleDate: Date, cycleStr: string): boolean => {
+    const frequency = account.payment_frequency || 'weekly';
+    const { start, end } = getCycleWindow(cycleDate, frequency);
+    return payments.some(p =>
+      p.account_id === account.id &&
+      (p.status === 'submitted' || p.status === 'confirmed' || p.status === 'pending') &&
+      (p.for_cycle_date
+        ? p.for_cycle_date === cycleStr
+        : (new Date(p.created_at) >= start && new Date(p.created_at) <= end))
+    );
+  };
+
+  // Every cycle the user still OWES a report for: the current due cycle plus
+  // any earlier unpaid ones, oldest first. Walks back frequency-aware (same as
+  // the admin Due Payments board) so an account that skipped several cycles
+  // gets one Report button per missed cycle. Bounded by the payment-active
+  // floor and ~6 cycles of lookback.
+  const getOwedCycles = (account: Account): { date: Date; str: string; daysOverdue: number }[] => {
+    const frequency = account.payment_frequency || 'weekly';
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const nextCycle = new Date(getNextPayment(account));
+    nextCycle.setHours(0, 0, 0, 0);
+    const isDueToday = nextCycle.getTime() === today.getTime();
+    // dueCycle = latest scheduled cycle on or before today.
+    const dueCycle = isDueToday
+      ? nextCycle
+      : calculatePreviousPaymentDate(frequency, account.payment_day, today, account.biweekly_first_day, account.biweekly_second_day);
+
+    const floorIso = account.payment_active_since || account.created_at;
+    const floor = floorIso ? new Date(floorIso) : null;
+    if (floor) floor.setHours(0, 0, 0, 0);
+    const cycleDays = frequency === 'weekly' ? 7 : frequency === 'biweekly' ? 14 : 31;
+    const lookbackDays = Math.max(60, cycleDays * 6);
+    const lookbackCutoff = new Date(today);
+    lookbackCutoff.setDate(lookbackCutoff.getDate() - lookbackDays);
+
+    const owed: { date: Date; str: string; daysOverdue: number }[] = [];
+    let cursor = new Date(dueCycle);
+    for (let i = 0; i < 12; i++) {
+      if (floor && cursor.getTime() < floor.getTime()) break;
+      if (cursor.getTime() < lookbackCutoff.getTime()) break;
+      const str = format(cursor, 'yyyy-MM-dd');
+      if (!cycleHasReport(account, cursor, str)) {
+        const daysOverdue = Math.round((today.getTime() - cursor.getTime()) / (1000 * 60 * 60 * 24));
+        owed.push({ date: new Date(cursor), str, daysOverdue });
+      }
+      const prev = calculatePreviousPaymentDate(frequency, account.payment_day, cursor, account.biweekly_first_day, account.biweekly_second_day);
+      if (prev.getTime() >= cursor.getTime()) break;
+      cursor = prev;
+    }
+    return owed.reverse(); // oldest first
   };
 
   useEffect(() => {
@@ -542,8 +604,9 @@ export default function MyAccountsPage() {
     const accountHasBaseWallet = !!selectedAccount.wallet_address && (selectedAccount.wallet_network || 'base') === 'base';
     const canAutoVerify = looksLikeTxHash && accountHasBaseWallet;
 
-    // Payment screenshot required unless we can auto-verify on the blockchain
-    if (!paymentProofImage && !canAutoVerify) {
+    // Both screenshots are mandatory now: company-payment proof AND
+    // payment-sent proof — even for crypto/auto-verify reports.
+    if (!paymentProofImage) {
       alert('Please upload the Payment Sent screenshot');
       return;
     }
@@ -580,6 +643,12 @@ export default function MyAccountsPage() {
         user_notes: paymentForm.notes || null,
         company_screenshot_url: companyUrl,
       };
+
+      // Tag the report to the specific cycle the user chose to report (so it
+      // clears that exact overdue row). null → server auto-tags the nearest.
+      if (selectedCycleStr) {
+        paymentData.for_cycle_date = selectedCycleStr;
+      }
 
       // file_id is the permanent Telegram handle — without it we can't
       // regenerate a working URL after the original one expires.
@@ -648,6 +717,7 @@ export default function MyAccountsPage() {
     });
     setCompanyProofImage(null);
     setPaymentProofImage(null);
+    setSelectedCycleStr(null);
   };
 
   if (loading) {
@@ -996,6 +1066,80 @@ export default function MyAccountsPage() {
 
                   {/* Actions - Only show Report Payment for production/nesting accounts */}
                   {!isCommission && (account.status === 'production' || account.status === 'nesting' || account.force_payment_request) && (() => {
+                    // Owed cycles (current due + any earlier unpaid) → one Report
+                    // button per cycle so the user can clear each overdue one,
+                    // each report tagged to its exact cycle.
+                    const owed = getOwedCycles(account);
+                    if (owed.length > 0) {
+                      return (
+                        <div className="space-y-2">
+                          {owed.length > 1 && (
+                            <p className="text-xs font-semibold text-foreground">
+                              {owed.length} payments to report
+                            </p>
+                          )}
+                          {owed.map((c) => {
+                            const overdue = c.daysOverdue > 0;
+                            return (
+                              <div
+                                key={c.str}
+                                className={`rounded-lg border p-2.5 flex items-center gap-2 ${
+                                  overdue
+                                    ? 'bg-red-50 border-red-300 dark:bg-red-950/30 dark:border-red-800'
+                                    : 'bg-yellow-50 border-yellow-300 dark:bg-yellow-950/30 dark:border-yellow-800'
+                                }`}
+                              >
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm font-medium">
+                                    {format(c.date, 'MMM d, yyyy', { locale: enUS })}
+                                  </p>
+                                  <p className={`text-xs ${overdue ? 'text-red-600 dark:text-red-400' : 'text-yellow-700 dark:text-yellow-400'}`}>
+                                    {overdue ? `${c.daysOverdue} day${c.daysOverdue !== 1 ? 's' : ''} overdue` : 'Due today'}
+                                  </p>
+                                </div>
+                                <Button
+                                  size="sm"
+                                  onClick={() => {
+                                    setSelectedAccount(account);
+                                    setSelectedCycleStr(c.str);
+                                    setIsPaymentDialogOpen(true);
+                                  }}
+                                >
+                                  <DollarSign className="h-4 w-4 mr-1.5" />
+                                  Report
+                                </Button>
+                              </div>
+                            );
+                          })}
+                          <div className="flex gap-2">
+                            <Button
+                              variant="outline"
+                              className="flex-1 border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950"
+                              onClick={() => {
+                                setSelectedAccount(account);
+                                setSelectedCycleStr(owed[0].str);
+                                setNoPaymentForm({ reason: '' });
+                                setIsNoPaymentDialogOpen(true);
+                              }}
+                            >
+                              <AlertTriangle className="h-4 w-4 mr-2" />
+                              No Payment / Issue
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              onClick={() => {
+                                setSelectedAccount(account);
+                                setIsScheduleDialogOpen(true);
+                              }}
+                            >
+                              <Calendar className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    }
+
                     const currentReport = getCurrentPeriodReport(account);
 
                     // Already reported for this period — show status + view + add another.
@@ -1494,6 +1638,7 @@ export default function MyAccountsPage() {
                 !paymentForm.platform_amount ||
                 !paymentForm.amount_sent ||
                 !companyProofImage ||
+                !paymentProofImage ||
                 companyProofImage?.uploading ||
                 paymentProofImage?.uploading ||
                 isSubmitting ||
@@ -1587,7 +1732,10 @@ export default function MyAccountsPage() {
       {/* No Payment / Issue Dialog */}
       <Dialog open={isNoPaymentDialogOpen} onOpenChange={(open) => {
         setIsNoPaymentDialogOpen(open);
-        if (!open) setNoPaymentForm({ reason: '' });
+        if (!open) {
+          setNoPaymentForm({ reason: '' });
+          setSelectedCycleStr(null);
+        }
       }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
@@ -1651,7 +1799,7 @@ export default function MyAccountsPage() {
                 setIsSubmitting(true);
                 try {
                   // Create a payment record with status 'rejected' or special handling
-                  const paymentData = {
+                  const paymentData: Record<string, unknown> = {
                     user_id: user?.id,
                     account_id: selectedAccount?.id,
                     platform_amount: 0,
@@ -1662,6 +1810,11 @@ export default function MyAccountsPage() {
                     user_notes: `NO PAYMENT RECEIVED: ${noPaymentForm.reason}`,
                     status: 'pending', // Admin will review this
                   };
+                  // Tag the issue to the specific cycle being reported (so it
+                  // satisfies/clears that cycle). null → server auto-tags nearest.
+                  if (selectedCycleStr) {
+                    paymentData.for_cycle_date = selectedCycleStr;
+                  }
 
                   const response = await fetch('/api/payments', {
                     method: 'POST',
