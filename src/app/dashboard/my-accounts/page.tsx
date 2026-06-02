@@ -1122,34 +1122,37 @@ export default function MyAccountsPage() {
                                   <DollarSign className="h-4 w-4 mr-1.5" />
                                   Report
                                 </Button>
+                                {/* Per-cycle No Payment / Issue — tags the issue to
+                                    THIS cycle so it clears exactly this one. */}
+                                <Button
+                                  size="icon"
+                                  variant="outline"
+                                  title="No Payment / Issue for this cycle"
+                                  className="shrink-0 border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950"
+                                  onClick={() => {
+                                    setSelectedAccount(account);
+                                    setSelectedCycleStr(c.str);
+                                    setNoPaymentForm({ reason: '' });
+                                    setIsNoPaymentDialogOpen(true);
+                                  }}
+                                >
+                                  <AlertTriangle className="h-4 w-4" />
+                                </Button>
                               </div>
                             );
                           })}
-                          <div className="flex gap-2">
-                            <Button
-                              variant="outline"
-                              className="flex-1 border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950"
-                              onClick={() => {
-                                setSelectedAccount(account);
-                                setSelectedCycleStr(owed[0].str);
-                                setNoPaymentForm({ reason: '' });
-                                setIsNoPaymentDialogOpen(true);
-                              }}
-                            >
-                              <AlertTriangle className="h-4 w-4 mr-2" />
-                              No Payment / Issue
-                            </Button>
-                            <Button
-                              variant="outline"
-                              size="icon"
-                              onClick={() => {
-                                setSelectedAccount(account);
-                                setIsScheduleDialogOpen(true);
-                              }}
-                            >
-                              <Calendar className="h-4 w-4" />
-                            </Button>
-                          </div>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="w-full"
+                            onClick={() => {
+                              setSelectedAccount(account);
+                              setIsScheduleDialogOpen(true);
+                            }}
+                          >
+                            <Calendar className="h-4 w-4 mr-2" />
+                            View Schedule
+                          </Button>
                         </div>
                       );
                     }
@@ -1769,8 +1772,12 @@ export default function MyAccountsPage() {
                 <span className="font-medium">{selectedAccount?.full_name}</span>
                 <span className="text-muted-foreground">Platform:</span>
                 <span>{selectedAccount?.platform?.display_name}</span>
-                <span className="text-muted-foreground">Expected payment:</span>
-                <span>{selectedAccount && format(getNextPayment(selectedAccount), "MMM d, yyyy", { locale: enUS })}</span>
+                <span className="text-muted-foreground">For cycle:</span>
+                <span>
+                  {selectedCycleStr
+                    ? format(new Date(`${selectedCycleStr}T00:00:00`), "MMM d, yyyy", { locale: enUS })
+                    : selectedAccount && format(getNextPayment(selectedAccount), "MMM d, yyyy", { locale: enUS })}
+                </span>
               </div>
             </div>
 

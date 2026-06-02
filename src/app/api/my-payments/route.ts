@@ -15,12 +15,26 @@ export async function GET(request: NextRequest) {
 
     const supabase = createAdminClient();
 
-    // Get payments for this user
-    const { data: payments, error } = await supabase
+    // Accounts currently assigned to this user. Needed so that payments an
+    // admin reported ON BEHALF of the user — which may carry a different
+    // user_id (e.g. the account was unassigned at report time, or the admin's
+    // id) — still count as this user's payments. A payment for an account
+    // belongs to whoever holds the account now, regardless of who filed it.
+    const { data: myAccounts } = await supabase
+      .from('accounts')
+      .select('id')
+      .eq('user_id', userId);
+    const myAccountIds = (myAccounts || []).map((a) => a.id);
+
+    // Fetch payments filed by this user OR tied to any of their accounts.
+    let query = supabase
       .from('payments')
       .select('*')
-      .eq('user_id', userId)
       .order('created_at', { ascending: false });
+    query = myAccountIds.length > 0
+      ? query.or(`user_id.eq.${userId},account_id.in.(${myAccountIds.join(',')})`)
+      : query.eq('user_id', userId);
+    const { data: payments, error } = await query;
 
     if (error) {
       throw error;
