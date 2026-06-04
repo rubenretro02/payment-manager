@@ -49,6 +49,7 @@ import {
   Eye,
   Plus,
   Send,
+  History,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { enUS } from 'date-fns/locale';
@@ -129,6 +130,8 @@ export default function MyAccountsPage() {
   const [isScheduleDialogOpen, setIsScheduleDialogOpen] = useState(false);
   const [isNoPaymentDialogOpen, setIsNoPaymentDialogOpen] = useState(false);
   const [isViewReportDialogOpen, setIsViewReportDialogOpen] = useState(false);
+  const [isHistoryDialogOpen, setIsHistoryDialogOpen] = useState(false);
+  const [historyAccount, setHistoryAccount] = useState<Account | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   // Which cycle a report is being filed for (yyyy-MM-dd), so the user can
@@ -252,6 +255,13 @@ export default function MyAccountsPage() {
       )
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0] || null;
   };
+
+  // All payment reports for an account (any status), newest first — feeds the
+  // "View History" dialog so the user sees the same full record the admin does.
+  const getAccountHistory = (account: Account): Payment[] =>
+    payments
+      .filter(p => p.account_id === account.id)
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
   // Does this account already have a submitted/confirmed/pending report for a
   // given scheduled cycle? Prefer the for_cycle_date tag; legacy untagged rows
@@ -1093,7 +1103,18 @@ export default function MyAccountsPage() {
                 <CardHeader className="pb-3">
                   <div className="flex items-start justify-between">
                     <div>
-                      <CardTitle className="text-lg">{account.full_name}</CardTitle>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setHistoryAccount(account);
+                          setIsHistoryDialogOpen(true);
+                        }}
+                        className="text-left group"
+                      >
+                        <CardTitle className="text-lg group-hover:text-primary group-hover:underline transition-colors">
+                          {account.full_name}
+                        </CardTitle>
+                      </button>
                       <CardDescription>{account.account_email}</CardDescription>
                     </div>
                     <Badge className={statusColors[account.status] || statusColors.not_in_project}>
@@ -1152,6 +1173,21 @@ export default function MyAccountsPage() {
                       </>
                     )}
                   </div>
+
+                  {/* View History — full payment record for this account, with
+                      drill-down into each report. Same data the admin sees. */}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="w-full justify-center text-muted-foreground hover:text-foreground"
+                    onClick={() => {
+                      setHistoryAccount(account);
+                      setIsHistoryDialogOpen(true);
+                    }}
+                  >
+                    <History className="h-4 w-4 mr-2" />
+                    View History
+                  </Button>
 
                   {/* Commission accounts: always reportable (any status except drop). */}
                   {isCommission && account.status !== 'drop' && (
@@ -1972,6 +2008,110 @@ export default function MyAccountsPage() {
         </DialogContent>
       </Dialog>
 
+      {/* Payment History Dialog — all reports for an account, each clickable to
+          drill into full details (mirrors the admin Payment History view). */}
+      <Dialog open={isHistoryDialogOpen} onOpenChange={setIsHistoryDialogOpen}>
+        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Payment History</DialogTitle>
+            <DialogDescription>
+              {historyAccount?.full_name} — {historyAccount?.platform?.display_name}
+            </DialogDescription>
+          </DialogHeader>
+
+          {(() => {
+            const history = historyAccount ? getAccountHistory(historyAccount) : [];
+
+            if (history.length === 0) {
+              return (
+                <div className="text-center py-8 text-muted-foreground">
+                  <CheckCircle2 className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                  <p className="font-medium">No payments yet</p>
+                  <p className="text-sm">You haven&apos;t reported any payments for this account.</p>
+                </div>
+              );
+            }
+
+            return (
+              <div className="space-y-2">
+                <p className="text-sm text-muted-foreground">
+                  {history.length} payment{history.length !== 1 ? 's' : ''} on record
+                </p>
+                {history.map((p) => {
+                  const isIssue = p.status === 'pending';
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedReportPayment(p);
+                        setSelectedAccount(historyAccount);
+                        setIsHistoryDialogOpen(false);
+                        setIsViewReportDialogOpen(true);
+                      }}
+                      className="w-full text-left rounded-lg border p-3 hover:bg-muted/50 transition-colors"
+                    >
+                      <div className="flex items-center justify-between gap-3 flex-wrap">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-medium text-sm">
+                              {format(new Date(p.created_at), 'MMM d, yyyy', { locale: enUS })}
+                            </span>
+                            <span className="text-xs text-muted-foreground">
+                              {format(new Date(p.created_at), 'HH:mm')}
+                            </span>
+                            <Badge className={
+                              p.status === 'confirmed' ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400' :
+                              p.status === 'rejected' ? 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400' :
+                              p.status === 'submitted' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400' :
+                              'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400'
+                            }>
+                              {p.status === 'submitted' ? 'Awaiting confirmation' :
+                               p.status === 'confirmed' ? 'Confirmed' :
+                               p.status === 'rejected' ? 'Rejected' :
+                               'No Payment / Issue'}
+                            </Badge>
+                          </div>
+                          {isIssue ? (
+                            <div className="text-xs text-muted-foreground mt-1">
+                              Issue reported — awaiting admin review
+                            </div>
+                          ) : (
+                            <div className="text-xs text-muted-foreground mt-1 flex flex-wrap gap-2">
+                              <span>Owed: ${Number(p.amount_owed || 0).toFixed(2)}</span>
+                              <span>•</span>
+                              <span>Paid: ${Number(p.amount_paid || 0).toFixed(2)}</span>
+                              {p.payment_method && (
+                                <>
+                                  <span>•</span>
+                                  <span className="capitalize">{p.payment_method}</span>
+                                </>
+                              )}
+                            </div>
+                          )}
+                          {p.status === 'rejected' && p.rejection_reason && (
+                            <p className="text-xs text-red-700 dark:text-red-400 mt-1">
+                              ❌ {p.rejection_reason}
+                            </p>
+                          )}
+                        </div>
+                        <span className="text-xs text-primary shrink-0">View details →</span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            );
+          })()}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsHistoryDialogOpen(false)} className="w-full sm:w-auto">
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* View Report Dialog */}
       <Dialog open={isViewReportDialogOpen} onOpenChange={setIsViewReportDialogOpen}>
         <DialogContent className="sm:max-w-xl max-h-[90vh] overflow-y-auto">
@@ -1989,10 +2129,13 @@ export default function MyAccountsPage() {
                 <Badge className={`text-sm px-4 py-1 ${
                   selectedReportPayment.status === 'confirmed' ? 'bg-green-100 text-green-800' :
                   selectedReportPayment.status === 'rejected' ? 'bg-red-100 text-red-800' :
+                  selectedReportPayment.status === 'pending' ? 'bg-amber-100 text-amber-800' :
                   'bg-purple-100 text-purple-800'
                 }`}>
                   {selectedReportPayment.status === 'submitted' ? 'Awaiting Confirmation' :
                    selectedReportPayment.status === 'confirmed' ? 'Confirmed' :
+                   selectedReportPayment.status === 'rejected' ? 'Rejected' :
+                   selectedReportPayment.status === 'pending' ? 'No Payment / Issue' :
                    selectedReportPayment.status}
                 </Badge>
               </div>
@@ -2062,6 +2205,14 @@ export default function MyAccountsPage() {
                 <div className="rounded-lg bg-muted p-3">
                   <p className="text-xs text-muted-foreground mb-1">Your notes:</p>
                   <p className="text-sm">{selectedReportPayment.user_notes}</p>
+                </div>
+              )}
+
+              {/* Rejection reason — only when the admin rejected this report */}
+              {selectedReportPayment.status === 'rejected' && selectedReportPayment.rejection_reason && (
+                <div className="rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 p-3">
+                  <p className="text-xs text-red-700 dark:text-red-400 mb-1 font-medium">Reason for rejection:</p>
+                  <p className="text-sm text-red-700 dark:text-red-400">{selectedReportPayment.rejection_reason}</p>
                 </div>
               )}
             </div>
