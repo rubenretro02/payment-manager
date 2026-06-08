@@ -53,6 +53,10 @@ interface DateRangePickerProps {
 }
 
 const WEEKDAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
 
 export function DateRangePicker({ from, to, onChange, className }: DateRangePickerProps) {
   const [open, setOpen] = React.useState(false);
@@ -64,6 +68,18 @@ export function DateRangePicker({ from, to, onChange, className }: DateRangePick
     () => startOfMonth(fromDate ?? new Date()),
   );
   const [hovered, setHovered] = React.useState<Date | null>(null);
+
+  // Year options for the jump-to-year dropdown (wide range, always
+  // including whatever year is currently in view).
+  const yearOptions = React.useMemo(() => {
+    const base = new Date().getFullYear();
+    const set = new Set<number>();
+    for (let y = base - 20; y <= base + 20; y++) set.add(y);
+    set.add(viewMonth.getFullYear());
+    if (fromDate) set.add(fromDate.getFullYear());
+    if (toDate) set.add(toDate.getFullYear());
+    return [...set].sort((a, b) => a - b);
+  }, [viewMonth, fromDate, toDate]);
 
   // When opening, jump the view to wherever the current selection is.
   React.useEffect(() => {
@@ -218,7 +234,7 @@ export function DateRangePicker({ from, to, onChange, className }: DateRangePick
         </div>
 
         {/* Navigation */}
-        <div className="flex items-center justify-between px-3 pt-2">
+        <div className="flex items-center justify-between gap-2 px-3 pt-2">
           <div className="flex items-center gap-1">
             <button
               type="button"
@@ -237,6 +253,39 @@ export function DateRangePicker({ from, to, onChange, className }: DateRangePick
               <ChevronLeft className="h-4 w-4" />
             </button>
           </div>
+
+          {/* Jump directly to any month / year */}
+          <div className="flex items-center gap-1">
+            <select
+              aria-label="Month"
+              value={viewMonth.getMonth()}
+              onChange={(e) =>
+                setViewMonth(new Date(viewMonth.getFullYear(), Number(e.target.value), 1))
+              }
+              className="h-7 rounded-md border border-input bg-background px-1.5 text-xs font-medium hover:bg-accent cursor-pointer focus:outline-none focus:ring-1 focus:ring-blue-400"
+            >
+              {MONTH_NAMES.map((name, idx) => (
+                <option key={name} value={idx}>
+                  {name}
+                </option>
+              ))}
+            </select>
+            <select
+              aria-label="Year"
+              value={viewMonth.getFullYear()}
+              onChange={(e) =>
+                setViewMonth(new Date(Number(e.target.value), viewMonth.getMonth(), 1))
+              }
+              className="h-7 rounded-md border border-input bg-background px-1.5 text-xs font-medium tabular-nums hover:bg-accent cursor-pointer focus:outline-none focus:ring-1 focus:ring-blue-400"
+            >
+              {yearOptions.map((y) => (
+                <option key={y} value={y}>
+                  {y}
+                </option>
+              ))}
+            </select>
+          </div>
+
           <div className="flex items-center gap-1">
             <button
               type="button"
