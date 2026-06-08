@@ -6,13 +6,6 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import {
   Dialog,
@@ -50,13 +43,14 @@ import {
   ExternalLink,
   Send,
 } from 'lucide-react';
-import { format, startOfDay, startOfWeek, startOfMonth, startOfYear, isAfter } from 'date-fns';
+import { format, startOfDay, startOfWeek, startOfMonth, startOfYear, isAfter, isBefore, endOfDay } from 'date-fns';
 import type { Payment } from '@/lib/types';
+import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { isCommissionAccount } from '@/lib/account-utils';
 import { ScreenshotImage } from '@/components/ScreenshotImage';
 import { getScreenshotSrc } from '@/lib/screenshots';
 
-type DateRange = 'today' | 'week' | 'month' | 'year' | 'all';
+type DateRange = 'today' | 'week' | 'month' | 'year' | 'custom';
 
 interface AccountSummary {
   accountId: string;
@@ -95,8 +89,8 @@ export default function ReportsPage() {
   const [payments, setPayments] = useState<Payment[]>([]);
   const [loading, setLoading] = useState(true);
   const [dateRange, setDateRange] = useState<DateRange>('month');
-  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear().toString());
-  const [selectedMonth, setSelectedMonth] = useState((new Date().getMonth() + 1).toString());
+  const [customFrom, setCustomFrom] = useState<string>('');
+  const [customTo, setCustomTo] = useState<string>('');
   const [activeView, setActiveView] = useState<'overview' | 'by-account' | 'by-user' | 'all'>('overview');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedPayment, setSelectedPayment] = useState<Payment | null>(null);
@@ -145,10 +139,15 @@ export default function ReportsPage() {
   }
 
   const filteredPayments = useMemo(() => {
-    if (dateRange === 'all') {
+    if (dateRange === 'custom') {
+      const from = customFrom ? startOfDay(new Date(customFrom + 'T00:00:00')) : null;
+      const to = customTo ? endOfDay(new Date(customTo + 'T00:00:00')) : null;
+      if (!from && !to) return payments;
       return payments.filter(p => {
         const d = new Date(p.created_at);
-        return d.getFullYear() === parseInt(selectedYear) && d.getMonth() + 1 === parseInt(selectedMonth);
+        if (from && isBefore(d, from)) return false;
+        if (to && isAfter(d, to)) return false;
+        return true;
       });
     }
     const now = new Date();
@@ -161,7 +160,7 @@ export default function ReportsPage() {
       default: return payments;
     }
     return payments.filter(p => isAfter(new Date(p.created_at), startDate));
-  }, [payments, dateRange, selectedYear, selectedMonth]);
+  }, [payments, dateRange, customFrom, customTo]);
 
   // Split commission vs regular so income from Commission projects shows
   // separately on the Reports page (admin wants to see commission inflow
@@ -442,15 +441,6 @@ export default function ReportsPage() {
     URL.revokeObjectURL(url);
   };
 
-  const availableYears = [...new Set(payments.map(p => new Date(p.created_at).getFullYear()))].sort((a, b) => b - a);
-  if (availableYears.length === 0) availableYears.push(new Date().getFullYear());
-  const months = [
-    { value: '1', label: 'January' }, { value: '2', label: 'February' }, { value: '3', label: 'March' },
-    { value: '4', label: 'April' }, { value: '5', label: 'May' }, { value: '6', label: 'June' },
-    { value: '7', label: 'July' }, { value: '8', label: 'August' }, { value: '9', label: 'September' },
-    { value: '10', label: 'October' }, { value: '11', label: 'November' }, { value: '12', label: 'December' },
-  ];
-
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
@@ -493,21 +483,19 @@ export default function ReportsPage() {
                   <TabsTrigger value="week">This Week</TabsTrigger>
                   <TabsTrigger value="month">This Month</TabsTrigger>
                   <TabsTrigger value="year">This Year</TabsTrigger>
-                  <TabsTrigger value="all">Custom</TabsTrigger>
+                  <TabsTrigger value="custom">Custom</TabsTrigger>
                 </TabsList>
               </Tabs>
             </div>
-            {dateRange === 'all' && (
-              <div className="flex gap-2">
-                <Select value={selectedMonth} onValueChange={setSelectedMonth}>
-                  <SelectTrigger className="w-[140px]"><SelectValue /></SelectTrigger>
-                  <SelectContent>{months.map(m => <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>)}</SelectContent>
-                </Select>
-                <Select value={selectedYear} onValueChange={setSelectedYear}>
-                  <SelectTrigger className="w-[100px]"><SelectValue /></SelectTrigger>
-                  <SelectContent>{availableYears.map(y => <SelectItem key={y} value={y.toString()}>{y}</SelectItem>)}</SelectContent>
-                </Select>
-              </div>
+            {dateRange === 'custom' && (
+              <DateRangePicker
+                from={customFrom}
+                to={customTo}
+                onChange={(f, t) => {
+                  setCustomFrom(f);
+                  setCustomTo(t);
+                }}
+              />
             )}
           </div>
         </CardContent>

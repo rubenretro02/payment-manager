@@ -46,6 +46,7 @@ import {
 } from 'lucide-react';
 import type { Payment } from '@/lib/types';
 import { ScreenshotImage } from '@/components/ScreenshotImage';
+import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { getScreenshotSrc } from '@/lib/screenshots';
 import { format, startOfDay, startOfWeek, startOfMonth, startOfYear, endOfDay, isAfter, isBefore } from 'date-fns';
 import { toast } from 'sonner';
@@ -526,21 +527,14 @@ export default function DuePaymentsPage() {
                 </TabsList>
               </Tabs>
               {dateRange === 'custom' && (
-                <div className="flex items-center gap-2">
-                  <Input
-                    type="date"
-                    value={customFrom}
-                    onChange={(e) => setCustomFrom(e.target.value)}
-                    className="w-[150px]"
-                  />
-                  <span className="text-muted-foreground text-sm">to</span>
-                  <Input
-                    type="date"
-                    value={customTo}
-                    onChange={(e) => setCustomTo(e.target.value)}
-                    className="w-[150px]"
-                  />
-                </div>
+                <DateRangePicker
+                  from={customFrom}
+                  to={customTo}
+                  onChange={(f, t) => {
+                    setCustomFrom(f);
+                    setCustomTo(t);
+                  }}
+                />
               )}
             </div>
           </div>

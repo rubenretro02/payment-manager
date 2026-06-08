@@ -37,6 +37,7 @@ import {
 import { format, startOfDay, startOfWeek, startOfMonth, startOfYear, isAfter, isBefore, endOfDay } from 'date-fns';
 import { useAuth } from '@/hooks/useAuth';
 import type { Payment } from '@/lib/types';
+import { DateRangePicker } from '@/components/ui/date-range-picker';
 
 const statusConfig: Record<string, { label: string; color: string; icon: typeof Clock }> = {
   pending: { label: 'Pending', color: 'bg-yellow-100 text-yellow-800', icon: Clock },
@@ -456,21 +457,14 @@ export default function PaymentsPage() {
                 </TabsList>
               </Tabs>
               {dateRange === 'custom' && (
-                <div className="flex items-center gap-2">
-                  <Input
-                    type="date"
-                    value={customFrom}
-                    onChange={(e) => setCustomFrom(e.target.value)}
-                    className="w-[150px]"
-                  />
-                  <span className="text-muted-foreground text-sm">to</span>
-                  <Input
-                    type="date"
-                    value={customTo}
-                    onChange={(e) => setCustomTo(e.target.value)}
-                    className="w-[150px]"
-                  />
-                </div>
+                <DateRangePicker
+                  from={customFrom}
+                  to={customTo}
+                  onChange={(f, t) => {
+                    setCustomFrom(f);
+                    setCustomTo(t);
+                  }}
+                />
               )}
             </div>
           </div>
