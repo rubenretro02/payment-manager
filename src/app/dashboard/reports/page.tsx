@@ -49,6 +49,7 @@ import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { isCommissionAccount } from '@/lib/account-utils';
 import { ScreenshotImage } from '@/components/ScreenshotImage';
 import { getScreenshotSrc } from '@/lib/screenshots';
+import { getCached, setCached, CACHE_KEYS } from '@/lib/client-cache';
 
 type DateRange = 'today' | 'week' | 'month' | 'year' | 'custom';
 
@@ -86,8 +87,9 @@ interface UserSummary {
 
 export default function ReportsPage() {
   const router = useRouter();
-  const [payments, setPayments] = useState<Payment[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Seed from the shared cache so switching back to Reports renders instantly.
+  const [payments, setPayments] = useState<Payment[]>(() => getCached<Payment[]>(CACHE_KEYS.payments) || []);
+  const [loading, setLoading] = useState(() => getCached<Payment[]>(CACHE_KEYS.payments) === undefined);
   const [dateRange, setDateRange] = useState<DateRange>('month');
   const [customFrom, setCustomFrom] = useState<string>('');
   const [customTo, setCustomTo] = useState<string>('');
@@ -129,6 +131,7 @@ export default function ReportsPage() {
       const response = await fetch('/api/payments');
       const data = await response.json();
       if (data.success) {
+        setCached(CACHE_KEYS.payments, data.data || []);
         setPayments(data.data || []);
       }
     } catch (error) {
@@ -162,6 +165,21 @@ export default function ReportsPage() {
     return payments.filter(p => isAfter(new Date(p.created_at), startDate));
   }, [payments, dateRange, customFrom, customTo]);
 
+  // Apply the search box to the underlying payments so the WHOLE page — the
+  // summary cards, overview tables and every breakdown — reflects what you're
+  // searching for, not just the table you happen to be on. Empty query = no-op.
+  const searchedPayments = useMemo(() => {
+    if (!searchQuery.trim()) return filteredPayments;
+    const q = searchQuery.toLowerCase();
+    return filteredPayments.filter(p =>
+      (p.user?.telegram_first_name || '').toLowerCase().includes(q) ||
+      (p.user?.telegram_username || '').toLowerCase().includes(q) ||
+      (p.account?.full_name || '').toLowerCase().includes(q) ||
+      (p.account?.platform?.display_name || '').toLowerCase().includes(q) ||
+      (p.account?.account_email || '').toLowerCase().includes(q)
+    );
+  }, [filteredPayments, searchQuery]);
+
   // Split commission vs regular so income from Commission projects shows
   // separately on the Reports page (admin wants to see commission inflow
   // on its own, not mixed with payroll-style payments).
@@ -169,12 +187,12 @@ export default function ReportsPage() {
     !!p.account && isCommissionAccount(p.account as { project?: { display_name?: string | null; name?: string | null } | null });
 
   const regularPayments = useMemo(
-    () => filteredPayments.filter(p => !isCommissionPayment(p)),
-    [filteredPayments]
+    () => searchedPayments.filter(p => !isCommissionPayment(p)),
+    [searchedPayments]
   );
   const commissionPayments = useMemo(
-    () => filteredPayments.filter(isCommissionPayment),
-    [filteredPayments]
+    () => searchedPayments.filter(isCommissionPayment),
+    [searchedPayments]
   );
 
   // Aggregate stats — regular payments only. Commission has its own totals.
@@ -386,17 +404,17 @@ export default function ReportsPage() {
 
   // Pending individual payments (awaiting confirmation)
   const pendingPayments = useMemo(() => {
-    return filteredPayments
+    return searchedPayments
       .filter(p => p.status === 'submitted' || p.status === 'pending')
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-  }, [filteredPayments]);
+  }, [searchedPayments]);
 
   // Recent received individual payments (confirmed)
   const recentReceivedPayments = useMemo(() => {
-    return filteredPayments
+    return searchedPayments
       .filter(p => p.status === 'confirmed')
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-  }, [filteredPayments]);
+  }, [searchedPayments]);
 
   // Search filter
   const filteredAccountSummaries = accountSummaries.filter(s => {
@@ -418,8 +436,8 @@ export default function ReportsPage() {
 
   const exportCSV = () => {
     const rows = [
-      ['Date', 'User', 'Account', 'Platform', 'Status', 'Earned', 'Owed', 'Paid', 'Diff'],
-      ...filteredPayments.map(p => [
+      ['Date', 'User', 'Account', 'Platform', 'Status', 'Earned', 'Owed', 'Kept', 'Paid', 'Diff'],
+      ...searchedPayments.map(p => [
         format(new Date(p.created_at), 'yyyy-MM-dd HH:mm'),
         p.user?.telegram_first_name || '',
         p.account?.full_name || '',
@@ -427,6 +445,7 @@ export default function ReportsPage() {
         p.status,
         (Number(p.platform_amount) || 0).toFixed(2),
         (Number(p.amount_owed) || 0).toFixed(2),
+        ((Number(p.platform_amount) || 0) - (Number(p.amount_owed) || 0)).toFixed(2),
         (Number(p.amount_paid) || 0).toFixed(2),
         ((Number(p.amount_paid) || 0) - (Number(p.amount_owed) || 0)).toFixed(2),
       ]),
@@ -704,12 +723,12 @@ export default function ReportsPage() {
             <TabsTrigger value="by-user">By User</TabsTrigger>
             <TabsTrigger value="all">All Payments</TabsTrigger>
           </TabsList>
-          {(activeView === 'by-account' || activeView === 'by-user' || activeView === 'all') && (
-            <div className="relative w-full sm:w-72">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input placeholder="Search..." className="pl-10" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
-            </div>
-          )}
+          {/* Search is always visible: it now filters the summary cards and
+              every tab at once, not just the breakdown tables. */}
+          <div className="relative w-full sm:w-72">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input placeholder="Search user, account, platform..." className="pl-10" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
+          </div>
         </div>
 
         {/* OVERVIEW TAB */}
@@ -729,6 +748,10 @@ export default function ReportsPage() {
                 <div className="flex justify-between items-center p-3 rounded-lg bg-muted">
                   <span className="text-muted-foreground">Your Share (Owed)</span>
                   <span className="font-bold text-lg">${stats.totalOwed.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between items-center p-3 rounded-lg bg-muted">
+                  <span className="text-muted-foreground">Kept by Accounts</span>
+                  <span className="font-bold text-lg">${(stats.totalPlatformEarnings - stats.totalOwed).toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between items-center p-3 rounded-lg bg-green-100 dark:bg-green-900/30">
                   <span className="text-green-800 dark:text-green-300">Actually Received</span>
@@ -998,6 +1021,7 @@ export default function ReportsPage() {
                       <TableHead className="text-center">Payments</TableHead>
                       <TableHead className="text-right">Earned</TableHead>
                       <TableHead className="text-right">Owed</TableHead>
+                      <TableHead className="text-right">Kept</TableHead>
                       <TableHead className="text-right">Paid</TableHead>
                       <TableHead className="text-right">Diff</TableHead>
                     </TableRow>
@@ -1030,6 +1054,7 @@ export default function ReportsPage() {
                           </TableCell>
                           <TableCell className="text-right">${s.totalEarned.toFixed(2)}</TableCell>
                           <TableCell className="text-right">${s.totalOwed.toFixed(2)}</TableCell>
+                          <TableCell className="text-right text-muted-foreground">${(s.totalEarned - s.totalOwed).toFixed(2)}</TableCell>
                           <TableCell className="text-right font-medium">${s.totalPaid.toFixed(2)}</TableCell>
                           <TableCell className={`text-right font-semibold ${diff < 0 ? 'text-red-600' : diff > 0 ? 'text-blue-600' : ''}`}>
                             {diff >= 0 ? '+' : ''}${diff.toFixed(2)}
@@ -1069,6 +1094,7 @@ export default function ReportsPage() {
                       <TableHead className="text-center">Payments</TableHead>
                       <TableHead className="text-right">Earned</TableHead>
                       <TableHead className="text-right">Owed</TableHead>
+                      <TableHead className="text-right">Kept</TableHead>
                       <TableHead className="text-right">Paid</TableHead>
                       <TableHead className="text-right">Loss</TableHead>
                       <TableHead className="text-right">Compliance</TableHead>
@@ -1087,6 +1113,7 @@ export default function ReportsPage() {
                         <TableCell className="text-center">{u.paymentsCount}</TableCell>
                         <TableCell className="text-right">${u.totalEarned.toFixed(2)}</TableCell>
                         <TableCell className="text-right">${u.totalOwed.toFixed(2)}</TableCell>
+                        <TableCell className="text-right text-muted-foreground">${(u.totalEarned - u.totalOwed).toFixed(2)}</TableCell>
                         <TableCell className="text-right font-medium">${u.totalPaid.toFixed(2)}</TableCell>
                         <TableCell className={`text-right font-semibold ${u.totalLoss > 0 ? 'text-red-600' : ''}`}>
                           {u.totalLoss > 0 ? `-$${u.totalLoss.toFixed(2)}` : '$0.00'}
@@ -1110,10 +1137,10 @@ export default function ReportsPage() {
           <Card>
             <CardHeader>
               <CardTitle className="text-lg">All Payments</CardTitle>
-              <CardDescription>{filteredPayments.length} payments in selected period</CardDescription>
+              <CardDescription>{searchedPayments.length} payments in selected period</CardDescription>
             </CardHeader>
             <CardContent>
-              {filteredPayments.length === 0 ? (
+              {searchedPayments.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
                   <DollarSign className="h-12 w-12 mx-auto mb-4 opacity-50" />
                   <p>No payments in this period</p>
@@ -1128,22 +1155,14 @@ export default function ReportsPage() {
                       <TableHead>Platform</TableHead>
                       <TableHead className="text-right">Earned</TableHead>
                       <TableHead className="text-right">Owed</TableHead>
+                      <TableHead className="text-right">Kept</TableHead>
                       <TableHead className="text-right">Paid</TableHead>
                       <TableHead className="text-right">Diff</TableHead>
                       <TableHead>Status</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filteredPayments
-                      .filter(p => {
-                        if (!searchQuery) return true;
-                        const q = searchQuery.toLowerCase();
-                        return (
-                          (p.user?.telegram_first_name || '').toLowerCase().includes(q) ||
-                          (p.account?.full_name || '').toLowerCase().includes(q) ||
-                          (p.account?.platform?.display_name || '').toLowerCase().includes(q)
-                        );
-                      })
+                    {searchedPayments
                       .map(p => {
                         const diff = (Number(p.amount_paid) || 0) - (Number(p.amount_owed) || 0);
                         return (
@@ -1164,6 +1183,7 @@ export default function ReportsPage() {
                             <TableCell><Badge variant="outline" className="text-xs">{p.account?.platform?.display_name || '-'}</Badge></TableCell>
                             <TableCell className="text-right">${(Number(p.platform_amount) || 0).toFixed(2)}</TableCell>
                             <TableCell className="text-right">${(Number(p.amount_owed) || 0).toFixed(2)}</TableCell>
+                            <TableCell className="text-right text-muted-foreground">${((Number(p.platform_amount) || 0) - (Number(p.amount_owed) || 0)).toFixed(2)}</TableCell>
                             <TableCell className="text-right font-medium">${(Number(p.amount_paid) || 0).toFixed(2)}</TableCell>
                             <TableCell className={`text-right text-xs font-semibold ${diff < 0 ? 'text-red-600' : diff > 0 ? 'text-blue-600' : 'text-muted-foreground'}`}>
                               {p.status === 'confirmed' ? `${diff >= 0 ? '+' : ''}$${diff.toFixed(2)}` : '-'}

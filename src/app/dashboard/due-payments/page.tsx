@@ -51,6 +51,7 @@ import { getScreenshotSrc } from '@/lib/screenshots';
 import { format, startOfDay, startOfWeek, startOfMonth, startOfYear, endOfDay, isAfter, isBefore } from 'date-fns';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
+import { getCached, setCached, CACHE_KEYS } from '@/lib/client-cache';
 
 interface DueAccountInfo {
   account_id: string;
@@ -119,9 +120,11 @@ const statusConfig = {
 export default function DuePaymentsPage() {
   const router = useRouter();
   const { user: adminUser } = useAuth();
-  const [data, setData] = useState<DuePaymentsData | null>(null);
-  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Seed from the shared cache so switching back to Due Payments renders the
+  // last board instantly while it refetches in the background.
+  const [data, setData] = useState<DuePaymentsData | null>(() => getCached<DuePaymentsData>(CACHE_KEYS.duePayments) || null);
+  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>(() => getCached<PaymentMethod[]>(CACHE_KEYS.paymentMethods) || []);
+  const [loading, setLoading] = useState(() => getCached<DuePaymentsData>(CACHE_KEYS.duePayments) === undefined);
   const [refreshing, setRefreshing] = useState(false);
   const [sendingReminders, setSendingReminders] = useState(false);
   const [selectedTab, setSelectedTab] = useState<string>('all');
@@ -153,6 +156,7 @@ export default function DuePaymentsPage() {
       const dueJson = await dueRes.json();
       const methodsJson = await methodsRes.json();
       if (dueJson.success) {
+        setCached(CACHE_KEYS.duePayments, dueJson.data);
         setData(dueJson.data);
         const totalFound = dueJson.data?.all?.length || 0;
         if (totalFound === 0 && showRefreshing) {
@@ -163,7 +167,9 @@ export default function DuePaymentsPage() {
         console.error('Due Payments API error:', dueJson);
       }
       if (methodsJson.success) {
-        setPaymentMethods((methodsJson.data || []).filter((m: PaymentMethod) => m.is_active));
+        const activeMethods = (methodsJson.data || []).filter((m: PaymentMethod) => m.is_active);
+        setCached(CACHE_KEYS.paymentMethods, activeMethods);
+        setPaymentMethods(activeMethods);
       }
     } catch (error) {
       console.error('Error fetching due payments:', error);

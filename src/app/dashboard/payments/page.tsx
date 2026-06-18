@@ -38,6 +38,7 @@ import { format, startOfDay, startOfWeek, startOfMonth, startOfYear, isAfter, is
 import { useAuth } from '@/hooks/useAuth';
 import type { Payment } from '@/lib/types';
 import { DateRangePicker } from '@/components/ui/date-range-picker';
+import { getCached, setCached, CACHE_KEYS } from '@/lib/client-cache';
 
 const statusConfig: Record<string, { label: string; color: string; icon: typeof Clock }> = {
   pending: { label: 'Pending', color: 'bg-yellow-100 text-yellow-800', icon: Clock },
@@ -52,8 +53,10 @@ export default function PaymentsPage() {
   const statusFromUrl = searchParams.get('status');
   const paymentIdFromUrl = searchParams.get('payment');
 
-  const [payments, setPayments] = useState<Payment[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Seed from the shared cache so revisiting Payments (or coming from Reports,
+  // which loads the same endpoint) renders instantly while it refetches.
+  const [payments, setPayments] = useState<Payment[]>(() => getCached<Payment[]>(CACHE_KEYS.payments) || []);
+  const [loading, setLoading] = useState(() => getCached<Payment[]>(CACHE_KEYS.payments) === undefined);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTab, setSelectedTab] = useState(statusFromUrl || 'submitted');
   const [dateRange, setDateRange] = useState<'today' | 'week' | 'month' | 'year' | 'all' | 'custom'>('month');
@@ -119,6 +122,7 @@ export default function PaymentsPage() {
       const response = await fetch('/api/payments');
       const data = await response.json();
       if (data.success) {
+        setCached(CACHE_KEYS.payments, data.data || []);
         setPayments(data.data || []);
       }
     } catch (error) {
@@ -1102,8 +1106,25 @@ export default function PaymentsPage() {
                 type="number"
                 step="0.01"
                 value={editForm.platform_amount}
-                onChange={(e) => setEditForm({ ...editForm, platform_amount: e.target.value })}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  const platformAmt = parseFloat(value);
+                  const pct = Number(selectedPayment?.percentage_applied) || 0;
+                  // Mirror the admin Report dialog: typing the platform amount
+                  // re-derives owed (= platform × %) and prefills paid to match.
+                  if (!isNaN(platformAmt) && pct > 0) {
+                    const owed = ((platformAmt * pct) / 100).toFixed(2);
+                    setEditForm({ ...editForm, platform_amount: value, amount_owed: owed, amount_paid: owed });
+                  } else {
+                    setEditForm({ ...editForm, platform_amount: value });
+                  }
+                }}
               />
+              {selectedPayment?.percentage_applied != null && (
+                <p className="text-xs text-muted-foreground">
+                  Applies {selectedPayment.percentage_applied}% → owed &amp; paid auto-calculated. Adjust paid below if they sent a different amount.
+                </p>
+              )}
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="edit_amount_owed">Amount owed ($)</Label>
