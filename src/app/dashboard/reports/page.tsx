@@ -197,8 +197,10 @@ export default function ReportsPage() {
 
   // Aggregate stats — regular payments only. Commission has its own totals.
   const stats = useMemo(() => ({
-    totalPlatformEarnings: regularPayments.reduce((s, p) => s + (Number(p.platform_amount) || 0), 0),
-    totalOwed: regularPayments.reduce((s, p) => s + (Number(p.amount_owed) || 0), 0),
+    // Rejected reports are invalid — exclude them from earnings/owed so they
+    // don't inflate what you're owed (a rejected payment was never collectible).
+    totalPlatformEarnings: regularPayments.filter(p => p.status !== 'rejected').reduce((s, p) => s + (Number(p.platform_amount) || 0), 0),
+    totalOwed: regularPayments.filter(p => p.status !== 'rejected').reduce((s, p) => s + (Number(p.amount_owed) || 0), 0),
     totalReceived: regularPayments.filter(p => p.status === 'confirmed').reduce((s, p) => s + (Number(p.amount_paid) || 0), 0),
     totalPending: regularPayments.filter(p => p.status === 'submitted' || p.status === 'pending').reduce((s, p) => s + (Number(p.amount_owed) || 0), 0),
     totalLoss: regularPayments
@@ -298,6 +300,12 @@ export default function ReportsPage() {
   }, [commissionPayments]);
 
   const collectionRate = stats.totalOwed > 0 ? ((stats.totalReceived / stats.totalOwed) * 100).toFixed(1) : '0';
+  // Percentages for the Income Breakdown. Share/Kept are a slice of platform
+  // earnings; Received/Pending/Losses are a slice of what you're owed.
+  const ownerSharePct = stats.totalPlatformEarnings > 0 ? (stats.totalOwed / stats.totalPlatformEarnings) * 100 : 0;
+  const receivedPct = stats.totalOwed > 0 ? (stats.totalReceived / stats.totalOwed) * 100 : 0;
+  const pendingPct = stats.totalOwed > 0 ? (stats.totalPending / stats.totalOwed) * 100 : 0;
+  const lossPct = stats.totalOwed > 0 ? (stats.totalLoss / stats.totalOwed) * 100 : 0;
 
   // Group by account — REGULAR accounts only. Commission has its own block.
   const accountSummaries = useMemo<AccountSummary[]>(() => {
@@ -326,8 +334,11 @@ export default function ReportsPage() {
       const s = map.get(accountId)!;
       s.payments.push(p);
       s.paymentsCount++;
-      s.totalEarned += Number(p.platform_amount) || 0;
-      s.totalOwed += Number(p.amount_owed) || 0;
+      // Rejected reports are invalid — they don't count toward earnings/owed.
+      if (p.status !== 'rejected') {
+        s.totalEarned += Number(p.platform_amount) || 0;
+        s.totalOwed += Number(p.amount_owed) || 0;
+      }
       if (p.status === 'confirmed') {
         s.confirmedCount++;
         s.totalPaid += Number(p.amount_paid) || 0;
@@ -367,8 +378,11 @@ export default function ReportsPage() {
       const s = map.get(userId)!;
       s.payments.push(p);
       s.paymentsCount++;
-      s.totalEarned += Number(p.platform_amount) || 0;
-      s.totalOwed += Number(p.amount_owed) || 0;
+      // Rejected reports are invalid — they don't count toward earnings/owed.
+      if (p.status !== 'rejected') {
+        s.totalEarned += Number(p.platform_amount) || 0;
+        s.totalOwed += Number(p.amount_owed) || 0;
+      }
       if (p.account_id) accountsSeen.get(userId)!.add(p.account_id);
       if (p.status === 'confirmed') {
         s.totalPaid += Number(p.amount_paid) || 0;
@@ -746,19 +760,38 @@ export default function ReportsPage() {
                   <span className="font-bold text-lg">${stats.totalPlatformEarnings.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between items-center p-3 rounded-lg bg-muted">
-                  <span className="text-muted-foreground">Your Share (Owed)</span>
+                  <div>
+                    <span className="text-muted-foreground">Your Share (Owed)</span>
+                    <p className="text-xs text-muted-foreground">{ownerSharePct.toFixed(1)}% of platform earnings</p>
+                  </div>
                   <span className="font-bold text-lg">${stats.totalOwed.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between items-center p-3 rounded-lg bg-muted">
-                  <span className="text-muted-foreground">Kept by Accounts</span>
+                  <div>
+                    <span className="text-muted-foreground">Kept by Accounts</span>
+                    <p className="text-xs text-muted-foreground">{(100 - ownerSharePct).toFixed(1)}% of platform earnings</p>
+                  </div>
                   <span className="font-bold text-lg">${(stats.totalPlatformEarnings - stats.totalOwed).toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between items-center p-3 rounded-lg bg-green-100 dark:bg-green-900/30">
-                  <span className="text-green-800 dark:text-green-300">Actually Received</span>
+                  <div>
+                    <span className="text-green-800 dark:text-green-300">Actually Received</span>
+                    <p className="text-xs text-green-700/80 dark:text-green-400/80">{receivedPct.toFixed(1)}% of owed · confirmed</p>
+                  </div>
                   <span className="font-bold text-lg text-green-600">${stats.totalReceived.toFixed(2)}</span>
                 </div>
+                <div className="flex justify-between items-center p-3 rounded-lg bg-yellow-100 dark:bg-yellow-900/30">
+                  <div>
+                    <span className="text-yellow-800 dark:text-yellow-300">Pending (not yet received)</span>
+                    <p className="text-xs text-yellow-700/80 dark:text-yellow-400/80">{pendingPct.toFixed(1)}% of owed · awaiting confirmation</p>
+                  </div>
+                  <span className="font-bold text-lg text-yellow-600">${stats.totalPending.toFixed(2)}</span>
+                </div>
                 <div className="flex justify-between items-center p-3 rounded-lg bg-red-100 dark:bg-red-900/30">
-                  <span className="text-red-800 dark:text-red-300">Losses (Underpaid)</span>
+                  <div>
+                    <span className="text-red-800 dark:text-red-300">Losses (Underpaid)</span>
+                    <p className="text-xs text-red-700/80 dark:text-red-400/80">{lossPct.toFixed(1)}% of owed · confirmed but paid short</p>
+                  </div>
                   <span className="font-bold text-lg text-red-600">-${stats.totalLoss.toFixed(2)}</span>
                 </div>
               </CardContent>
