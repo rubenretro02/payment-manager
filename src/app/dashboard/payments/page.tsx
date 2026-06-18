@@ -39,6 +39,7 @@ import { useAuth } from '@/hooks/useAuth';
 import type { Payment } from '@/lib/types';
 import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { getCached, setCached, CACHE_KEYS } from '@/lib/client-cache';
+import { ImageLightbox } from '@/components/ImageLightbox';
 
 const statusConfig: Record<string, { label: string; color: string; icon: typeof Clock }> = {
   pending: { label: 'Pending', color: 'bg-yellow-100 text-yellow-800', icon: Clock },
@@ -369,35 +370,11 @@ export default function PaymentsPage() {
     }
   };
 
-  // Open image in new tab - handles both URLs and base64 data
+  // Show the screenshot in an in-app lightbox instead of a new tab —
+  // /api/screenshot/[fileId] otherwise downloads the file instead of viewing it.
+  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
   const openInNewTab = (url: string) => {
-    if (!url) return;
-
-    // If it's a base64 image, open it in a new window with proper HTML
-    if (url.startsWith('data:')) {
-      const newWindow = window.open('', '_blank');
-      if (newWindow) {
-        newWindow.document.write(`
-          <!DOCTYPE html>
-          <html>
-            <head>
-              <title>Payment Screenshot</title>
-              <style>
-                body { margin: 0; display: flex; justify-content: center; align-items: center; min-height: 100vh; background: #1a1a1a; }
-                img { max-width: 100%; max-height: 100vh; object-fit: contain; }
-              </style>
-            </head>
-            <body>
-              <img src="${url}" alt="Screenshot" />
-            </body>
-          </html>
-        `);
-        newWindow.document.close();
-      }
-    } else {
-      // Regular URL - open directly
-      window.open(url, '_blank');
-    }
+    if (url) setLightboxSrc(url);
   };
 
   if (loading) {
@@ -697,7 +674,8 @@ export default function PaymentsPage() {
                     <img
                       src={getCompanyScreenshot(selectedPayment) || ''}
                       alt="Company Payment Receipt"
-                      className="h-full w-full object-contain"
+                      className="h-full w-full object-contain cursor-zoom-in"
+                      onClick={() => { const url = getCompanyScreenshot(selectedPayment); if (url) openInNewTab(url); }}
                     />
                     <Button
                       size="sm"
@@ -733,7 +711,8 @@ export default function PaymentsPage() {
                     <img
                       src={getPaymentScreenshot(selectedPayment) || ''}
                       alt="Payment Sent Receipt"
-                      className="h-full w-full object-contain"
+                      className="h-full w-full object-contain cursor-zoom-in"
+                      onClick={() => { const url = getPaymentScreenshot(selectedPayment); if (url) openInNewTab(url); }}
                     />
                     <Button
                       size="sm"
@@ -1237,6 +1216,8 @@ export default function PaymentsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ImageLightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />
     </div>
   );
 }

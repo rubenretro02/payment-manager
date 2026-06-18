@@ -50,6 +50,7 @@ import { isCommissionAccount } from '@/lib/account-utils';
 import { ScreenshotImage } from '@/components/ScreenshotImage';
 import { getScreenshotSrc } from '@/lib/screenshots';
 import { getCached, setCached, CACHE_KEYS } from '@/lib/client-cache';
+import { ImageLightbox } from '@/components/ImageLightbox';
 
 type DateRange = 'today' | 'week' | 'month' | 'year' | 'custom';
 
@@ -109,17 +110,11 @@ export default function ReportsPage() {
     setDetailsOpen(true);
   };
 
+  // Show screenshots in an in-app lightbox instead of opening a new tab —
+  // /api/screenshot/[fileId] otherwise downloads the file instead of viewing it.
+  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
   const openImageInNewTab = (url: string) => {
-    if (!url) return;
-    if (url.startsWith('data:')) {
-      const w = window.open('', '_blank');
-      if (w) {
-        w.document.write(`<!DOCTYPE html><html><head><title>Screenshot</title><style>body{margin:0;display:flex;justify-content:center;align-items:center;min-height:100vh;background:#1a1a1a}img{max-width:100%;max-height:100vh;object-fit:contain}</style></head><body><img src="${url}"/></body></html>`);
-        w.document.close();
-      }
-    } else {
-      window.open(url, '_blank');
-    }
+    if (url) setLightboxSrc(url);
   };
 
   useEffect(() => {
@@ -1313,7 +1308,9 @@ export default function ReportsPage() {
                             <ExternalLink className="h-3 w-3" />
                           </Button>
                         </div>
-                        <ScreenshotImage url={companyUrl} fileId={selectedPayment.company_screenshot_file_id} alt="Company" className="w-full rounded-lg border" />
+                        <button type="button" onClick={() => setLightboxSrc(companySrc)} className="block w-full cursor-zoom-in" title="View full size">
+                          <ScreenshotImage url={companyUrl} fileId={selectedPayment.company_screenshot_file_id} alt="Company" className="w-full rounded-lg border" />
+                        </button>
                       </div>
                     );
                   })()}
@@ -1328,7 +1325,9 @@ export default function ReportsPage() {
                             <ExternalLink className="h-3 w-3" />
                           </Button>
                         </div>
-                        <ScreenshotImage url={selectedPayment.payment_screenshot_url} fileId={selectedPayment.payment_screenshot_file_id} alt="Payment" className="w-full rounded-lg border" />
+                        <button type="button" onClick={() => setLightboxSrc(paymentSrc)} className="block w-full cursor-zoom-in" title="View full size">
+                          <ScreenshotImage url={selectedPayment.payment_screenshot_url} fileId={selectedPayment.payment_screenshot_file_id} alt="Payment" className="w-full rounded-lg border" />
+                        </button>
                       </div>
                     );
                   })()}
@@ -1372,6 +1371,8 @@ export default function ReportsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ImageLightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />
     </div>
   );
 }

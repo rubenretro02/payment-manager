@@ -1493,18 +1493,36 @@ export default function MyAccountsPage() {
 
             {/* STEP 2 — You owe (auto-calculated) */}
             {paymentForm.platform_amount && selectedAccount && (
-              <div className="rounded-xl border-2 border-orange-300 dark:border-orange-700 bg-orange-50 dark:bg-orange-950/30 p-4">
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="flex h-6 w-6 items-center justify-center rounded-full bg-orange-600 text-white text-sm font-bold">2</span>
-                  <span className="text-base font-bold text-orange-900 dark:text-orange-200">You must send to admin:</span>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="rounded-xl border-2 border-orange-300 dark:border-orange-700 bg-orange-50 dark:bg-orange-950/30 p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="flex h-6 w-6 items-center justify-center rounded-full bg-orange-600 text-white text-sm font-bold">2</span>
+                    <span className="text-base font-bold text-orange-900 dark:text-orange-200">You must send to admin:</span>
+                  </div>
+                  <div className="text-center my-3">
+                    <p className="text-4xl font-extrabold text-orange-600 dark:text-orange-400">
+                      ${calculateAmountOwed(parseFloat(paymentForm.platform_amount), selectedAccount.percentage).toFixed(2)}
+                    </p>
+                    <p className="text-xs text-orange-700 dark:text-orange-400 mt-1">
+                      ({selectedAccount.percentage}% of ${parseFloat(paymentForm.platform_amount).toFixed(2)})
+                    </p>
+                  </div>
                 </div>
-                <div className="text-center my-3">
-                  <p className="text-4xl font-extrabold text-orange-600 dark:text-orange-400">
-                    ${calculateAmountOwed(parseFloat(paymentForm.platform_amount), selectedAccount.percentage).toFixed(2)}
-                  </p>
-                  <p className="text-xs text-orange-700 dark:text-orange-400 mt-1">
-                    ({selectedAccount.percentage}% of ${parseFloat(paymentForm.platform_amount).toFixed(2)})
-                  </p>
+                {/* What the worker keeps for themselves — shown next to what they
+                    owe so there's no confusion about which number is which. */}
+                <div className="rounded-xl border-2 border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-950/30 p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="flex h-6 w-6 items-center justify-center rounded-full bg-green-600 text-white text-sm font-bold">✓</span>
+                    <span className="text-base font-bold text-green-900 dark:text-green-200">You keep:</span>
+                  </div>
+                  <div className="text-center my-3">
+                    <p className="text-4xl font-extrabold text-green-600 dark:text-green-400">
+                      ${(parseFloat(paymentForm.platform_amount) - calculateAmountOwed(parseFloat(paymentForm.platform_amount), selectedAccount.percentage)).toFixed(2)}
+                    </p>
+                    <p className="text-xs text-green-700 dark:text-green-400 mt-1">
+                      ({100 - selectedAccount.percentage}% of ${parseFloat(paymentForm.platform_amount).toFixed(2)})
+                    </p>
+                  </div>
                 </div>
               </div>
             )}
@@ -1781,16 +1799,26 @@ export default function MyAccountsPage() {
             </Button>
             <Button
               onClick={handleSubmitPayment}
-              disabled={
-                !paymentForm.platform_amount ||
-                !paymentForm.amount_sent ||
-                !companyProofImage ||
-                !paymentProofImage ||
-                companyProofImage?.uploading ||
-                paymentProofImage?.uploading ||
-                isSubmitting ||
-                adminPaymentMethods.length === 0
-              }
+              disabled={(() => {
+                // The note is mandatory whenever the amount sent doesn't match
+                // what's owed — whether they sent MORE or LESS.
+                const owed = selectedAccount && paymentForm.platform_amount
+                  ? calculateAmountOwed(parseFloat(paymentForm.platform_amount), selectedAccount.percentage)
+                  : 0;
+                const sent = parseFloat(paymentForm.amount_sent || '0');
+                const mismatch = !!paymentForm.amount_sent && Math.abs(sent - owed) >= 0.01;
+                return (
+                  !paymentForm.platform_amount ||
+                  !paymentForm.amount_sent ||
+                  !companyProofImage ||
+                  !paymentProofImage ||
+                  companyProofImage?.uploading ||
+                  paymentProofImage?.uploading ||
+                  isSubmitting ||
+                  adminPaymentMethods.length === 0 ||
+                  (mismatch && !paymentForm.notes.trim())
+                );
+              })()}
               className="w-full sm:w-auto"
             >
               {isSubmitting ? (
