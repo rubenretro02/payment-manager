@@ -860,8 +860,16 @@ export default function MyAccountsPage() {
     cameraRef: React.RefObject<HTMLInputElement | null>;
   }) => (
     <div className="grid gap-2">
-      <Label>{label} *</Label>
-      <div className="border-2 border-dashed rounded-lg p-4">
+      <Label className="flex flex-wrap items-center gap-1.5">
+        <span>{label}</span>
+        <span className="text-red-600 font-bold">*</span>
+        {!image && (
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-red-700 dark:text-red-300 bg-red-100 dark:bg-red-950/50 border border-red-300 dark:border-red-800 rounded px-1.5 py-0.5">
+            Required
+          </span>
+        )}
+      </Label>
+      <div className={`border-2 border-dashed rounded-lg p-4 ${image ? 'border-green-400 bg-green-50/40 dark:bg-green-950/20' : 'border-red-400 bg-red-50/50 dark:bg-red-950/20'}`}>
         {image ? (
           <div className="space-y-2">
             <div className="relative">
@@ -1493,36 +1501,29 @@ export default function MyAccountsPage() {
 
             {/* STEP 2 — You owe (auto-calculated) */}
             {paymentForm.platform_amount && selectedAccount && (
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="rounded-xl border-2 border-orange-300 dark:border-orange-700 bg-orange-50 dark:bg-orange-950/30 p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="flex h-6 w-6 items-center justify-center rounded-full bg-orange-600 text-white text-sm font-bold">2</span>
-                    <span className="text-base font-bold text-orange-900 dark:text-orange-200">You must send to admin:</span>
-                  </div>
-                  <div className="text-center my-3">
-                    <p className="text-4xl font-extrabold text-orange-600 dark:text-orange-400">
-                      ${calculateAmountOwed(parseFloat(paymentForm.platform_amount), selectedAccount.percentage).toFixed(2)}
-                    </p>
-                    <p className="text-xs text-orange-700 dark:text-orange-400 mt-1">
-                      ({selectedAccount.percentage}% of ${parseFloat(paymentForm.platform_amount).toFixed(2)})
-                    </p>
-                  </div>
+              <div className="rounded-xl border-2 border-orange-300 dark:border-orange-700 bg-orange-50 dark:bg-orange-950/30 p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="flex h-6 w-6 items-center justify-center rounded-full bg-orange-600 text-white text-sm font-bold">2</span>
+                  <span className="text-base font-bold text-orange-900 dark:text-orange-200">You must send to admin:</span>
                 </div>
-                {/* What the worker keeps for themselves — shown next to what they
-                    owe so there's no confusion about which number is which. */}
-                <div className="rounded-xl border-2 border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-950/30 p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="flex h-6 w-6 items-center justify-center rounded-full bg-green-600 text-white text-sm font-bold">✓</span>
-                    <span className="text-base font-bold text-green-900 dark:text-green-200">You keep:</span>
-                  </div>
-                  <div className="text-center my-3">
-                    <p className="text-4xl font-extrabold text-green-600 dark:text-green-400">
-                      ${(parseFloat(paymentForm.platform_amount) - calculateAmountOwed(parseFloat(paymentForm.platform_amount), selectedAccount.percentage)).toFixed(2)}
-                    </p>
-                    <p className="text-xs text-green-700 dark:text-green-400 mt-1">
-                      ({100 - selectedAccount.percentage}% of ${parseFloat(paymentForm.platform_amount).toFixed(2)})
-                    </p>
-                  </div>
+                <div className="text-center my-3">
+                  <p className="text-4xl font-extrabold text-orange-600 dark:text-orange-400">
+                    ${calculateAmountOwed(parseFloat(paymentForm.platform_amount), selectedAccount.percentage).toFixed(2)}
+                  </p>
+                  <p className="text-xs text-orange-700 dark:text-orange-400 mt-1">
+                    ({selectedAccount.percentage}% of ${parseFloat(paymentForm.platform_amount).toFixed(2)})
+                  </p>
+                </div>
+                {/* What the worker keeps — small line inside the same step so it's
+                    clearly part of step 2, not a competing big number. */}
+                <div className="mt-2 flex items-center justify-center gap-2 rounded-lg border border-green-300 dark:border-green-800 bg-green-50 dark:bg-green-950/30 px-3 py-2">
+                  <span className="text-sm font-semibold text-green-800 dark:text-green-300">✓ You keep:</span>
+                  <span className="text-base font-bold text-green-700 dark:text-green-400">
+                    ${(parseFloat(paymentForm.platform_amount) - calculateAmountOwed(parseFloat(paymentForm.platform_amount), selectedAccount.percentage)).toFixed(2)}
+                  </span>
+                  <span className="text-xs text-green-700/80 dark:text-green-400/80">
+                    ({100 - selectedAccount.percentage}%)
+                  </span>
                 </div>
               </div>
             )}
