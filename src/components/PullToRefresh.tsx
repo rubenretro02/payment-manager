@@ -10,9 +10,10 @@ import { getTelegramWebApp } from '@/lib/telegram';
 // normal mobile browser already has its own pull-to-refresh). Renders a small
 // follow-the-finger spinner and never blocks taps (pointer-events: none).
 
-const THRESHOLD = 70; // px of pull needed to trigger a reload
-const MAX_PULL = 110; // cap the indicator travel
-const DAMP = 0.5; // resistance so it feels rubber-banded
+const THRESHOLD = 110; // px of pull needed to trigger a reload
+const MAX_PULL = 160; // cap the indicator travel
+const DAMP = 0.45; // resistance so it feels rubber-banded (lower = must drag farther)
+const START = 14; // dead-zone: ignore the first few px so a casual scroll doesn't engage
 
 export function PullToRefresh() {
   const [pull, setPull] = useState(0);
@@ -44,7 +45,7 @@ export function PullToRefresh() {
     const onMove = (e: TouchEvent) => {
       if (refreshing || startY.current === null) return;
       const dy = e.touches[0].clientY - startY.current;
-      if (dy <= 0 || !atTop()) {
+      if (dy <= START || !atTop()) {
         if (active.current) {
           active.current = false;
           apply(0);
@@ -52,7 +53,7 @@ export function PullToRefresh() {
         return;
       }
       active.current = true;
-      apply(Math.min(MAX_PULL, dy * DAMP));
+      apply(Math.min(MAX_PULL, (dy - START) * DAMP));
       if (e.cancelable) e.preventDefault(); // suppress native overscroll while pulling
     };
 
