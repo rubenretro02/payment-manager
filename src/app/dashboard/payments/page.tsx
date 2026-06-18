@@ -21,6 +21,7 @@ import { Label } from '@/components/ui/label';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   Search,
+  RefreshCw,
   Download,
   CheckCircle2,
   XCircle,
@@ -58,6 +59,7 @@ export default function PaymentsPage() {
   // which loads the same endpoint) renders instantly while it refetches.
   const [payments, setPayments] = useState<Payment[]>(() => getCached<Payment[]>(CACHE_KEYS.payments) || []);
   const [loading, setLoading] = useState(() => getCached<Payment[]>(CACHE_KEYS.payments) === undefined);
+  const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTab, setSelectedTab] = useState(statusFromUrl || 'submitted');
   const [dateRange, setDateRange] = useState<'today' | 'week' | 'month' | 'year' | 'all' | 'custom'>('month');
@@ -118,7 +120,8 @@ export default function PaymentsPage() {
     }
   }, [paymentIdFromUrl, payments]);
 
-  async function fetchPayments() {
+  async function fetchPayments(showRefreshing = false) {
+    if (showRefreshing) setRefreshing(true);
     try {
       const response = await fetch('/api/payments');
       const data = await response.json();
@@ -130,6 +133,7 @@ export default function PaymentsPage() {
       console.error('Error fetching payments:', error);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }
 
@@ -234,7 +238,7 @@ export default function PaymentsPage() {
       admin_notes: selectedPayment.admin_notes || '',
       for_cycle_date: selectedPayment.for_cycle_date || '',
     });
-    setShowDetails(false);
+    // Keep Details open underneath so cancelling Edit returns here.
     setEditOpen(true);
   };
 
@@ -262,6 +266,7 @@ export default function PaymentsPage() {
         return;
       }
       setEditOpen(false);
+      setShowDetails(false);
       await fetchPayments();
     } catch (e) {
       console.error('Error updating payment:', e);
@@ -411,6 +416,10 @@ export default function PaymentsPage() {
               )}
             </Button>
           )}
+          <Button variant="outline" onClick={() => fetchPayments(true)} disabled={refreshing} className="gap-2">
+            <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
           <Button variant="outline" className="gap-2">
             <Download className="h-4 w-4" />
             Export
@@ -771,6 +780,7 @@ export default function PaymentsPage() {
                 className="text-red-600"
                 onClick={() => {
                   setShowScreenshot(false);
+                  setShowDetails(false);
                   setConfirmAction('reject');
                 }}
               >
@@ -781,6 +791,7 @@ export default function PaymentsPage() {
                 className="bg-green-600 hover:bg-green-700"
                 onClick={() => {
                   setShowScreenshot(false);
+                  setShowDetails(false);
                   setConfirmAction('confirm');
                 }}
               >
@@ -1003,7 +1014,8 @@ export default function PaymentsPage() {
               <Button
                 variant="outline"
                 onClick={() => {
-                  setShowDetails(false);
+                  // Keep Details open underneath so closing Screenshots
+                  // returns here instead of dumping back to the list.
                   setShowScreenshot(true);
                 }}
                 className="gap-2"

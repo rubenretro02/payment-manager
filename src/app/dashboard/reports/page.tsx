@@ -37,6 +37,7 @@ import {
   PieChart,
   BarChart3,
   Search,
+  RefreshCw,
   Users,
   Building2,
   ImageIcon,
@@ -91,6 +92,7 @@ export default function ReportsPage() {
   // Seed from the shared cache so switching back to Reports renders instantly.
   const [payments, setPayments] = useState<Payment[]>(() => getCached<Payment[]>(CACHE_KEYS.payments) || []);
   const [loading, setLoading] = useState(() => getCached<Payment[]>(CACHE_KEYS.payments) === undefined);
+  const [refreshing, setRefreshing] = useState(false);
   const [dateRange, setDateRange] = useState<DateRange>('month');
   const [customFrom, setCustomFrom] = useState<string>('');
   const [customTo, setCustomTo] = useState<string>('');
@@ -121,7 +123,8 @@ export default function ReportsPage() {
     fetchPayments();
   }, []);
 
-  async function fetchPayments() {
+  async function fetchPayments(showRefreshing = false) {
+    if (showRefreshing) setRefreshing(true);
     try {
       const response = await fetch('/api/payments');
       const data = await response.json();
@@ -133,6 +136,7 @@ export default function ReportsPage() {
       console.error('Error fetching payments:', error);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }
 
@@ -490,10 +494,16 @@ export default function ReportsPage() {
             Income summary and detailed analytics by account and user
           </p>
         </div>
-        <Button variant="outline" className="gap-2" onClick={exportCSV}>
-          <Download className="h-4 w-4" />
-          Export CSV
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => fetchPayments(true)} disabled={refreshing} className="gap-2">
+            <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
+          <Button variant="outline" className="gap-2" onClick={exportCSV}>
+            <Download className="h-4 w-4" />
+            Export CSV
+          </Button>
+        </div>
       </div>
 
       {/* Date Filters */}
