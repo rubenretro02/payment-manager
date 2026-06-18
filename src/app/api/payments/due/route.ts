@@ -294,8 +294,12 @@ export async function GET() {
       });
 
       // One Overdue row per missed cycle, tied to that cycle's own due date.
-      // Emitted alongside the current-cycle row (when it's confirmed/reported/
-      // due today) so an overdue cycle never gets swallowed by a newer one.
+      // ALWAYS emitted, independently of the current cycle: a missed cycle
+      // (e.g. Colton's unpaid May 28) keeps its own Overdue row even while the
+      // current cycle moves through Due Soon → Due Today → Confirmed. Before,
+      // a single missed cycle short-circuited the whole account to "overdue
+      // only", hiding its current cycle from Due Soon/Today/Upcoming until
+      // every past gap was settled.
       const DAY = 1000 * 60 * 60 * 24;
       const missedCycleEntries = missedCycles.map((d) => {
         const days = Math.round((today.getTime() - d.getTime()) / DAY);
@@ -303,10 +307,13 @@ export async function GET() {
         noon.setUTCHours(12, 0, 0, 0);
         return makeEntry('overdue', -days, noon);
       });
+      result.push(...missedCycleEntries);
 
+      // Classify the CURRENT cycle on its own. This is separate from the
+      // overdue rows above — an account can legitimately show both (an old
+      // unpaid cycle in Overdue AND this week's cycle in Due Soon).
       if (currentPayment?.status === 'confirmed') {
         result.push(makeEntry('confirmed', daysUntilDue, nextPaymentDate));
-        result.push(...missedCycleEntries);
       } else if (
         currentPayment?.status === 'submitted' ||
         currentPayment?.status === 'pending'
@@ -315,13 +322,10 @@ export async function GET() {
         // the mini-app. Both surface as Reported so the cron stops nagging
         // and the admin can find the open report.
         result.push(makeEntry('reported', daysUntilDue, nextPaymentDate));
-        result.push(...missedCycleEntries);
       } else if (daysUntilDue === 0) {
         // Today IS the payment day — the current cycle isn't overdue yet, the
         // admin still has until end of day.
         result.push(makeEntry('due_today', 0, nextPaymentDate));
-        // ...but any previously missed cycles stay on the board as their own rows.
-        result.push(...missedCycleEntries);
       } else if (previousReport && previousReportDate) {
         // Open report for the just-passed cycle — show it as Reported so the
         // admin can confirm it, anchored to that cycle's date and carrying
@@ -335,9 +339,6 @@ export async function GET() {
           current_payment_status: previousReport.status,
           amount_owed: previousReport.amount_owed,
         });
-        result.push(...missedCycleEntries);
-      } else if (missedCycleEntries.length > 0) {
-        result.push(...missedCycleEntries);
       } else if (daysUntilDue <= 7) {
         result.push(makeEntry('due_soon', daysUntilDue, nextPaymentDate));
       } else {
@@ -356,34 +357,12 @@ export async function GET() {
       confirmed: result.filter(r => r.status === 'confirmed'),
     };
 
-    // Duplicate Confirmed/Reported entries into their schedule bucket too —
-    // admin wants weekly accounts that already paid this period to also show
-    // up in 'Due Soon' (if next is <= 7 days) or 'Upcoming' (8-30 days).
-    // Beyond 30 days, the next cycle is too far out to clutter the schedule.
-    const scheduleEntries: DueAccountInfo[] = [];
-    for (const item of result) {
-      if (item.status !== 'confirmed' && item.status !== 'reported') continue;
-      if (item.days_until_due <= 0) continue;
-      if (item.days_until_due > 30) continue;
-
-      let scheduleStatus: DueAccountInfo['status'];
-      if (item.days_until_due <= 7) {
-        scheduleStatus = 'due_soon';
-      } else {
-        scheduleStatus = 'upcoming';
-      }
-      scheduleEntries.push({ ...item, status: scheduleStatus });
-    }
-
-    // Merge synthetic entries into the corresponding grouped buckets
-    grouped.dueSoon = [
-      ...grouped.dueSoon,
-      ...scheduleEntries.filter(e => e.status === 'due_soon'),
-    ].sort((a, b) => a.days_until_due - b.days_until_due);
-    grouped.upcoming = [
-      ...grouped.upcoming,
-      ...scheduleEntries.filter(e => e.status === 'upcoming'),
-    ].sort((a, b) => a.days_until_due - b.days_until_due);
+    // NOTE: we deliberately do NOT project Confirmed/Reported accounts into the
+    // 'Due Soon'/'Upcoming' schedule buckets. An account that already paid its
+    // current cycle would otherwise reappear under Soon with a yellow "Due Soon"
+    // badge and Remind/Report actions — looking unpaid and inflating the count.
+    // Soon/Upcoming now mean strictly "still needs to pay"; an account that paid
+    // lives only in its Confirmed/Reported tab (and once in 'All').
 
     // Sort 'all' by urgency: overdue first, then today, then soon, then upcoming,
     // then reported, then confirmed; within each bucket, by date ascending.
