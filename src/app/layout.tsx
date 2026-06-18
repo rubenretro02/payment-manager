@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import Script from "next/script";
 import "./globals.css";
 import { TelegramProvider } from "@/components/providers/TelegramProvider";
+import { PullToRefresh } from "@/components/PullToRefresh";
 import { Toaster } from "@/components/ui/sonner";
 
 const geistSans = Geist({
@@ -37,6 +38,7 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         <TelegramProvider>
+          <PullToRefresh />
           {children}
           <Toaster position="top-right" />
         </TelegramProvider>

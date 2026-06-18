@@ -122,6 +122,8 @@ export interface TelegramWebApp {
   };
   close(): void;
   expand(): void;
+  /** Bot API 7.7+ — prevents the swipe-down-to-close gesture. */
+  disableVerticalSwipes?(): void;
   ready(): void;
   sendData(data: string): void;
   showPopup(params: {
