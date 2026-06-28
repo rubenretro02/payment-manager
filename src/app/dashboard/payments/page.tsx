@@ -20,6 +20,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   Search,
   RefreshCw,
@@ -76,6 +77,19 @@ interface UserGroup {
   confirmedCount: number;
 }
 
+type GroupSort = 'paid-desc' | 'paid-asc' | 'name-asc' | 'name-desc';
+
+// Sort grouped rows by amount paid (high/low) or name (A→Z / Z→A).
+function sortGroups<T extends { totalPaid: number }>(arr: T[], sort: GroupSort, nameOf: (x: T) => string): T[] {
+  const c = [...arr];
+  switch (sort) {
+    case 'paid-asc': return c.sort((a, b) => a.totalPaid - b.totalPaid);
+    case 'name-asc': return c.sort((a, b) => nameOf(a).localeCompare(nameOf(b)));
+    case 'name-desc': return c.sort((a, b) => nameOf(b).localeCompare(nameOf(a)));
+    default: return c.sort((a, b) => b.totalPaid - a.totalPaid);
+  }
+}
+
 const statusConfig: Record<string, { label: string; color: string; icon: typeof Clock }> = {
   pending: { label: 'Pending', color: 'bg-yellow-100 text-yellow-800', icon: Clock },
   submitted: { label: 'To Confirm', color: 'bg-blue-100 text-blue-800', icon: ImageIcon },
@@ -98,6 +112,7 @@ export default function PaymentsPage() {
   const [selectedTab, setSelectedTab] = useState(statusFromUrl || 'submitted');
   const [viewMode, setViewMode] = useState<'list' | 'by-account' | 'by-user'>('list');
   const [drillGroup, setDrillGroup] = useState<{ title: string; subtitle: string; payments: Payment[] } | null>(null);
+  const [groupSort, setGroupSort] = useState<GroupSort>('paid-desc');
   const [dateRange, setDateRange] = useState<'today' | 'week' | 'month' | 'year' | 'all' | 'custom'>('month');
   const [customFrom, setCustomFrom] = useState<string>('');
   const [customTo, setCustomTo] = useState<string>('');
@@ -252,7 +267,7 @@ export default function PaymentsPage() {
         g.pendingCount++;
       }
     }
-    return Array.from(map.values()).sort((a, b) => b.totalPaid - a.totalPaid);
+    return sortGroups(Array.from(map.values()), groupSort, (g) => g.accountName);
   })();
 
   const userGroups: UserGroup[] = (() => {
@@ -289,8 +304,20 @@ export default function PaymentsPage() {
       }
     }
     for (const [id, g] of map.entries()) g.accountsCount = accountsSeen.get(id)!.size;
-    return Array.from(map.values()).sort((a, b) => b.totalPaid - a.totalPaid);
+    return sortGroups(Array.from(map.values()), groupSort, (g) => g.userName);
   })();
+
+  const sortControl = (
+    <Select value={groupSort} onValueChange={(v) => setGroupSort(v as GroupSort)}>
+      <SelectTrigger className="w-full sm:w-[190px]"><SelectValue /></SelectTrigger>
+      <SelectContent>
+        <SelectItem value="paid-desc">Paid: high → low</SelectItem>
+        <SelectItem value="paid-asc">Paid: low → high</SelectItem>
+        <SelectItem value="name-asc">Name: A → Z</SelectItem>
+        <SelectItem value="name-desc">Name: Z → A</SelectItem>
+      </SelectContent>
+    </Select>
+  );
 
   const getInitials = (name: string | null | undefined) => {
     if (!name) return '?';
@@ -786,13 +813,18 @@ export default function PaymentsPage() {
       {viewMode === 'by-account' && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg flex items-center gap-2">
-              <Building2 className="h-5 w-5" />
-              By Account
-            </CardTitle>
-            <CardDescription>
-              {accountGroups.length} account{accountGroups.length !== 1 ? 's' : ''} with payments in selected range
-            </CardDescription>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <Building2 className="h-5 w-5" />
+                  By Account
+                </CardTitle>
+                <CardDescription>
+                  {accountGroups.length} account{accountGroups.length !== 1 ? 's' : ''} with payments in selected range
+                </CardDescription>
+              </div>
+              {sortControl}
+            </div>
           </CardHeader>
           <CardContent>
             {accountGroups.length === 0 ? (
@@ -859,13 +891,18 @@ export default function PaymentsPage() {
       {viewMode === 'by-user' && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg flex items-center gap-2">
-              <Users className="h-5 w-5" />
-              By User
-            </CardTitle>
-            <CardDescription>
-              {userGroups.length} user{userGroups.length !== 1 ? 's' : ''} with payments in selected range
-            </CardDescription>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <Users className="h-5 w-5" />
+                  By User
+                </CardTitle>
+                <CardDescription>
+                  {userGroups.length} user{userGroups.length !== 1 ? 's' : ''} with payments in selected range
+                </CardDescription>
+              </div>
+              {sortControl}
+            </div>
           </CardHeader>
           <CardContent>
             {userGroups.length === 0 ? (

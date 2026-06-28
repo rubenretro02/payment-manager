@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   Dialog,
   DialogContent,
@@ -55,6 +56,19 @@ import { ImageLightbox } from '@/components/ImageLightbox';
 
 type DateRange = 'today' | 'week' | 'month' | 'year' | 'custom';
 
+type GroupSort = 'paid-desc' | 'paid-asc' | 'name-asc' | 'name-desc';
+
+// Sort grouped rows by amount paid (high/low) or name (A→Z / Z→A).
+function sortGroups<T extends { totalPaid: number }>(arr: T[], sort: GroupSort, nameOf: (x: T) => string): T[] {
+  const c = [...arr];
+  switch (sort) {
+    case 'paid-asc': return c.sort((a, b) => a.totalPaid - b.totalPaid);
+    case 'name-asc': return c.sort((a, b) => nameOf(a).localeCompare(nameOf(b)));
+    case 'name-desc': return c.sort((a, b) => nameOf(b).localeCompare(nameOf(a)));
+    default: return c.sort((a, b) => b.totalPaid - a.totalPaid);
+  }
+}
+
 interface AccountSummary {
   accountId: string;
   accountName: string;
@@ -98,6 +112,7 @@ export default function ReportsPage() {
   const [customTo, setCustomTo] = useState<string>('');
   const [activeView, setActiveView] = useState<'overview' | 'by-account' | 'by-user' | 'all'>('overview');
   const [searchQuery, setSearchQuery] = useState('');
+  const [groupSort, setGroupSort] = useState<GroupSort>('paid-desc');
   const [selectedPayment, setSelectedPayment] = useState<Payment | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [cardFilter, setCardFilter] = useState<'all' | 'received' | 'pending' | 'losses'>('all');
@@ -430,7 +445,7 @@ export default function ReportsPage() {
   }, [searchedPayments]);
 
   // Search filter
-  const filteredAccountSummaries = accountSummaries.filter(s => {
+  const filteredAccountSummaries = sortGroups(accountSummaries.filter(s => {
     if (!searchQuery) return true;
     const q = searchQuery.toLowerCase();
     return (
@@ -439,13 +454,25 @@ export default function ReportsPage() {
       s.platformName.toLowerCase().includes(q) ||
       s.accountEmail.toLowerCase().includes(q)
     );
-  });
+  }), groupSort, s => s.accountName);
 
-  const filteredUserSummaries = userSummaries.filter(s => {
+  const filteredUserSummaries = sortGroups(userSummaries.filter(s => {
     if (!searchQuery) return true;
     const q = searchQuery.toLowerCase();
     return s.userName.toLowerCase().includes(q) || s.userUsername.toLowerCase().includes(q);
-  });
+  }), groupSort, s => s.userName);
+
+  const sortControl = (
+    <Select value={groupSort} onValueChange={(v) => setGroupSort(v as GroupSort)}>
+      <SelectTrigger className="w-full sm:w-[190px]"><SelectValue /></SelectTrigger>
+      <SelectContent>
+        <SelectItem value="paid-desc">Paid: high → low</SelectItem>
+        <SelectItem value="paid-asc">Paid: low → high</SelectItem>
+        <SelectItem value="name-asc">Name: A → Z</SelectItem>
+        <SelectItem value="name-desc">Name: Z → A</SelectItem>
+      </SelectContent>
+    </Select>
+  );
 
   const exportCSV = () => {
     const rows = [
@@ -1037,11 +1064,16 @@ export default function ReportsPage() {
         <TabsContent value="by-account" className="mt-4">
           <Card>
             <CardHeader>
-              <CardTitle className="text-lg flex items-center gap-2">
-                <Building2 className="h-5 w-5" />
-                Breakdown by Account
-              </CardTitle>
-              <CardDescription>{filteredAccountSummaries.length} accounts with activity in selected period</CardDescription>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <Building2 className="h-5 w-5" />
+                    Breakdown by Account
+                  </CardTitle>
+                  <CardDescription>{filteredAccountSummaries.length} accounts with activity in selected period</CardDescription>
+                </div>
+                {sortControl}
+              </div>
             </CardHeader>
             <CardContent>
               {filteredAccountSummaries.length === 0 ? (
@@ -1111,11 +1143,16 @@ export default function ReportsPage() {
         <TabsContent value="by-user" className="mt-4">
           <Card>
             <CardHeader>
-              <CardTitle className="text-lg flex items-center gap-2">
-                <Users className="h-5 w-5" />
-                Breakdown by User
-              </CardTitle>
-              <CardDescription>{filteredUserSummaries.length} users with activity in selected period</CardDescription>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <Users className="h-5 w-5" />
+                    Breakdown by User
+                  </CardTitle>
+                  <CardDescription>{filteredUserSummaries.length} users with activity in selected period</CardDescription>
+                </div>
+                {sortControl}
+              </div>
             </CardHeader>
             <CardContent>
               {filteredUserSummaries.length === 0 ? (
