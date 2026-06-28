@@ -19,6 +19,7 @@ import {
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import {
   Search,
   RefreshCw,
@@ -30,6 +31,7 @@ import {
   CreditCard,
   Loader2,
   Building2,
+  Users,
   Send,
   ExternalLink,
   Edit,
@@ -42,6 +44,37 @@ import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { getCached, setCached, CACHE_KEYS } from '@/lib/client-cache';
 import { ImageLightbox } from '@/components/ImageLightbox';
 import { getScreenshotSrc } from '@/lib/screenshots';
+
+// Grouped views (By Account / By User), mirroring the Reports breakdown tables.
+interface AccountGroup {
+  accountId: string;
+  accountName: string;
+  accountEmail: string;
+  platformName: string;
+  userName: string;
+  userUsername: string;
+  payments: Payment[];
+  totalOwed: number;
+  totalPaid: number;
+  totalLoss: number;
+  paymentsCount: number;
+  confirmedCount: number;
+  pendingCount: number;
+  rejectedCount: number;
+}
+
+interface UserGroup {
+  userId: string;
+  userName: string;
+  userUsername: string;
+  payments: Payment[];
+  accountsCount: number;
+  totalOwed: number;
+  totalPaid: number;
+  totalLoss: number;
+  paymentsCount: number;
+  confirmedCount: number;
+}
 
 const statusConfig: Record<string, { label: string; color: string; icon: typeof Clock }> = {
   pending: { label: 'Pending', color: 'bg-yellow-100 text-yellow-800', icon: Clock },
@@ -63,6 +96,8 @@ export default function PaymentsPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTab, setSelectedTab] = useState(statusFromUrl || 'submitted');
+  const [viewMode, setViewMode] = useState<'list' | 'by-account' | 'by-user'>('list');
+  const [drillGroup, setDrillGroup] = useState<{ title: string; subtitle: string; payments: Payment[] } | null>(null);
   const [dateRange, setDateRange] = useState<'today' | 'week' | 'month' | 'year' | 'all' | 'custom'>('month');
   const [customFrom, setCustomFrom] = useState<string>('');
   const [customTo, setCustomTo] = useState<string>('');
@@ -178,6 +213,84 @@ export default function PaymentsPage() {
   const filteredPayments = dateFilteredPayments.filter((payment) =>
     selectedTab === 'all' || payment.status === selectedTab
   );
+
+  // Group the date-filtered payments for the By Account / By User views.
+  const accountGroups: AccountGroup[] = (() => {
+    const map = new Map<string, AccountGroup>();
+    for (const p of dateFilteredPayments) {
+      const id = p.account_id || 'no-account';
+      let g = map.get(id);
+      if (!g) {
+        g = {
+          accountId: id,
+          accountName: p.account?.full_name || 'No account',
+          accountEmail: p.account?.account_email || '',
+          platformName: p.account?.platform?.display_name || '-',
+          userName: p.user?.telegram_first_name || 'Unknown',
+          userUsername: p.user?.telegram_username || '',
+          payments: [],
+          totalOwed: 0,
+          totalPaid: 0,
+          totalLoss: 0,
+          paymentsCount: 0,
+          confirmedCount: 0,
+          pendingCount: 0,
+          rejectedCount: 0,
+        };
+        map.set(id, g);
+      }
+      g.payments.push(p);
+      g.paymentsCount++;
+      if (p.status !== 'rejected') g.totalOwed += Number(p.amount_owed) || 0;
+      if (p.status === 'confirmed') {
+        g.confirmedCount++;
+        g.totalPaid += Number(p.amount_paid) || 0;
+        g.totalLoss += Math.max(0, (Number(p.amount_owed) || 0) - (Number(p.amount_paid) || 0));
+      } else if (p.status === 'rejected') {
+        g.rejectedCount++;
+      } else {
+        g.pendingCount++;
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => b.totalPaid - a.totalPaid);
+  })();
+
+  const userGroups: UserGroup[] = (() => {
+    const map = new Map<string, UserGroup>();
+    const accountsSeen = new Map<string, Set<string>>();
+    for (const p of dateFilteredPayments) {
+      const id = p.user_id;
+      if (!id) continue;
+      let g = map.get(id);
+      if (!g) {
+        g = {
+          userId: id,
+          userName: p.user?.telegram_first_name || 'Unknown',
+          userUsername: p.user?.telegram_username || '',
+          payments: [],
+          accountsCount: 0,
+          totalOwed: 0,
+          totalPaid: 0,
+          totalLoss: 0,
+          paymentsCount: 0,
+          confirmedCount: 0,
+        };
+        map.set(id, g);
+        accountsSeen.set(id, new Set());
+      }
+      g.payments.push(p);
+      g.paymentsCount++;
+      if (p.account_id) accountsSeen.get(id)!.add(p.account_id);
+      if (p.status !== 'rejected') g.totalOwed += Number(p.amount_owed) || 0;
+      if (p.status === 'confirmed') {
+        g.confirmedCount++;
+        g.totalPaid += Number(p.amount_paid) || 0;
+        g.totalLoss += Math.max(0, (Number(p.amount_owed) || 0) - (Number(p.amount_paid) || 0));
+      }
+    }
+    for (const [id, g] of map.entries()) g.accountsCount = accountsSeen.get(id)!.size;
+    return Array.from(map.values()).sort((a, b) => b.totalPaid - a.totalPaid);
+  })();
 
   const getInitials = (name: string | null | undefined) => {
     if (!name) return '?';
@@ -515,6 +628,17 @@ export default function PaymentsPage() {
         </Card>
       </div>
 
+      {/* View mode: flat list, or grouped by account / user (like Reports) */}
+      <Tabs value={viewMode} onValueChange={(v) => setViewMode(v as typeof viewMode)}>
+        <TabsList>
+          <TabsTrigger value="list">Payments</TabsTrigger>
+          <TabsTrigger value="by-account">By Account</TabsTrigger>
+          <TabsTrigger value="by-user">By User</TabsTrigger>
+        </TabsList>
+      </Tabs>
+
+      {viewMode === 'list' && (
+      <>
       {/* Filters */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
         <div className="relative flex-1">
@@ -656,6 +780,184 @@ export default function PaymentsPage() {
           )}
         </CardContent>
       </Card>
+      </>
+      )}
+
+      {viewMode === 'by-account' && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg flex items-center gap-2">
+              <Building2 className="h-5 w-5" />
+              By Account
+            </CardTitle>
+            <CardDescription>
+              {accountGroups.length} account{accountGroups.length !== 1 ? 's' : ''} with payments in selected range
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {accountGroups.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                <Building2 className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                <p>No accounts with payments in this range</p>
+              </div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Account</TableHead>
+                    <TableHead>Assigned to</TableHead>
+                    <TableHead>Platform</TableHead>
+                    <TableHead className="text-center">Payments</TableHead>
+                    <TableHead className="text-right">Owed</TableHead>
+                    <TableHead className="text-right">Paid</TableHead>
+                    <TableHead className="text-right">Diff</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {accountGroups.map((g) => {
+                    const diff = g.totalPaid - g.totalOwed;
+                    return (
+                      <TableRow
+                        key={g.accountId}
+                        className="cursor-pointer hover:bg-muted/50"
+                        onClick={() => setDrillGroup({ title: g.accountName, subtitle: `${g.platformName} • ${g.userName}`, payments: g.payments })}
+                      >
+                        <TableCell>
+                          <div>
+                            <p className="font-medium">{g.accountName}</p>
+                            <p className="text-xs text-muted-foreground">{g.accountEmail}</p>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div>
+                            <p className="text-sm">{g.userName}</p>
+                            {g.userUsername && <p className="text-xs text-muted-foreground">@{g.userUsername}</p>}
+                          </div>
+                        </TableCell>
+                        <TableCell><Badge variant="outline">{g.platformName}</Badge></TableCell>
+                        <TableCell className="text-center">
+                          <div className="flex flex-col items-center text-xs">
+                            <span className="font-medium">{g.paymentsCount}</span>
+                            <span className="text-muted-foreground">{g.confirmedCount}✓ {g.pendingCount}⏳ {g.rejectedCount}✗</span>
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-right">${g.totalOwed.toFixed(2)}</TableCell>
+                        <TableCell className="text-right font-medium">${g.totalPaid.toFixed(2)}</TableCell>
+                        <TableCell className={`text-right font-semibold ${diff < 0 ? 'text-red-600' : diff > 0 ? 'text-blue-600' : ''}`}>
+                          {diff >= 0 ? '+' : ''}${diff.toFixed(2)}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {viewMode === 'by-user' && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg flex items-center gap-2">
+              <Users className="h-5 w-5" />
+              By User
+            </CardTitle>
+            <CardDescription>
+              {userGroups.length} user{userGroups.length !== 1 ? 's' : ''} with payments in selected range
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {userGroups.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                <p>No users with payments in this range</p>
+              </div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>User</TableHead>
+                    <TableHead className="text-center">Accounts</TableHead>
+                    <TableHead className="text-center">Payments</TableHead>
+                    <TableHead className="text-right">Owed</TableHead>
+                    <TableHead className="text-right">Paid</TableHead>
+                    <TableHead className="text-right">Loss</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {userGroups.map((g) => (
+                    <TableRow
+                      key={g.userId}
+                      className="cursor-pointer hover:bg-muted/50"
+                      onClick={() => setDrillGroup({ title: g.userName, subtitle: g.userUsername ? `@${g.userUsername}` : `${g.paymentsCount} payments`, payments: g.payments })}
+                    >
+                      <TableCell>
+                        <div>
+                          <p className="font-medium">{g.userName}</p>
+                          {g.userUsername && <p className="text-xs text-muted-foreground">@{g.userUsername}</p>}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-center">{g.accountsCount}</TableCell>
+                      <TableCell className="text-center">{g.paymentsCount}</TableCell>
+                      <TableCell className="text-right">${g.totalOwed.toFixed(2)}</TableCell>
+                      <TableCell className="text-right font-medium">${g.totalPaid.toFixed(2)}</TableCell>
+                      <TableCell className={`text-right font-semibold ${g.totalLoss > 0 ? 'text-red-600' : ''}`}>
+                        {g.totalLoss > 0 ? `-$${g.totalLoss.toFixed(2)}` : '$0.00'}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Drill-in: payments for the selected account/user */}
+      <Dialog open={drillGroup !== null} onOpenChange={(o) => !o && setDrillGroup(null)}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{drillGroup?.title}</DialogTitle>
+            <DialogDescription>
+              {drillGroup?.subtitle} — {drillGroup?.payments.length || 0} payment{(drillGroup?.payments.length || 0) !== 1 ? 's' : ''} on record
+            </DialogDescription>
+          </DialogHeader>
+          <ScrollArea className="max-h-[60vh]">
+            <div className="divide-y">
+              {drillGroup?.payments.map((p) => {
+                const config = statusConfig[p.status] || statusConfig.pending;
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    className="flex w-full items-center justify-between gap-3 p-3 text-left transition-colors hover:bg-muted/50"
+                    onClick={() => {
+                      setSelectedPayment(p);
+                      setDrillGroup(null);
+                      setShowDetails(true);
+                    }}
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium truncate">{p.account?.full_name || 'Account'}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {p.submitted_at ? format(new Date(p.submitted_at), "MMM d, yyyy HH:mm") : '—'}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-3 shrink-0">
+                      <div className="text-right">
+                        <p className="text-xs text-muted-foreground">Owed / Paid</p>
+                        <p className="text-sm font-medium">${Number(p.amount_owed || 0).toFixed(2)} / ${Number(p.amount_paid || 0).toFixed(2)}</p>
+                      </div>
+                      <Badge className={config.color}>{config.label}</Badge>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </ScrollArea>
+        </DialogContent>
+      </Dialog>
 
       {/* Screenshots Dialog - Updated for dual screenshots */}
       <Dialog open={showScreenshot && selectedPayment !== null} onOpenChange={setShowScreenshot}>
