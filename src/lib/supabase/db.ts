@@ -40,10 +40,14 @@ export async function getAccountsByUser(userId: string): Promise<Account[]> {
 export async function getAllPayments(status?: string, accountId?: string): Promise<Payment[]> {
   const supabase = createAdminClient();
 
-  // First get all payments without joins
+  // First get all payments without joins. Explicit columns (never select('*'))
+  // so a heavy column can't silently bloat this list query: company/payment
+  // screenshot URLs used to hold inline base64, which made select('*') take
+  // ~12s for ~200 rows and intermittently hit the statement timeout (→ 0 rows).
+  // Must be a single string literal — Supabase infers the row type from it.
   let query = supabase
     .from('payments')
-    .select('*')
+    .select('id, user_id, account_id, platform_amount, percentage_applied, amount_owed, amount_paid, company_screenshot_url, company_screenshot_file_id, payment_screenshot_url, payment_screenshot_file_id, platform_screenshot_file_id, payment_method, payment_reference, for_cycle_date, status, due_date, submitted_at, confirmed_at, confirmed_by, user_notes, admin_notes, rejection_reason, created_at, updated_at')
     .order('created_at', { ascending: false });
 
   if (status) {
@@ -95,7 +99,10 @@ export async function getAllPayments(status?: string, accountId?: string): Promi
     account: accounts.find(a => a.id === payment.account_id) || null,
   }));
 
-  return result as Payment[];
+  // Cast via unknown: the explicit column list omits a couple of legacy fields
+  // the Payment type still declares (period_id, screenshot_uploaded_at) that
+  // no longer exist as columns.
+  return result as unknown as Payment[];
 }
 
 export async function createPayment(paymentData: Partial<Payment>): Promise<{ data: Payment | null; error: string | null }> {
