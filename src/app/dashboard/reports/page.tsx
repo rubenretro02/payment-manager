@@ -56,17 +56,33 @@ import { ImageLightbox } from '@/components/ImageLightbox';
 
 type DateRange = 'today' | 'week' | 'month' | 'year' | 'custom';
 
-type GroupSort = 'paid-desc' | 'paid-asc' | 'name-asc' | 'name-desc';
+type GroupSort =
+  | 'paid-desc' | 'paid-asc'      // paid to me
+  | 'earned-desc'                 // company paid
+  | 'kept-desc'                   // kept by them (earned - owed)
+  | 'underpaid-desc'              // still owed (loss)
+  | 'overpaid-desc'               // overpaid (paid - owed)
+  | 'name-asc' | 'name-desc';
 
-// Sort grouped rows by amount paid (high/low) or name (A→Z / Z→A).
-function sortGroups<T extends { totalPaid: number }>(arr: T[], sort: GroupSort, nameOf: (x: T) => string): T[] {
+// Sort grouped rows by a money dimension (high→low, or low→high for paid-asc)
+// or by name (A→Z / Z→A).
+function sortGroups<T extends { totalPaid: number; totalEarned: number; totalOwed: number; totalLoss: number }>(
+  arr: T[], sort: GroupSort, nameOf: (x: T) => string
+): T[] {
   const c = [...arr];
-  switch (sort) {
-    case 'paid-asc': return c.sort((a, b) => a.totalPaid - b.totalPaid);
-    case 'name-asc': return c.sort((a, b) => nameOf(a).localeCompare(nameOf(b)));
-    case 'name-desc': return c.sort((a, b) => nameOf(b).localeCompare(nameOf(a)));
-    default: return c.sort((a, b) => b.totalPaid - a.totalPaid);
-  }
+  if (sort === 'name-asc') return c.sort((a, b) => nameOf(a).localeCompare(nameOf(b)));
+  if (sort === 'name-desc') return c.sort((a, b) => nameOf(b).localeCompare(nameOf(a)));
+  const val = (x: T): number => {
+    switch (sort) {
+      case 'earned-desc': return x.totalEarned;               // company paid
+      case 'kept-desc': return x.totalEarned - x.totalOwed;   // kept by them
+      case 'underpaid-desc': return x.totalLoss;              // still owed
+      case 'overpaid-desc': return x.totalPaid - x.totalOwed; // overpaid
+      default: return x.totalPaid;                            // paid to me
+    }
+  };
+  if (sort === 'paid-asc') return c.sort((a, b) => val(a) - val(b));
+  return c.sort((a, b) => val(b) - val(a)); // every other option is high→low
 }
 
 interface AccountSummary {
@@ -466,8 +482,12 @@ export default function ReportsPage() {
     <Select value={groupSort} onValueChange={(v) => setGroupSort(v as GroupSort)}>
       <SelectTrigger className="w-full sm:w-[190px]"><SelectValue /></SelectTrigger>
       <SelectContent>
-        <SelectItem value="paid-desc">Paid: high → low</SelectItem>
-        <SelectItem value="paid-asc">Paid: low → high</SelectItem>
+        <SelectItem value="paid-desc">Paid to me: high → low</SelectItem>
+        <SelectItem value="paid-asc">Paid to me: low → high</SelectItem>
+        <SelectItem value="earned-desc">Company paid: high → low</SelectItem>
+        <SelectItem value="kept-desc">Kept by them: high → low</SelectItem>
+        <SelectItem value="underpaid-desc">Still owed: high → low</SelectItem>
+        <SelectItem value="overpaid-desc">Overpaid: high → low</SelectItem>
         <SelectItem value="name-asc">Name: A → Z</SelectItem>
         <SelectItem value="name-desc">Name: Z → A</SelectItem>
       </SelectContent>

@@ -55,6 +55,7 @@ interface AccountGroup {
   userName: string;
   userUsername: string;
   payments: Payment[];
+  totalEarned: number;
   totalOwed: number;
   totalPaid: number;
   totalLoss: number;
@@ -70,6 +71,7 @@ interface UserGroup {
   userUsername: string;
   payments: Payment[];
   accountsCount: number;
+  totalEarned: number;
   totalOwed: number;
   totalPaid: number;
   totalLoss: number;
@@ -77,17 +79,33 @@ interface UserGroup {
   confirmedCount: number;
 }
 
-type GroupSort = 'paid-desc' | 'paid-asc' | 'name-asc' | 'name-desc';
+type GroupSort =
+  | 'paid-desc' | 'paid-asc'      // paid to me
+  | 'earned-desc'                 // company paid
+  | 'kept-desc'                   // kept by them (earned - owed)
+  | 'underpaid-desc'              // still owed (loss)
+  | 'overpaid-desc'               // overpaid (paid - owed)
+  | 'name-asc' | 'name-desc';
 
-// Sort grouped rows by amount paid (high/low) or name (A→Z / Z→A).
-function sortGroups<T extends { totalPaid: number }>(arr: T[], sort: GroupSort, nameOf: (x: T) => string): T[] {
+// Sort grouped rows by a money dimension (high→low, or low→high for paid-asc)
+// or by name (A→Z / Z→A).
+function sortGroups<T extends { totalPaid: number; totalEarned: number; totalOwed: number; totalLoss: number }>(
+  arr: T[], sort: GroupSort, nameOf: (x: T) => string
+): T[] {
   const c = [...arr];
-  switch (sort) {
-    case 'paid-asc': return c.sort((a, b) => a.totalPaid - b.totalPaid);
-    case 'name-asc': return c.sort((a, b) => nameOf(a).localeCompare(nameOf(b)));
-    case 'name-desc': return c.sort((a, b) => nameOf(b).localeCompare(nameOf(a)));
-    default: return c.sort((a, b) => b.totalPaid - a.totalPaid);
-  }
+  if (sort === 'name-asc') return c.sort((a, b) => nameOf(a).localeCompare(nameOf(b)));
+  if (sort === 'name-desc') return c.sort((a, b) => nameOf(b).localeCompare(nameOf(a)));
+  const val = (x: T): number => {
+    switch (sort) {
+      case 'earned-desc': return x.totalEarned;               // company paid
+      case 'kept-desc': return x.totalEarned - x.totalOwed;   // kept by them
+      case 'underpaid-desc': return x.totalLoss;              // still owed
+      case 'overpaid-desc': return x.totalPaid - x.totalOwed; // overpaid
+      default: return x.totalPaid;                            // paid to me
+    }
+  };
+  if (sort === 'paid-asc') return c.sort((a, b) => val(a) - val(b));
+  return c.sort((a, b) => val(b) - val(a)); // every other option is high→low
 }
 
 const statusConfig: Record<string, { label: string; color: string; icon: typeof Clock }> = {
@@ -244,6 +262,7 @@ export default function PaymentsPage() {
           userName: p.user?.telegram_first_name || 'Unknown',
           userUsername: p.user?.telegram_username || '',
           payments: [],
+          totalEarned: 0,
           totalOwed: 0,
           totalPaid: 0,
           totalLoss: 0,
@@ -256,7 +275,10 @@ export default function PaymentsPage() {
       }
       g.payments.push(p);
       g.paymentsCount++;
-      if (p.status !== 'rejected') g.totalOwed += Number(p.amount_owed) || 0;
+      if (p.status !== 'rejected') {
+        g.totalOwed += Number(p.amount_owed) || 0;
+        g.totalEarned += Number(p.platform_amount) || 0;
+      }
       if (p.status === 'confirmed') {
         g.confirmedCount++;
         g.totalPaid += Number(p.amount_paid) || 0;
@@ -284,6 +306,7 @@ export default function PaymentsPage() {
           userUsername: p.user?.telegram_username || '',
           payments: [],
           accountsCount: 0,
+          totalEarned: 0,
           totalOwed: 0,
           totalPaid: 0,
           totalLoss: 0,
@@ -296,7 +319,10 @@ export default function PaymentsPage() {
       g.payments.push(p);
       g.paymentsCount++;
       if (p.account_id) accountsSeen.get(id)!.add(p.account_id);
-      if (p.status !== 'rejected') g.totalOwed += Number(p.amount_owed) || 0;
+      if (p.status !== 'rejected') {
+        g.totalOwed += Number(p.amount_owed) || 0;
+        g.totalEarned += Number(p.platform_amount) || 0;
+      }
       if (p.status === 'confirmed') {
         g.confirmedCount++;
         g.totalPaid += Number(p.amount_paid) || 0;
@@ -311,8 +337,12 @@ export default function PaymentsPage() {
     <Select value={groupSort} onValueChange={(v) => setGroupSort(v as GroupSort)}>
       <SelectTrigger className="w-full sm:w-[190px]"><SelectValue /></SelectTrigger>
       <SelectContent>
-        <SelectItem value="paid-desc">Paid: high → low</SelectItem>
-        <SelectItem value="paid-asc">Paid: low → high</SelectItem>
+        <SelectItem value="paid-desc">Paid to me: high → low</SelectItem>
+        <SelectItem value="paid-asc">Paid to me: low → high</SelectItem>
+        <SelectItem value="earned-desc">Company paid: high → low</SelectItem>
+        <SelectItem value="kept-desc">Kept by them: high → low</SelectItem>
+        <SelectItem value="underpaid-desc">Still owed: high → low</SelectItem>
+        <SelectItem value="overpaid-desc">Overpaid: high → low</SelectItem>
         <SelectItem value="name-asc">Name: A → Z</SelectItem>
         <SelectItem value="name-desc">Name: Z → A</SelectItem>
       </SelectContent>
@@ -840,7 +870,9 @@ export default function PaymentsPage() {
                     <TableHead>Assigned to</TableHead>
                     <TableHead>Platform</TableHead>
                     <TableHead className="text-center">Payments</TableHead>
+                    <TableHead className="text-right">Earned</TableHead>
                     <TableHead className="text-right">Owed</TableHead>
+                    <TableHead className="text-right">Kept</TableHead>
                     <TableHead className="text-right">Paid</TableHead>
                     <TableHead className="text-right">Diff</TableHead>
                   </TableRow>
@@ -873,7 +905,9 @@ export default function PaymentsPage() {
                             <span className="text-muted-foreground">{g.confirmedCount}✓ {g.pendingCount}⏳ {g.rejectedCount}✗</span>
                           </div>
                         </TableCell>
+                        <TableCell className="text-right">${g.totalEarned.toFixed(2)}</TableCell>
                         <TableCell className="text-right">${g.totalOwed.toFixed(2)}</TableCell>
+                        <TableCell className="text-right text-muted-foreground">${(g.totalEarned - g.totalOwed).toFixed(2)}</TableCell>
                         <TableCell className="text-right font-medium">${g.totalPaid.toFixed(2)}</TableCell>
                         <TableCell className={`text-right font-semibold ${diff < 0 ? 'text-red-600' : diff > 0 ? 'text-blue-600' : ''}`}>
                           {diff >= 0 ? '+' : ''}${diff.toFixed(2)}
@@ -917,7 +951,9 @@ export default function PaymentsPage() {
                     <TableHead>User</TableHead>
                     <TableHead className="text-center">Accounts</TableHead>
                     <TableHead className="text-center">Payments</TableHead>
+                    <TableHead className="text-right">Earned</TableHead>
                     <TableHead className="text-right">Owed</TableHead>
+                    <TableHead className="text-right">Kept</TableHead>
                     <TableHead className="text-right">Paid</TableHead>
                     <TableHead className="text-right">Loss</TableHead>
                   </TableRow>
@@ -937,7 +973,9 @@ export default function PaymentsPage() {
                       </TableCell>
                       <TableCell className="text-center">{g.accountsCount}</TableCell>
                       <TableCell className="text-center">{g.paymentsCount}</TableCell>
+                      <TableCell className="text-right">${g.totalEarned.toFixed(2)}</TableCell>
                       <TableCell className="text-right">${g.totalOwed.toFixed(2)}</TableCell>
+                      <TableCell className="text-right text-muted-foreground">${(g.totalEarned - g.totalOwed).toFixed(2)}</TableCell>
                       <TableCell className="text-right font-medium">${g.totalPaid.toFixed(2)}</TableCell>
                       <TableCell className={`text-right font-semibold ${g.totalLoss > 0 ? 'text-red-600' : ''}`}>
                         {g.totalLoss > 0 ? `-$${g.totalLoss.toFixed(2)}` : '$0.00'}
