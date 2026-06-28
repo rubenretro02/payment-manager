@@ -41,6 +41,7 @@ import type { Payment } from '@/lib/types';
 import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { getCached, setCached, CACHE_KEYS } from '@/lib/client-cache';
 import { ImageLightbox } from '@/components/ImageLightbox';
+import { getScreenshotSrc } from '@/lib/screenshots';
 
 const statusConfig: Record<string, { label: string; color: string; icon: typeof Clock }> = {
   pending: { label: 'Pending', color: 'bg-yellow-100 text-yellow-800', icon: Clock },
@@ -192,16 +193,18 @@ export default function PaymentsPage() {
 
   // Check if payment has any screenshots
   const hasScreenshots = (payment: Payment) => {
-    return payment.company_screenshot_url || payment.payment_screenshot_url || payment.screenshot_url;
+    return payment.company_screenshot_url || payment.payment_screenshot_url || payment.screenshot_url ||
+      payment.company_screenshot_file_id || payment.payment_screenshot_file_id;
   };
 
-  // Get the appropriate screenshot URL
+  // Resolve the screenshot src — prefer the permanent file_id proxy over the
+  // legacy direct URL (which expires after hours/days), same as the other pages.
   const getCompanyScreenshot = (payment: Payment) => {
-    return payment.company_screenshot_url || payment.screenshot_url;
+    return getScreenshotSrc(payment.company_screenshot_url || payment.screenshot_url, payment.company_screenshot_file_id);
   };
 
   const getPaymentScreenshot = (payment: Payment) => {
-    return payment.payment_screenshot_url || payment.screenshot_url;
+    return getScreenshotSrc(payment.payment_screenshot_url || payment.screenshot_url, payment.payment_screenshot_file_id);
   };
 
   const handleBackfillCycleDates = async () => {

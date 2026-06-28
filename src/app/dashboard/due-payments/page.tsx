@@ -49,7 +49,7 @@ import { ScreenshotImage } from '@/components/ScreenshotImage';
 import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { getScreenshotSrc } from '@/lib/screenshots';
 import { ImageLightbox } from '@/components/ImageLightbox';
-import { format, startOfDay, startOfWeek, startOfMonth, startOfYear, endOfDay, isAfter, isBefore } from 'date-fns';
+import { format, startOfDay, startOfWeek, startOfMonth, startOfYear, endOfDay, endOfWeek, endOfMonth, endOfYear, isAfter, isBefore } from 'date-fns';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import { getCached, setCached, CACHE_KEYS } from '@/lib/client-cache';
@@ -389,14 +389,16 @@ export default function DuePaymentsPage() {
     return map[selectedTab] || [];
   };
 
-  // Date filter window (filters by next_payment_date)
+  // Date filter window (filters by next_payment_date). Because next_payment_date
+  // looks FORWARD (upcoming due dates), the upper bound must be the end of the
+  // period, not "now" — otherwise upcoming due dates get excluded.
   const dateFilter = (() => {
     const now = new Date();
     if (dateRange === 'all') return null;
     if (dateRange === 'today') return { from: startOfDay(now), to: endOfDay(now) };
-    if (dateRange === 'week') return { from: startOfWeek(now, { weekStartsOn: 1 }), to: endOfDay(now) };
-    if (dateRange === 'month') return { from: startOfMonth(now), to: endOfDay(now) };
-    if (dateRange === 'year') return { from: startOfYear(now), to: endOfDay(now) };
+    if (dateRange === 'week') return { from: startOfWeek(now, { weekStartsOn: 1 }), to: endOfWeek(now, { weekStartsOn: 1 }) };
+    if (dateRange === 'month') return { from: startOfMonth(now), to: endOfMonth(now) };
+    if (dateRange === 'year') return { from: startOfYear(now), to: endOfYear(now) };
     if (dateRange === 'custom') {
       const from = customFrom ? startOfDay(new Date(customFrom + 'T00:00:00')) : null;
       const to = customTo ? endOfDay(new Date(customTo + 'T00:00:00')) : null;
