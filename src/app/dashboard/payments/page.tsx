@@ -933,8 +933,9 @@ export default function PaymentsPage() {
                     type="button"
                     className="flex w-full items-center justify-between gap-3 p-3 text-left transition-colors hover:bg-muted/50"
                     onClick={() => {
+                      // Keep the group list open underneath so closing the
+                      // detail returns here instead of dropping back to the table.
                       setSelectedPayment(p);
-                      setDrillGroup(null);
                       setShowDetails(true);
                     }}
                   >
