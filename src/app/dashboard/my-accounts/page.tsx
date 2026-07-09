@@ -1187,7 +1187,7 @@ export default function MyAccountsPage() {
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="w-full justify-center text-muted-foreground hover:text-foreground"
+                    className="w-full justify-center text-green-600 hover:text-green-700 hover:bg-green-50 dark:text-green-400 dark:hover:text-green-300 dark:hover:bg-green-950/30"
                     onClick={() => {
                       setHistoryAccount(account);
                       setIsHistoryDialogOpen(true);
