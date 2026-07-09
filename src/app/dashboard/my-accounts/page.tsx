@@ -50,6 +50,7 @@ import {
   Plus,
   Send,
   History,
+  Search,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { enUS } from 'date-fns/locale';
@@ -134,6 +135,7 @@ export default function MyAccountsPage() {
   const [historyAccount, setHistoryAccount] = useState<Account | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
   // Which cycle a report is being filed for (yyyy-MM-dd), so the user can
   // clear a specific overdue cycle. null = let the server auto-tag the nearest.
   const [selectedCycleStr, setSelectedCycleStr] = useState<string | null>(null);
@@ -979,6 +981,25 @@ export default function MyAccountsPage() {
         </Button>
       </div>
 
+      {/* Search bar */}
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-yellow-600 dark:text-yellow-400" />
+        <Input
+          placeholder="Search by name, email, platform, project..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="pl-9 bg-yellow-50 border-yellow-300 focus-visible:ring-yellow-400 placeholder:text-yellow-700/60 dark:bg-yellow-950/30 dark:border-yellow-700 dark:placeholder:text-yellow-400/60"
+        />
+        {searchQuery && (
+          <button
+            onClick={() => setSearchQuery('')}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-yellow-700 hover:text-yellow-900 dark:text-yellow-400"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        )}
+      </div>
+
       {/* Stats - Clickable Cards */}
       <div className="grid gap-4 grid-cols-3">
         <Card
@@ -1052,9 +1073,17 @@ export default function MyAccountsPage() {
 
       {/* Accounts List */}
       {(() => {
-        const filteredAccounts = statusFilter
-          ? accounts.filter(a => a.status === statusFilter)
+        const q = searchQuery.trim().toLowerCase();
+        const searchedAccounts = q
+          ? accounts.filter(a =>
+              a.full_name?.toLowerCase().includes(q) ||
+              a.account_email?.toLowerCase().includes(q) ||
+              a.platform?.display_name?.toLowerCase().includes(q) ||
+              a.project?.display_name?.toLowerCase().includes(q))
           : accounts;
+        const filteredAccounts = statusFilter
+          ? searchedAccounts.filter(a => a.status === statusFilter)
+          : searchedAccounts;
 
         if (accounts.length === 0) {
           return (
@@ -1065,6 +1094,28 @@ export default function MyAccountsPage() {
                 <p className="text-muted-foreground">
                   You don't have any work accounts assigned yet. Contact your admin.
                 </p>
+              </CardContent>
+            </Card>
+          );
+        }
+
+        if (filteredAccounts.length === 0 && q) {
+          return (
+            <Card>
+              <CardContent className="p-8 text-center">
+                <Search className="h-12 w-12 mx-auto mb-4 text-muted-foreground/50" />
+                <h3 className="font-medium text-lg">No matches</h3>
+                <p className="text-muted-foreground">
+                  No accounts match &ldquo;{searchQuery}&rdquo;
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-4"
+                  onClick={() => setSearchQuery('')}
+                >
+                  Clear search
+                </Button>
               </CardContent>
             </Card>
           );

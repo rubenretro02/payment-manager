@@ -26,7 +26,9 @@ import {
   ExternalLink,
   AlertTriangle,
   X,
+  Search,
 } from 'lucide-react';
+import { Input } from '@/components/ui/input';
 import { format } from 'date-fns';
 import { enUS } from 'date-fns/locale';
 import { useAuth } from '@/hooks/useAuth';
@@ -49,6 +51,7 @@ export default function MyPaymentsPage() {
   const [selectedPayment, setSelectedPayment] = useState<Payment | null>(null);
   const [isDetailDialogOpen, setIsDetailDialogOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
 
   async function fetchPayments(showRefreshing = false) {
     if (showRefreshing) setRefreshing(true);
@@ -77,10 +80,18 @@ export default function MyPaymentsPage() {
     fetchPayments(true);
   };
 
-  // Filter payments by status
-  const filteredPayments = statusFilter
-    ? payments.filter(p => p.status === statusFilter)
+  // Filter payments by search, then by status
+  const q = searchQuery.trim().toLowerCase();
+  const searchedPayments = q
+    ? payments.filter(p =>
+        p.account?.full_name?.toLowerCase().includes(q) ||
+        p.account?.account_email?.toLowerCase().includes(q) ||
+        p.account?.platform?.display_name?.toLowerCase().includes(q) ||
+        p.payment_reference?.toLowerCase().includes(q))
     : payments;
+  const filteredPayments = statusFilter
+    ? searchedPayments.filter(p => p.status === statusFilter)
+    : searchedPayments;
 
   // Stats
   const stats = {
@@ -127,6 +138,25 @@ export default function MyPaymentsPage() {
         >
           <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
         </Button>
+      </div>
+
+      {/* Search bar */}
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-yellow-600 dark:text-yellow-400" />
+        <Input
+          placeholder="Search by account, email, platform, reference..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="pl-9 bg-yellow-50 border-yellow-300 focus-visible:ring-yellow-400 placeholder:text-yellow-700/60 dark:bg-yellow-950/30 dark:border-yellow-700 dark:placeholder:text-yellow-400/60"
+        />
+        {searchQuery && (
+          <button
+            onClick={() => setSearchQuery('')}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-yellow-700 hover:text-yellow-900 dark:text-yellow-400"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        )}
       </div>
 
       {/* Stats */}
@@ -198,11 +228,16 @@ export default function MyPaymentsPage() {
           <CardContent className="p-8 text-center">
             <DollarSign className="h-12 w-12 mx-auto mb-4 text-muted-foreground/50" />
             <h3 className="font-medium text-lg">
-              {statusFilter ? `No ${statusFilter} payments` : 'No payments yet'}
+              {q ? 'No matches' : statusFilter ? `No ${statusFilter} payments` : 'No payments yet'}
             </h3>
             <p className="text-muted-foreground text-sm">
-              {statusFilter ? 'Try a different filter' : 'Your payment history will appear here'}
+              {q ? `No payments match "${searchQuery}"` : statusFilter ? 'Try a different filter' : 'Your payment history will appear here'}
             </p>
+            {q && (
+              <Button variant="outline" size="sm" className="mt-4" onClick={() => setSearchQuery('')}>
+                Clear search
+              </Button>
+            )}
             {statusFilter && (
               <Button variant="outline" size="sm" className="mt-4" onClick={() => setStatusFilter(null)}>
                 Clear filter
