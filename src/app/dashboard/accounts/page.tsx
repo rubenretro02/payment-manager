@@ -530,13 +530,9 @@ export default function AccountsPage() {
     }
   };
 
-  // Commission accounts have no platform_amount/percentage concept, so the
-  // form takes amount_paid as both the owed AND paid amount.
-  const isReportTargetCommission = (() => {
-    const project = selectedAccount?.project;
-    const name = project?.display_name || project?.name || '';
-    return name.trim().toLowerCase() === 'commission';
-  })();
+  // Commission accounts use the same form as regular ones. They only differ
+  // on Reports, where they're totaled separately by project detection.
+  const isReportTargetCommission = selectedAccount ? isCommissionAccount(selectedAccount) : false;
 
   const handleSubmitAdminReport = async () => {
     if (!selectedAccount) return;
@@ -545,12 +541,8 @@ export default function AccountsPage() {
       alert('Amount paid must be greater than 0');
       return;
     }
-    const platformAmount = isReportTargetCommission
-      ? amountPaid
-      : parseFloat(reportForm.platform_amount) || 0;
-    const amountOwed = isReportTargetCommission
-      ? amountPaid
-      : (platformAmount * (selectedAccount.percentage || 0)) / 100;
+    const platformAmount = parseFloat(reportForm.platform_amount) || 0;
+    const amountOwed = (platformAmount * (selectedAccount.percentage || 0)) / 100;
 
     setReportSubmitting(true);
     try {
@@ -2175,41 +2167,35 @@ export default function AccountsPage() {
               <div className="grid grid-cols-2 gap-2">
                 <span className="text-muted-foreground">Platform:</span>
                 <span>{selectedAccount?.platform?.display_name}</span>
-                {!isReportTargetCommission && (
-                  <>
-                    <span className="text-muted-foreground">Percentage:</span>
-                    <span className="font-semibold text-primary">{selectedAccount?.percentage}%</span>
-                  </>
-                )}
+                <span className="text-muted-foreground">Percentage:</span>
+                <span className="font-semibold text-primary">{selectedAccount?.percentage}%</span>
               </div>
             </div>
 
-            {/* Platform amount (hidden for commission — single amount only) */}
-            {!isReportTargetCommission && (
-              <div className="grid gap-2">
-                <Label>Company Paid ($) *</Label>
-                <Input
-                  type="number"
-                  step="0.01"
-                  placeholder="Amount the company paid"
-                  value={reportForm.platform_amount}
-                  onChange={(e) => {
-                    const value = e.target.value;
-                    const platformAmt = parseFloat(value);
-                    setReportForm({
-                      ...reportForm,
-                      platform_amount: value,
-                      amount_paid: !isNaN(platformAmt) && selectedAccount
-                        ? ((platformAmt * (selectedAccount.percentage || 0)) / 100).toFixed(2)
-                        : '',
-                    });
-                  }}
-                />
-              </div>
-            )}
+            {/* Platform amount */}
+            <div className="grid gap-2">
+              <Label>Company Paid ($) *</Label>
+              <Input
+                type="number"
+                step="0.01"
+                placeholder="Amount the company paid"
+                value={reportForm.platform_amount}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  const platformAmt = parseFloat(value);
+                  setReportForm({
+                    ...reportForm,
+                    platform_amount: value,
+                    amount_paid: !isNaN(platformAmt) && selectedAccount
+                      ? ((platformAmt * (selectedAccount.percentage || 0)) / 100).toFixed(2)
+                      : '',
+                  });
+                }}
+              />
+            </div>
 
             {/* Calculated owed */}
-            {!isReportTargetCommission && reportForm.platform_amount && selectedAccount && (
+            {reportForm.platform_amount && selectedAccount && (
               <div className="rounded-lg bg-primary/10 p-3 border border-primary/20 text-sm">
                 <div className="flex justify-between">
                   <span>Should pay:</span>
@@ -2222,11 +2208,11 @@ export default function AccountsPage() {
 
             {/* Amount paid */}
             <div className="grid gap-2">
-              <Label>{isReportTargetCommission ? 'Commission amount received ($) *' : 'Amount Sent ($) *'}</Label>
+              <Label>Amount Sent ($) *</Label>
               <Input
                 type="number"
                 step="0.01"
-                placeholder={isReportTargetCommission ? '0.00' : 'What the user actually sent'}
+                placeholder="What the user actually sent"
                 value={reportForm.amount_paid}
                 onChange={(e) => setReportForm({ ...reportForm, amount_paid: e.target.value })}
               />
@@ -2298,7 +2284,7 @@ export default function AccountsPage() {
             </Button>
             <Button
               onClick={handleSubmitAdminReport}
-              disabled={reportSubmitting || !reportForm.amount_paid || (!isReportTargetCommission && !reportForm.platform_amount)}
+              disabled={reportSubmitting || !reportForm.amount_paid || !reportForm.platform_amount}
             >
               {reportSubmitting ? (
                 <>
