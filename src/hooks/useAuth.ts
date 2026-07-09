@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useTelegram } from '@/components/providers/TelegramProvider';
 import { getSupabaseClient } from '@/lib/supabase/client';
+import { clearCache } from '@/lib/client-cache';
 import type { User } from '@/lib/types';
 
 interface AuthState {
@@ -110,6 +111,7 @@ export function useAuth() {
     const supabase = getSupabaseClient();
     await supabase.auth.signOut();
     localStorage.removeItem('auth_user');
+    clearCache();
     setAuthState({
       user: null,
       isLoading: false,

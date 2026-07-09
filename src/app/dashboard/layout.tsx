@@ -34,6 +34,10 @@ export default function DashboardLayout({
       if (user.role === 'user' && pathname === '/dashboard') {
         router.push('/dashboard/my-accounts');
       }
+      // Partners don't get the global dashboard either
+      if (user.role === 'partner' && pathname === '/dashboard') {
+        router.push('/dashboard/my-accounts');
+      }
     }
   }, [isLoading, isAuthenticated, user, pathname, router]);
 

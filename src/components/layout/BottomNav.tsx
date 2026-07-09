@@ -37,6 +37,24 @@ const userNavItems = [
   { href: '/dashboard/profile', label: 'Profile', icon: User },
 ];
 
+// Partner = regular user flow (my-accounts/my-payments) + semi-admin views
+// scoped to the accounts they own (owner_id).
+const partnerBottomItems = [
+  { href: '/dashboard/my-accounts', label: 'My Accts', icon: Building2 },
+  { href: '/dashboard/payments', label: 'Payments', icon: CreditCard },
+  { href: '/dashboard/reports', label: 'Reports', icon: BarChart3 },
+];
+
+const partnerMoreItems = [
+  { href: '/dashboard/my-accounts', label: 'My Accounts', icon: Building2 },
+  { href: '/dashboard/my-payments', label: 'My Payments', icon: History },
+  { href: '/dashboard/accounts', label: 'Accounts', icon: Building2 },
+  { href: '/dashboard/payments', label: 'Payments', icon: CreditCard },
+  { href: '/dashboard/reports', label: 'Reports', icon: BarChart3 },
+  { href: '/dashboard/payment-info', label: 'Pay Methods', icon: CreditCard },
+  { href: '/dashboard/profile', label: 'Profile', icon: User },
+];
+
 // Bottom bar — 3 most-used + More opener
 const adminBottomItems = [
   { href: '/dashboard', label: 'Home', icon: LayoutDashboard },
@@ -66,13 +84,16 @@ export function BottomNav() {
   const [moreOpen, setMoreOpen] = useState(false);
 
   const isAdmin = user?.role === 'admin' || user?.role === 'ibo';
+  const isPartner = user?.role === 'partner';
+  const bottomItems = isPartner ? partnerBottomItems : adminBottomItems;
+  const moreItems = isPartner ? partnerMoreItems : adminMoreItems;
 
   const isActive = (href: string) =>
     href === '/dashboard'
       ? pathname === '/dashboard'
       : pathname === href || pathname.startsWith(href + '/');
 
-  if (!isAdmin) {
+  if (!isAdmin && !isPartner) {
     // Regular users keep their original bottom nav
     return (
       <nav className="fixed bottom-0 left-0 right-0 z-50 border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 safe-area-bottom">
@@ -95,11 +116,11 @@ export function BottomNav() {
     );
   }
 
-  // Admin / IBO: 3 quick links + More menu
+  // Admin / IBO / Partner: 3 quick links + More menu
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-50 border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 safe-area-bottom">
       <div className="flex items-center justify-around h-16">
-        {adminBottomItems.map((item) => (
+        {bottomItems.map((item) => (
           <Link
             key={item.href}
             href={item.href}
@@ -130,7 +151,7 @@ export function BottomNav() {
               <SheetTitle>All Pages</SheetTitle>
             </SheetHeader>
             <div className="grid grid-cols-3 gap-3 mt-6 pb-6 overflow-y-auto max-h-[calc(85vh-8rem)]">
-              {adminMoreItems.map((item) => (
+              {moreItems.map((item) => (
                 <button
                   key={item.href}
                   onClick={() => {

@@ -6,7 +6,7 @@
 // MAIN TYPES
 // =============================================
 
-export type UserRole = 'admin' | 'ibo' | 'user';
+export type UserRole = 'admin' | 'ibo' | 'user' | 'partner';
 export type UserStatus = 'active' | 'inactive' | 'suspended';
 export type AccountStatus = 'production' | 'nesting' | 'active' | 'drop' | 'not_in_project';
 export type PaymentFrequency = 'weekly' | 'biweekly' | 'monthly';
@@ -95,6 +95,11 @@ export interface Account {
   // Optional — absent on rows that predate the column.
   force_payment_request?: boolean;
 
+  // Partner that owns this account (sees/manages it in the partner views).
+  // NULL = admin-owned. Separate from user_id (the assigned worker).
+  // Optional — absent on rows that predate the column.
+  owner_id?: string | null;
+
   created_at: string;
   updated_at: string;
 
@@ -117,7 +122,8 @@ export interface PaymentPeriod {
 
 export interface Payment {
   id: string;
-  user_id: string;
+  // NULL on manual reports for accounts with no assigned user (e.g. commission)
+  user_id: string | null;
   account_id: string | null;
   period_id: string | null;
   platform_amount: number | null;

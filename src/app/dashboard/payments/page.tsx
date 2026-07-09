@@ -164,6 +164,9 @@ export default function PaymentsPage() {
   const [deleteSubmitting, setDeleteSubmitting] = useState(false);
 
   const isAdmin = user?.role === 'admin';
+  const isPartner = user?.role === 'partner';
+  // Partners can confirm/reject payments on their own accounts.
+  const canModerate = isAdmin || isPartner;
 
   // Update tab when URL changes
   useEffect(() => {
@@ -173,8 +176,10 @@ export default function PaymentsPage() {
   }, [statusFromUrl]);
 
   useEffect(() => {
-    fetchPayments();
-  }, []);
+    // Wait for auth so partner scoping is known before the first fetch.
+    if (user) fetchPayments();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
 
   // Open payment from URL parameter (deep link from notifications)
   useEffect(() => {
@@ -192,7 +197,7 @@ export default function PaymentsPage() {
   async function fetchPayments(showRefreshing = false) {
     if (showRefreshing) setRefreshing(true);
     try {
-      const response = await fetch('/api/payments');
+      const response = await fetch(isPartner ? `/api/payments?owner_id=${user!.id}` : '/api/payments');
       const data = await response.json();
       if (data.success) {
         setCached(CACHE_KEYS.payments, data.data || []);
@@ -480,7 +485,7 @@ export default function PaymentsPage() {
       const response = await fetch(`/api/payments/${selectedPayment.id}/confirm`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ admin_notes: adminNotes }),
+        body: JSON.stringify({ admin_notes: adminNotes, confirmed_by: user?.id }),
       });
       const data = await response.json();
       if (data.success) {
@@ -801,7 +806,7 @@ export default function PaymentsPage() {
                         </Badge>
                       </div>
 
-                      {isAdmin && (payment.status === 'submitted' || payment.status === 'pending') && (
+                      {canModerate && (payment.status === 'submitted' || payment.status === 'pending') && (
                         <div className="flex gap-1">
                           <Button
                             size="icon"
@@ -1154,7 +1159,7 @@ export default function PaymentsPage() {
             </div>
           </div>
 
-          {isAdmin && (selectedPayment?.status === 'submitted' || selectedPayment?.status === 'pending') && (
+          {canModerate && (selectedPayment?.status === 'submitted' || selectedPayment?.status === 'pending') && (
             <DialogFooter>
               <Button
                 variant="outline"
@@ -1427,7 +1432,7 @@ export default function PaymentsPage() {
                 </Button>
               </>
             )}
-            {isAdmin && (selectedPayment?.status === 'submitted' || selectedPayment?.status === 'pending') && (
+            {canModerate && (selectedPayment?.status === 'submitted' || selectedPayment?.status === 'pending') && (
               <>
                 <Button
                   variant="outline"
@@ -1452,7 +1457,7 @@ export default function PaymentsPage() {
                 </Button>
               </>
             )}
-            {(!isAdmin || selectedPayment?.status !== 'submitted') && (
+            {(!canModerate || selectedPayment?.status !== 'submitted') && (
               <Button onClick={() => setShowDetails(false)}>
                 Close
               </Button>

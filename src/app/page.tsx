@@ -17,7 +17,7 @@ export default function HomePage() {
 
     if (isAuthenticated && user) {
       // Redirect based on user role
-      if (user.role === 'user') {
+      if (user.role === 'user' || user.role === 'partner') {
         router.push('/dashboard/my-accounts');
       } else {
         router.push('/dashboard');

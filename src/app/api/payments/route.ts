@@ -11,7 +11,8 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const status = searchParams.get('status') || undefined;
     const accountId = searchParams.get('account_id') || undefined;
-    const payments = await getAllPayments(status, accountId);
+    const ownerId = searchParams.get('owner_id') || undefined;
+    const payments = await getAllPayments(status, accountId, ownerId);
     return NextResponse.json({ success: true, data: payments });
   } catch (error) {
     console.error('Error fetching payments:', error);

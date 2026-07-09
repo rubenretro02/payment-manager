@@ -29,7 +29,8 @@ export async function POST(request: NextRequest) {
       payment_screenshot_url,
     } = body;
 
-    if (!account_id || !user_id || amount_owed === undefined) {
+    // user_id is optional: commission accounts may have no assigned user.
+    if (!account_id || amount_owed === undefined) {
       return NextResponse.json(
         { success: false, error: 'Missing required fields' },
         { status: 400 }
@@ -60,7 +61,7 @@ export async function POST(request: NextRequest) {
     }
 
     const insertData: Record<string, unknown> = {
-      user_id,
+      user_id: user_id || null,
       account_id,
       platform_amount: platform_amount ?? 0,
       percentage_applied: percentage_applied ?? 0,
@@ -92,35 +93,37 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: error.message }, { status: 500 });
     }
 
-    // Notify the user about what happened
-    try {
-      const { data: user } = await supabase
-        .from('users')
-        .select('telegram_id')
-        .eq('id', user_id)
-        .single();
+    // Notify the user about what happened (skip if no assigned user)
+    if (user_id) {
+      try {
+        const { data: user } = await supabase
+          .from('users')
+          .select('telegram_id')
+          .eq('id', user_id)
+          .single();
 
-      const { data: account } = await supabase
-        .from('accounts')
-        .select('full_name, platform:platforms(display_name)')
-        .eq('id', account_id)
-        .single();
+        const { data: account } = await supabase
+          .from('accounts')
+          .select('full_name, platform:platforms(display_name)')
+          .eq('id', account_id)
+          .single();
 
-      const accountInfo = account as { full_name: string; platform: { display_name: string } | null } | null;
+        const accountInfo = account as { full_name: string; platform: { display_name: string } | null } | null;
 
-      if (user?.telegram_id) {
-        await sendUserNotification(
-          user.telegram_id,
-          auto_confirm ? 'payment_confirmed' : 'payment_submitted',
-          {
-            amount: amount_paid ?? amount_owed,
-            accountName: accountInfo?.full_name || 'Account',
-            platformName: accountInfo?.platform?.display_name || 'Platform',
-          }
-        );
+        if (user?.telegram_id) {
+          await sendUserNotification(
+            user.telegram_id,
+            auto_confirm ? 'payment_confirmed' : 'payment_submitted',
+            {
+              amount: amount_paid ?? amount_owed,
+              accountName: accountInfo?.full_name || 'Account',
+              platformName: accountInfo?.platform?.display_name || 'Platform',
+            }
+          );
+        }
+      } catch (notifError) {
+        console.error('Notification error (non-critical):', notifError);
       }
-    } catch (notifError) {
-      console.error('Notification error (non-critical):', notifError);
     }
 
     return NextResponse.json({ success: true, data });

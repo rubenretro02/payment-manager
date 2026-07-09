@@ -19,6 +19,12 @@ export function setCached<T>(key: string, value: T): void {
   store.set(key, value);
 }
 
+// Called on logout so a different user logging in on the same tab can't seed
+// pages from the previous user's (possibly wider-scoped) data.
+export function clearCache(): void {
+  store.clear();
+}
+
 // Stable cache keys used across pages.
 export const CACHE_KEYS = {
   payments: 'payments:all',

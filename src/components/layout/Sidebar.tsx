@@ -17,6 +17,7 @@ import {
   Layers,
   BarChart3,
   CalendarClock,
+  History,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useState } from 'react';
@@ -43,6 +44,16 @@ const iboLinks = [
   { href: '/dashboard/accounts', label: 'My Accounts', icon: Building2 },
 ];
 
+// Partner = regular user flow (my-accounts/my-payments) + semi-admin views
+// scoped to the accounts they own (owner_id).
+const partnerLinks = [
+  { href: '/dashboard/my-accounts', label: 'My Accounts', icon: Building2 },
+  { href: '/dashboard/my-payments', label: 'My Payments', icon: History },
+  { href: '/dashboard/accounts', label: 'Accounts', icon: Building2 },
+  { href: '/dashboard/payments', label: 'Payments', icon: CreditCard },
+  { href: '/dashboard/reports', label: 'Reports', icon: BarChart3 },
+];
+
 const userLinks = [
   { href: '/dashboard', label: 'Home', icon: LayoutDashboard },
   { href: '/dashboard/my-accounts', label: 'My Accounts', icon: Building2 },
@@ -58,7 +69,9 @@ export function Sidebar() {
     ? adminLinks
     : user?.role === 'ibo'
       ? iboLinks
-      : userLinks;
+      : user?.role === 'partner'
+        ? partnerLinks
+        : userLinks;
 
   return (
     <aside

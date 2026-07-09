@@ -37,8 +37,22 @@ export async function getAccountsByUser(userId: string): Promise<Account[]> {
   return (data || []) as Account[];
 }
 
-export async function getAllPayments(status?: string, accountId?: string): Promise<Payment[]> {
+export async function getAllPayments(status?: string, accountId?: string, ownerId?: string): Promise<Payment[]> {
   const supabase = createAdminClient();
+
+  // Partner scoping: a payment belongs to a partner iff its account is
+  // owned by them (accounts.owner_id) — payments.user_id is irrelevant here.
+  let ownedAccountIds: string[] | null = null;
+  if (ownerId) {
+    const { data: ownedAccounts } = await supabase
+      .from('accounts')
+      .select('id')
+      .eq('owner_id', ownerId);
+    ownedAccountIds = (ownedAccounts || []).map(a => a.id);
+    if (ownedAccountIds.length === 0) {
+      return [];
+    }
+  }
 
   // First get all payments without joins. Explicit columns (never select('*'))
   // so a heavy column can't silently bloat this list query: company/payment
@@ -55,6 +69,9 @@ export async function getAllPayments(status?: string, accountId?: string): Promi
   }
   if (accountId) {
     query = query.eq('account_id', accountId);
+  }
+  if (ownedAccountIds) {
+    query = query.in('account_id', ownedAccountIds);
   }
 
   const { data: payments, error } = await query;

@@ -70,6 +70,8 @@ import {
   calculateNextPaymentDate,
   getUpcomingPaymentDates
 } from '@/lib/payment-dates';
+import { isCommissionAccount } from '@/lib/account-utils';
+import { useAuth } from '@/hooks/useAuth';
 
 const statusColors: Record<string, string> = {
   production: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400',
@@ -105,6 +107,8 @@ const frequencyColors: Record<string, string> = {
 };
 
 export default function AccountsPage() {
+  const { user } = useAuth();
+  const isPartner = user?.role === 'partner';
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [platforms, setPlatforms] = useState<Platform[]>([]);
@@ -152,6 +156,10 @@ export default function AccountsPage() {
 
   const [assignUserId, setAssignUserId] = useState('');
 
+  // Set owner dialog (admin shares an account with a partner)
+  const [isOwnerDialogOpen, setIsOwnerDialogOpen] = useState(false);
+  const [ownerUserId, setOwnerUserId] = useState('admin');
+
   // Bulk selection + bulk-action dialog state. Selecting a row only marks
   // its id here; the actual mutation goes through /api/accounts/bulk when
   // the admin picks an action.
@@ -171,13 +179,15 @@ export default function AccountsPage() {
   })();
 
   useEffect(() => {
-    fetchData();
-  }, []);
+    // Wait for auth so partner scoping is known before the first fetch.
+    if (user) fetchData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
 
   async function fetchData() {
     try {
       const [accountsRes, usersRes, platformsRes, projectsRes] = await Promise.all([
-        fetch('/api/accounts'),
+        fetch(isPartner ? `/api/accounts?owner_id=${user!.id}` : '/api/accounts'),
         fetch('/api/users'),
         fetch('/api/platforms'),
         fetch('/api/projects'),
@@ -250,6 +260,9 @@ export default function AccountsPage() {
   // Filter users who can be assigned (IBOs and users)
   const assignableUsers = users.filter(u => u.role === 'ibo' || u.role === 'user');
 
+  // Partners an account can be shared with (owner)
+  const partnerUsers = users.filter(u => u.role === 'partner');
+
   const getInitials = (name: string | null | undefined) => {
     if (!name) return '?';
     return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
@@ -261,6 +274,8 @@ export default function AccountsPage() {
       const accountData = {
         ...newAccount,
         project_id: newAccount.project_id && newAccount.project_id !== "none" ? newAccount.project_id : null,
+        // Accounts a partner creates belong to them automatically.
+        ...(isPartner ? { owner_id: user!.id } : {}),
       };
 
       const response = await fetch('/api/accounts', {
@@ -322,6 +337,29 @@ export default function AccountsPage() {
     } catch (error) {
       console.error('Error assigning user:', error);
       alert('Error assigning user. Check console for details.');
+    }
+  };
+
+  const handleSetOwner = async () => {
+    if (!selectedAccount) return;
+    try {
+      const response = await fetch(`/api/accounts/${selectedAccount.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ owner_id: ownerUserId === 'admin' ? null : ownerUserId }),
+      });
+      const data = await response.json();
+      if (data.success) {
+        await fetchData();
+        setIsOwnerDialogOpen(false);
+        setSelectedAccount(null);
+        setOwnerUserId('admin');
+      } else {
+        alert('Error: ' + (data.error || 'Failed to set owner'));
+      }
+    } catch (error) {
+      console.error('Error setting owner:', error);
+      alert('Error setting owner. Check console for details.');
     }
   };
 
@@ -485,7 +523,7 @@ export default function AccountsPage() {
   })();
 
   const handleSubmitAdminReport = async () => {
-    if (!selectedAccount || !selectedAccount.user_id) return;
+    if (!selectedAccount) return;
     const amountPaid = parseFloat(reportForm.amount_paid);
     if (isNaN(amountPaid) || amountPaid <= 0) {
       alert('Amount paid must be greater than 0');
@@ -505,7 +543,8 @@ export default function AccountsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           account_id: selectedAccount.id,
-          user_id: selectedAccount.user_id,
+          // Commission accounts may have no assigned user.
+          user_id: selectedAccount.user_id || null,
           platform_amount: platformAmount,
           percentage_applied: selectedAccount.percentage || 0,
           amount_owed: amountOwed,
@@ -514,6 +553,7 @@ export default function AccountsPage() {
           payment_reference: reportForm.payment_reference || null,
           notes: reportForm.notes || null,
           auto_confirm: reportForm.auto_confirm,
+          admin_id: user?.id,
         }),
       });
       const data = await res.json();
@@ -1319,6 +1359,11 @@ export default function AccountsPage() {
                         ) : (
                           <span className="text-muted-foreground text-sm">Unassigned</span>
                         )}
+                        {account.owner_id && (
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Owner: {users.find(u => u.id === account.owner_id)?.telegram_first_name || '—'}
+                          </p>
+                        )}
                       </TableCell>
                       <TableCell>
                         <div className="text-sm">
@@ -1380,7 +1425,7 @@ export default function AccountsPage() {
                               <Edit className="mr-2 h-4 w-4" />
                               Edit
                             </DropdownMenuItem>
-                            {account.user_id && account.status !== 'drop' && (
+                            {account.status !== 'drop' && (account.user_id || isCommissionAccount(account)) && (
                               <DropdownMenuItem
                                 onClick={() => {
                                   setSelectedAccount(account);
@@ -1427,6 +1472,18 @@ export default function AccountsPage() {
                                 </>
                               )}
                             </DropdownMenuItem>
+                            {user?.role === 'admin' && (
+                              <DropdownMenuItem
+                                onClick={() => {
+                                  setSelectedAccount(account);
+                                  setOwnerUserId(account.owner_id || 'admin');
+                                  setIsOwnerDialogOpen(true);
+                                }}
+                              >
+                                <Briefcase className="mr-2 h-4 w-4" />
+                                Set owner
+                              </DropdownMenuItem>
+                            )}
                             <DropdownMenuSeparator />
                             <DropdownMenuItem
                               className="text-destructive"
@@ -1623,6 +1680,57 @@ export default function AccountsPage() {
             <Button onClick={handleAssignUser}>
               {assignUserId ? 'Assign' : 'Unassign'}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Set Owner Dialog — admin shares an account with a partner. The
+          partner sees/manages it in their scoped views; user_id (assigned
+          worker) stays independent. */}
+      <Dialog open={isOwnerDialogOpen} onOpenChange={setIsOwnerDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Set Account Owner</DialogTitle>
+            <DialogDescription>
+              Select the partner this account belongs to. The partner can
+              report and confirm payments for it and see it in their reports.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <div className="rounded-lg bg-muted p-4 mb-4">
+              <div className="grid grid-cols-2 gap-2 text-sm">
+                <span className="text-muted-foreground">Account:</span>
+                <span className="font-medium">{selectedAccount?.full_name}</span>
+                <span className="text-muted-foreground">Email:</span>
+                <span>{selectedAccount?.account_email}</span>
+                <span className="text-muted-foreground">Platform:</span>
+                <span>{selectedAccount?.platform?.display_name}</span>
+              </div>
+            </div>
+            <div className="grid gap-2">
+              <Label>Owner</Label>
+              <Select value={ownerUserId} onValueChange={setOwnerUserId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select owner" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="admin">Admin (no partner)</SelectItem>
+                  {partnerUsers.map((partner) => (
+                    <SelectItem key={partner.id} value={partner.id}>
+                      {partner.telegram_first_name}
+                      {partner.telegram_username && ` (@${partner.telegram_username})`}
+                      {' - Partner'}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsOwnerDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleSetOwner}>Save</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

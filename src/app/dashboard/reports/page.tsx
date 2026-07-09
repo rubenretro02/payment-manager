@@ -52,6 +52,7 @@ import { isCommissionAccount } from '@/lib/account-utils';
 import { ScreenshotImage } from '@/components/ScreenshotImage';
 import { getScreenshotSrc } from '@/lib/screenshots';
 import { getCached, setCached, CACHE_KEYS } from '@/lib/client-cache';
+import { useAuth } from '@/hooks/useAuth';
 import { ImageLightbox } from '@/components/ImageLightbox';
 
 type DateRange = 'today' | 'week' | 'month' | 'year' | 'custom';
@@ -119,6 +120,8 @@ interface UserSummary {
 
 export default function ReportsPage() {
   const router = useRouter();
+  const { user } = useAuth();
+  const isPartner = user?.role === 'partner';
   // Seed from the shared cache so switching back to Reports renders instantly.
   const [payments, setPayments] = useState<Payment[]>(() => getCached<Payment[]>(CACHE_KEYS.payments) || []);
   const [loading, setLoading] = useState(() => getCached<Payment[]>(CACHE_KEYS.payments) === undefined);
@@ -151,13 +154,15 @@ export default function ReportsPage() {
   };
 
   useEffect(() => {
-    fetchPayments();
-  }, []);
+    // Wait for auth so partner scoping is known before the first fetch.
+    if (user) fetchPayments();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
 
   async function fetchPayments(showRefreshing = false) {
     if (showRefreshing) setRefreshing(true);
     try {
-      const response = await fetch('/api/payments');
+      const response = await fetch(isPartner ? `/api/payments?owner_id=${user!.id}` : '/api/payments');
       const data = await response.json();
       if (data.success) {
         setCached(CACHE_KEYS.payments, data.data || []);

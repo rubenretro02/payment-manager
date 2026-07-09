@@ -90,7 +90,7 @@ export async function PUT(
 
 /**
  * PATCH /api/accounts/[id]
- * Partial update for single-field toggles (currently force_payment_request)
+ * Partial update for single-field toggles (force_payment_request, owner_id)
  * without going through the full edit form. Only whitelisted fields are
  * applied, so a stray body can't overwrite arbitrary columns.
  */
@@ -105,6 +105,9 @@ export async function PATCH(
     const updateData: Record<string, unknown> = {};
     if (typeof body.force_payment_request === 'boolean') {
       updateData.force_payment_request = body.force_payment_request;
+    }
+    if ('owner_id' in body) {
+      updateData.owner_id = body.owner_id || null; // null = admin-owned (unshare)
     }
 
     if (Object.keys(updateData).length === 0) {

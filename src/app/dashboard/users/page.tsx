@@ -88,6 +88,7 @@ const roleLabels: Record<string, string> = {
   admin: 'Admin',
   ibo: 'IBO',
   user: 'User',
+  partner: 'Partner',
 };
 
 export default function UsersPage() {
@@ -473,6 +474,7 @@ export default function UsersPage() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="user">User</SelectItem>
+                    <SelectItem value="partner">Partner</SelectItem>
                     <SelectItem value="ibo">IBO</SelectItem>
                     <SelectItem value="admin">Admin</SelectItem>
                   </SelectContent>
@@ -621,6 +623,7 @@ export default function UsersPage() {
                 <SelectContent>
                   <SelectItem value="all">All roles</SelectItem>
                   <SelectItem value="user">Users</SelectItem>
+                  <SelectItem value="partner">Partners</SelectItem>
                   <SelectItem value="ibo">IBOs</SelectItem>
                   <SelectItem value="admin">Admins</SelectItem>
                 </SelectContent>
@@ -970,6 +973,7 @@ export default function UsersPage() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="user">User</SelectItem>
+                    <SelectItem value="partner">Partner</SelectItem>
                     <SelectItem value="ibo">IBO</SelectItem>
                     <SelectItem value="admin">Admin</SelectItem>
                   </SelectContent>

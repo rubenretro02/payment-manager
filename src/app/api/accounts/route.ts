@@ -2,15 +2,21 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/server';
 import { calculateNextPaymentDate } from '@/lib/payment-dates';
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     const supabase = createAdminClient();
+    // Partner scoping: only accounts owned by this user
+    const ownerId = request.nextUrl.searchParams.get('owner_id');
 
     // Get accounts
-    const { data: accounts, error: accountsError } = await supabase
+    let accountsQuery = supabase
       .from('accounts')
       .select('*')
       .order('created_at', { ascending: false });
+    if (ownerId) {
+      accountsQuery = accountsQuery.eq('owner_id', ownerId);
+    }
+    const { data: accounts, error: accountsError } = await accountsQuery;
 
     if (accountsError) {
       throw accountsError;
@@ -62,6 +68,7 @@ export async function POST(request: NextRequest) {
       biweekly_second_day,
       wallet_address,
       wallet_network,
+      owner_id,
     } = body;
 
     if (!full_name || !account_email || !platform_id) {
@@ -96,6 +103,7 @@ export async function POST(request: NextRequest) {
     };
     if (wallet_address) insertData.wallet_address = wallet_address;
     if (wallet_network) insertData.wallet_network = wallet_network;
+    if (owner_id) insertData.owner_id = owner_id;
     // Floor for overdue. Only set if creating in a payment-active status.
     if (initialStatus === 'production' || initialStatus === 'nesting') {
       insertData.payment_active_since = new Date().toISOString();

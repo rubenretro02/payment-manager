@@ -17,7 +17,7 @@ export async function POST(
     }
 
     const body = await request.json();
-    const { admin_notes } = body;
+    const { admin_notes, confirmed_by } = body;
 
     const supabase = createAdminClient();
 
@@ -50,6 +50,7 @@ export async function POST(
         status: 'confirmed',
         confirmed_at: new Date().toISOString(),
         admin_notes: admin_notes || null,
+        ...(confirmed_by ? { confirmed_by } : {}),
       })
       .eq('id', id);
 

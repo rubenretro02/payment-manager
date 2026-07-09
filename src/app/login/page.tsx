@@ -72,8 +72,8 @@ export default function LoginPage() {
         // Store user in localStorage for our auth hook
         localStorage.setItem('auth_user', JSON.stringify(userData));
 
-        // Route based on role: regular users go to my-accounts, admins/IBOs to dashboard
-        if (userData.role === 'user') {
+        // Route based on role: regular users/partners go to my-accounts, admins/IBOs to dashboard
+        if (userData.role === 'user' || userData.role === 'partner') {
           router.push('/dashboard/my-accounts');
         } else {
           router.push('/dashboard');
