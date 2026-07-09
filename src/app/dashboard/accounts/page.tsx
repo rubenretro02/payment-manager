@@ -60,7 +60,10 @@ import {
   FolderOpen,
   DollarSign,
   CheckSquare,
+  CheckCircle2,
+  Send,
 } from 'lucide-react';
+import { Textarea } from '@/components/ui/textarea';
 import { format } from 'date-fns';
 import { enUS } from 'date-fns/locale';
 import type { Account, Platform, User, PaymentFrequency, Project } from '@/lib/types';
@@ -100,6 +103,13 @@ const statusIcons: Record<string, typeof Briefcase> = {
 // Statuses that require payment
 const PAYMENT_REQUIRED_STATUSES = ['production', 'nesting'];
 
+interface PaymentMethodOption {
+  id: string;
+  type: string;
+  display_name: string;
+  is_active: boolean;
+}
+
 const frequencyColors: Record<string, string> = {
   weekly: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400',
   biweekly: 'bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400',
@@ -128,6 +138,7 @@ export default function AccountsPage() {
   // Admin report dialog — primarily for commission accounts which don't
   // appear on Due Payments, but works for any account.
   const [isReportDialogOpen, setIsReportDialogOpen] = useState(false);
+  const [paymentMethods, setPaymentMethods] = useState<PaymentMethodOption[]>([]);
   const [reportSubmitting, setReportSubmitting] = useState(false);
   const [reportForm, setReportForm] = useState({
     platform_amount: '',
@@ -186,17 +197,19 @@ export default function AccountsPage() {
 
   async function fetchData() {
     try {
-      const [accountsRes, usersRes, platformsRes, projectsRes] = await Promise.all([
+      const [accountsRes, usersRes, platformsRes, projectsRes, methodsRes] = await Promise.all([
         fetch(isPartner ? `/api/accounts?owner_id=${user!.id}` : '/api/accounts'),
         fetch('/api/users'),
         fetch('/api/platforms'),
         fetch('/api/projects'),
+        fetch('/api/payment-methods'),
       ]);
 
       const accountsData = await accountsRes.json();
       const usersData = await usersRes.json();
       const platformsData = await platformsRes.json();
       const projectsData = await projectsRes.json();
+      const methodsData = await methodsRes.json();
 
       console.log('Accounts data:', accountsData);
       console.log('Platforms data:', platformsData);
@@ -206,6 +219,9 @@ export default function AccountsPage() {
       if (usersData.success) setUsers(usersData.data || []);
       if (platformsData.success) setPlatforms(platformsData.data || []);
       if (projectsData.success) setProjects(projectsData.data || []);
+      if (methodsData.success) {
+        setPaymentMethods((methodsData.data || []).filter((m: PaymentMethodOption) => m.is_active));
+      }
     } catch (error) {
       console.error('Error fetching data:', error);
     } finally {
@@ -1412,6 +1428,29 @@ export default function AccountsPage() {
                         )}
                       </TableCell>
                       <TableCell>
+                        <div className="flex items-center justify-end gap-1">
+                        {account.status !== 'drop' && (account.user_id || isCommissionAccount(account)) && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="gap-1 text-primary border-primary/30 hover:bg-primary/5"
+                            onClick={() => {
+                              setSelectedAccount(account);
+                              setReportForm({
+                                platform_amount: '',
+                                amount_paid: '',
+                                payment_method: paymentMethods[0]?.type || 'other',
+                                payment_reference: '',
+                                notes: '',
+                                auto_confirm: true,
+                              });
+                              setIsReportDialogOpen(true);
+                            }}
+                          >
+                            <DollarSign className="h-3 w-3" />
+                            Report
+                          </Button>
+                        )}
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button variant="ghost" size="icon" className="h-8 w-8">
@@ -1425,25 +1464,6 @@ export default function AccountsPage() {
                               <Edit className="mr-2 h-4 w-4" />
                               Edit
                             </DropdownMenuItem>
-                            {account.status !== 'drop' && (account.user_id || isCommissionAccount(account)) && (
-                              <DropdownMenuItem
-                                onClick={() => {
-                                  setSelectedAccount(account);
-                                  setReportForm({
-                                    platform_amount: '',
-                                    amount_paid: '',
-                                    payment_method: 'other',
-                                    payment_reference: '',
-                                    notes: '',
-                                    auto_confirm: true,
-                                  });
-                                  setIsReportDialogOpen(true);
-                                }}
-                              >
-                                <DollarSign className="mr-2 h-4 w-4" />
-                                Report payment
-                              </DropdownMenuItem>
-                            )}
                             <DropdownMenuItem
                               onClick={() => {
                                 setSelectedAccount(account);
@@ -1497,6 +1517,7 @@ export default function AccountsPage() {
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
+                        </div>
                       </TableCell>
                     </TableRow>
                   );
@@ -2135,94 +2156,165 @@ export default function AccountsPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Admin Report Payment dialog */}
+      {/* Admin Report Payment dialog — same form as Due Payments; Commission
+          accounts get a simplified variant (single amount, no percentage). */}
       <Dialog open={isReportDialogOpen} onOpenChange={setIsReportDialogOpen}>
         <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
-              {isReportTargetCommission ? 'Report Commission Payment' : 'Report Payment'}
+              {isReportTargetCommission ? 'Report Commission Payment' : 'Report Payment (Admin)'}
             </DialogTitle>
             <DialogDescription>
-              {selectedAccount?.full_name} — {selectedAccount?.user?.telegram_first_name || 'User'}
+              Submit a payment report on behalf of {selectedAccount?.user?.telegram_first_name || 'user'} for {selectedAccount?.full_name}
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-3 py-2">
+
+          <div className="grid gap-4 py-4">
+            {/* Account info */}
+            <div className="rounded-lg bg-muted p-3 text-sm">
+              <div className="grid grid-cols-2 gap-2">
+                <span className="text-muted-foreground">Platform:</span>
+                <span>{selectedAccount?.platform?.display_name}</span>
+                {!isReportTargetCommission && (
+                  <>
+                    <span className="text-muted-foreground">Percentage:</span>
+                    <span className="font-semibold text-primary">{selectedAccount?.percentage}%</span>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* Platform amount (hidden for commission — single amount only) */}
             {!isReportTargetCommission && (
-              <div className="grid gap-1.5">
-                <Label htmlFor="report_platform_amount">Platform earnings ($)</Label>
+              <div className="grid gap-2">
+                <Label>Company Paid ($) *</Label>
                 <Input
-                  id="report_platform_amount"
                   type="number"
                   step="0.01"
+                  placeholder="Amount the company paid"
                   value={reportForm.platform_amount}
-                  onChange={(e) => setReportForm({ ...reportForm, platform_amount: e.target.value })}
-                  placeholder="What the company paid"
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    const platformAmt = parseFloat(value);
+                    setReportForm({
+                      ...reportForm,
+                      platform_amount: value,
+                      amount_paid: !isNaN(platformAmt) && selectedAccount
+                        ? ((platformAmt * (selectedAccount.percentage || 0)) / 100).toFixed(2)
+                        : '',
+                    });
+                  }}
                 />
               </div>
             )}
-            <div className="grid gap-1.5">
-              <Label htmlFor="report_amount_paid">
-                {isReportTargetCommission ? 'Commission amount received ($)' : 'Amount sent by user ($)'}
-              </Label>
+
+            {/* Calculated owed */}
+            {!isReportTargetCommission && reportForm.platform_amount && selectedAccount && (
+              <div className="rounded-lg bg-primary/10 p-3 border border-primary/20 text-sm">
+                <div className="flex justify-between">
+                  <span>Should pay:</span>
+                  <span className="font-bold">
+                    ${(((parseFloat(reportForm.platform_amount) || 0) * (selectedAccount.percentage || 0)) / 100).toFixed(2)}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* Amount paid */}
+            <div className="grid gap-2">
+              <Label>{isReportTargetCommission ? 'Commission amount received ($) *' : 'Amount Sent ($) *'}</Label>
               <Input
-                id="report_amount_paid"
                 type="number"
                 step="0.01"
+                placeholder={isReportTargetCommission ? '0.00' : 'What the user actually sent'}
                 value={reportForm.amount_paid}
                 onChange={(e) => setReportForm({ ...reportForm, amount_paid: e.target.value })}
-                placeholder="0.00"
               />
             </div>
-            <div className="grid gap-1.5">
-              <Label htmlFor="report_method">Payment method</Label>
+
+            {/* Payment method */}
+            <div className="grid gap-2">
+              <Label>Payment Method</Label>
               <Select
                 value={reportForm.payment_method}
-                onValueChange={(v) => setReportForm({ ...reportForm, payment_method: v })}
+                onValueChange={(value) => setReportForm({ ...reportForm, payment_method: value })}
               >
-                <SelectTrigger id="report_method"><SelectValue /></SelectTrigger>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select method" />
+                </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="transfer">Bank transfer</SelectItem>
-                  <SelectItem value="binance">Crypto / Binance</SelectItem>
-                  <SelectItem value="zelle">Zelle</SelectItem>
-                  <SelectItem value="other">Other</SelectItem>
+                  {paymentMethods.length > 0 ? (
+                    paymentMethods.map((m) => (
+                      <SelectItem key={m.id} value={m.type}>
+                        {m.display_name || m.type}
+                      </SelectItem>
+                    ))
+                  ) : (
+                    <SelectItem value="other">Other</SelectItem>
+                  )}
                 </SelectContent>
               </Select>
             </div>
-            <div className="grid gap-1.5">
-              <Label htmlFor="report_reference">Reference / tx hash (optional)</Label>
+
+            {/* Reference */}
+            <div className="grid gap-2">
+              <Label>Reference (optional)</Label>
               <Input
-                id="report_reference"
+                placeholder="Tx hash, confirmation number..."
                 value={reportForm.payment_reference}
                 onChange={(e) => setReportForm({ ...reportForm, payment_reference: e.target.value })}
-                placeholder="0x... or transfer ID"
               />
             </div>
-            <div className="grid gap-1.5">
-              <Label htmlFor="report_notes">Notes (optional)</Label>
-              <Input
-                id="report_notes"
+
+            {/* Notes */}
+            <div className="grid gap-2">
+              <Label>Notes (optional)</Label>
+              <Textarea
+                placeholder="Why are you reporting on behalf?"
                 value={reportForm.notes}
                 onChange={(e) => setReportForm({ ...reportForm, notes: e.target.value })}
+                className="min-h-[60px]"
               />
             </div>
-            <label className="flex items-center gap-2 text-sm cursor-pointer">
-              <input
-                type="checkbox"
+
+            {/* Auto-confirm switch */}
+            <div className="flex items-center justify-between rounded-lg border p-3">
+              <div>
+                <Label className="font-medium">Auto-confirm</Label>
+                <p className="text-xs text-muted-foreground">
+                  Skip review and mark as confirmed immediately
+                </p>
+              </div>
+              <Switch
                 checked={reportForm.auto_confirm}
-                onChange={(e) => setReportForm({ ...reportForm, auto_confirm: e.target.checked })}
+                onCheckedChange={(checked) => setReportForm({ ...reportForm, auto_confirm: checked })}
               />
-              <span>Auto-confirm (skip review queue)</span>
-            </label>
+            </div>
           </div>
+
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsReportDialogOpen(false)}>
+            <Button variant="outline" onClick={() => setIsReportDialogOpen(false)} disabled={reportSubmitting}>
               Cancel
             </Button>
-            <Button onClick={handleSubmitAdminReport} disabled={reportSubmitting || !reportForm.amount_paid}>
+            <Button
+              onClick={handleSubmitAdminReport}
+              disabled={reportSubmitting || !reportForm.amount_paid || (!isReportTargetCommission && !reportForm.platform_amount)}
+            >
               {reportSubmitting ? (
-                <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Submitting...</>
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Submitting...
+                </>
+              ) : reportForm.auto_confirm ? (
+                <>
+                  <CheckCircle2 className="h-4 w-4 mr-2" />
+                  Report & Confirm
+                </>
               ) : (
-                'Submit report'
+                <>
+                  <Send className="h-4 w-4 mr-2" />
+                  Report
+                </>
               )}
             </Button>
           </DialogFooter>
