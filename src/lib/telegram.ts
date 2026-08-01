@@ -124,6 +124,12 @@ export interface TelegramWebApp {
   expand(): void;
   /** Bot API 7.7+ — prevents the swipe-down-to-close gesture. */
   disableVerticalSwipes?(): void;
+  /** Bot API 8.0+ — fullscreen mode (shows Telegram's floating ⌄/⋯ controls). */
+  requestFullscreen?(): void;
+  /** Bot API 6.1+ — tells Telegram the app's header/background color so the
+      native controls (status bar, floating ⌄/⋯ pill) pick a readable tint. */
+  setHeaderColor?(color: string): void;
+  setBackgroundColor?(color: string): void;
   ready(): void;
   sendData(data: string): void;
   showPopup(params: {

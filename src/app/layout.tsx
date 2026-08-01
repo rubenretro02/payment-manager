@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import Script from "next/script";
 import "./globals.css";
@@ -19,6 +19,16 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "PayManager - Gestión de Pagos",
   description: "Sistema de gestión de pagos para agentes de LiveOps, Arise, Omni Interactions",
+};
+
+// App-like viewport: no pinch/double-tap zoom, and viewport-fit=cover so the
+// env(safe-area-inset-*) values are populated in Telegram's fullscreen mode.
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+  viewportFit: "cover",
 };
 
 export default function RootLayout({

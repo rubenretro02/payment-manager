@@ -57,7 +57,7 @@ export default function DashboardLayout({
   if (isTelegramApp) {
     return (
       <div className="min-h-screen bg-background safe-area-top">
-        <main className="container mx-auto p-4 pb-20">
+        <main className="container mx-auto p-4 tg-page-bottom">
           {children}
         </main>
         <BottomNav />
