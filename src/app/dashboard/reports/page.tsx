@@ -146,6 +146,24 @@ export default function ReportsPage() {
     setDetailsOpen(true);
   };
 
+  // List rows omit the screenshot URLs (they can be inline base64 images and
+  // made the list 30+ MB). Load the full row when the details dialog opens.
+  useEffect(() => {
+    const p = selectedPayment;
+    if (!p || !p.screenshots_deferred || !detailsOpen) return;
+    let cancelled = false;
+    fetch(`/api/payments/${p.id}`)
+      .then((r) => r.json())
+      .then((json) => {
+        if (cancelled || !json.success) return;
+        setSelectedPayment((cur) => (cur && cur.id === p.id ? { ...cur, ...json.data, screenshots_deferred: false } : cur));
+      })
+      .catch((e) => console.error('Error loading payment details:', e));
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedPayment?.id, selectedPayment?.screenshots_deferred, detailsOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Show screenshots in an in-app lightbox instead of opening a new tab —
   // /api/screenshot/[fileId] otherwise downloads the file instead of viewing it.
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
@@ -955,7 +973,7 @@ export default function ReportsPage() {
                       const owed = Number(p.amount_owed) || 0;
                       const paid = Number(p.amount_paid) || 0;
                       const loss = owed - paid;
-                      const hasScreenshots = p.company_screenshot_url || p.payment_screenshot_url || p.screenshot_url;
+                      const hasScreenshots = p.has_company_screenshot || p.has_payment_screenshot || p.company_screenshot_file_id || p.payment_screenshot_file_id || p.company_screenshot_url || p.payment_screenshot_url || p.screenshot_url;
                       return (
                         <TableRow key={p.id} className="cursor-pointer hover:bg-muted/50" onClick={() => openPaymentDetails(p)}>
                           <TableCell className="text-xs">{format(new Date(p.created_at), 'MMM d, HH:mm')}</TableCell>
@@ -1004,7 +1022,7 @@ export default function ReportsPage() {
                   </TableHeader>
                   <TableBody>
                     {pendingPayments.map(p => {
-                      const hasScreenshots = p.company_screenshot_url || p.payment_screenshot_url || p.screenshot_url;
+                      const hasScreenshots = p.has_company_screenshot || p.has_payment_screenshot || p.company_screenshot_file_id || p.payment_screenshot_file_id || p.company_screenshot_url || p.payment_screenshot_url || p.screenshot_url;
                       return (
                         <TableRow key={p.id} className="cursor-pointer hover:bg-muted/50" onClick={() => openPaymentDetails(p)}>
                           <TableCell className="text-xs">{format(new Date(p.created_at), 'MMM d, HH:mm')}</TableCell>
@@ -1057,7 +1075,7 @@ export default function ReportsPage() {
                       const owed = Number(p.amount_owed) || 0;
                       const paid = Number(p.amount_paid) || 0;
                       const diff = paid - owed;
-                      const hasScreenshots = p.company_screenshot_url || p.payment_screenshot_url || p.screenshot_url;
+                      const hasScreenshots = p.has_company_screenshot || p.has_payment_screenshot || p.company_screenshot_file_id || p.payment_screenshot_file_id || p.company_screenshot_url || p.payment_screenshot_url || p.screenshot_url;
                       return (
                         <TableRow key={p.id} className="cursor-pointer hover:bg-muted/50" onClick={() => openPaymentDetails(p)}>
                           <TableCell className="text-xs">{format(new Date(p.created_at), 'MMM d, HH:mm')}</TableCell>
@@ -1366,7 +1384,8 @@ export default function ReportsPage() {
               )}
 
               {/* Screenshots */}
-              {(selectedPayment.company_screenshot_url || selectedPayment.payment_screenshot_url || selectedPayment.screenshot_url) && (
+              {(selectedPayment.company_screenshot_url || selectedPayment.payment_screenshot_url || selectedPayment.screenshot_url ||
+                selectedPayment.company_screenshot_file_id || selectedPayment.payment_screenshot_file_id) && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {(() => {
                     const companyUrl = selectedPayment.company_screenshot_url || selectedPayment.screenshot_url;

@@ -54,72 +54,91 @@ export async function getAllPayments(status?: string, accountId?: string, ownerI
     }
   }
 
-  // First get all payments without joins. Explicit columns (never select('*'))
-  // so a heavy column can't silently bloat this list query: company/payment
-  // screenshot URLs used to hold inline base64, which made select('*') take
-  // ~12s for ~200 rows and intermittently hit the statement timeout (→ 0 rows).
-  // Must be a single string literal — Supabase infers the row type from it.
-  let query = supabase
+  // One round-trip: payments + embedded user/account/platform/project.
+  // (users has two FKs from payments — user_id and confirmed_by — hence the
+  // explicit !user_id hint.) The screenshot presence flags are two tiny
+  // id-only queries run in parallel; see PAYMENT_LIST_COLUMNS for why the
+  // URL columns themselves are never part of a list.
+  let listQuery = supabase
     .from('payments')
-    .select('id, user_id, account_id, platform_amount, percentage_applied, amount_owed, amount_paid, company_screenshot_url, company_screenshot_file_id, payment_screenshot_url, payment_screenshot_file_id, platform_screenshot_file_id, payment_method, payment_reference, for_cycle_date, status, due_date, submitted_at, confirmed_at, confirmed_by, user_notes, admin_notes, rejection_reason, created_at, updated_at')
+    .select(`${PAYMENT_LIST_COLUMNS}, user:users!user_id(*), account:accounts(*, platform:platforms(*), project:projects(*))`)
     .order('created_at', { ascending: false });
+  let companyQuery = supabase
+    .from('payments')
+    .select('id')
+    .or('company_screenshot_url.not.is.null,screenshot_url.not.is.null');
+  let paymentShotQuery = supabase
+    .from('payments')
+    .select('id')
+    .not('payment_screenshot_url', 'is', null);
 
   if (status) {
-    query = query.eq('status', status);
+    listQuery = listQuery.eq('status', status);
+    companyQuery = companyQuery.eq('status', status);
+    paymentShotQuery = paymentShotQuery.eq('status', status);
   }
   if (accountId) {
-    query = query.eq('account_id', accountId);
+    listQuery = listQuery.eq('account_id', accountId);
+    companyQuery = companyQuery.eq('account_id', accountId);
+    paymentShotQuery = paymentShotQuery.eq('account_id', accountId);
   }
   if (ownedAccountIds) {
-    query = query.in('account_id', ownedAccountIds);
+    listQuery = listQuery.in('account_id', ownedAccountIds);
+    companyQuery = companyQuery.in('account_id', ownedAccountIds);
+    paymentShotQuery = paymentShotQuery.in('account_id', ownedAccountIds);
   }
 
-  const { data: payments, error } = await query;
+  const [{ data: payments, error }, companyRes, paymentShotRes] = await Promise.all([
+    listQuery,
+    companyQuery,
+    paymentShotQuery,
+  ]);
 
   if (error) {
     console.error('Error fetching payments:', error);
     return [];
   }
+  if (companyRes.error) console.error('Error fetching screenshot flags:', companyRes.error);
+  if (paymentShotRes.error) console.error('Error fetching screenshot flags:', paymentShotRes.error);
 
   if (!payments || payments.length === 0) {
     return [];
   }
 
-  // Get unique user IDs and account IDs
-  const userIds = [...new Set(payments.map(p => p.user_id).filter(Boolean))];
-  const accountIds = [...new Set(payments.map(p => p.account_id).filter(Boolean))];
-
-  // Fetch users
-  let users: Record<string, unknown>[] = [];
-  if (userIds.length > 0) {
-    const { data: usersData } = await supabase
-      .from('users')
-      .select('*')
-      .in('id', userIds);
-    users = usersData || [];
-  }
-
-  // Fetch accounts with platforms
-  let accounts: Record<string, unknown>[] = [];
-  if (accountIds.length > 0) {
-    const { data: accountsData } = await supabase
-      .from('accounts')
-      .select('*, platform:platforms(*), project:projects(*)')
-      .in('id', accountIds);
-    accounts = accountsData || [];
-  }
-
-  // Map users and accounts to payments
-  const result = payments.map(payment => ({
-    ...payment,
-    user: users.find(u => u.id === payment.user_id) || null,
-    account: accounts.find(a => a.id === payment.account_id) || null,
-  }));
-
   // Cast via unknown: the explicit column list omits a couple of legacy fields
   // the Payment type still declares (period_id, screenshot_uploaded_at) that
   // no longer exist as columns.
-  return result as unknown as Payment[];
+  return withScreenshotFlags(
+    payments as unknown as { id: string }[],
+    idSet(companyRes.data),
+    idSet(paymentShotRes.data)
+  ) as unknown as Payment[];
+}
+
+// Columns for LIST endpoints. Never the screenshot URL columns: legacy rows
+// (and uploads where the Telegram upload failed) store inline base64 images
+// there, which made the payments list ~32 MB and ~10 s to load. Lists carry
+// has_company_screenshot / has_payment_screenshot flags instead, and the
+// detail endpoint (/api/payments/[id]) returns the URLs on demand.
+// Must be a single string literal — Supabase infers the row type from it.
+export const PAYMENT_LIST_COLUMNS =
+  'id, user_id, account_id, platform_amount, percentage_applied, amount_owed, amount_paid, company_screenshot_file_id, payment_screenshot_file_id, platform_screenshot_file_id, payment_method, payment_reference, for_cycle_date, status, due_date, submitted_at, confirmed_at, confirmed_by, user_notes, admin_notes, rejection_reason, created_at, updated_at';
+
+export function idSet(rows: { id: string }[] | null | undefined): Set<string> {
+  return new Set((rows || []).map((r) => r.id));
+}
+
+export function withScreenshotFlags<T extends { id: string }>(
+  rows: T[],
+  companyIds: Set<string>,
+  paymentIds: Set<string>
+): (T & { has_company_screenshot: boolean; has_payment_screenshot: boolean; screenshots_deferred: true })[] {
+  return rows.map((r) => ({
+    ...r,
+    has_company_screenshot: companyIds.has(r.id),
+    has_payment_screenshot: paymentIds.has(r.id),
+    screenshots_deferred: true as const,
+  }));
 }
 
 export async function createPayment(paymentData: Partial<Payment>): Promise<{ data: Payment | null; error: string | null }> {

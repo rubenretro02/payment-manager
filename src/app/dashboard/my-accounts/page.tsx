@@ -455,6 +455,24 @@ export default function MyAccountsPage() {
   // and poll while visible, so an admin confirmation shows up on its own.
   useAutoRefresh(() => fetchData(), { enabled: !!user?.id });
 
+  // List rows omit the screenshot URLs (they can be inline base64 images);
+  // load the full row when a report is opened in the View dialog.
+  useEffect(() => {
+    const p = selectedReportPayment;
+    if (!p || !p.screenshots_deferred || !isViewReportDialogOpen) return;
+    let cancelled = false;
+    fetch(`/api/payments/${p.id}`)
+      .then((r) => r.json())
+      .then((json) => {
+        if (cancelled || !json.success) return;
+        setSelectedReportPayment((cur) => (cur && cur.id === p.id ? { ...cur, ...json.data, screenshots_deferred: false } : cur));
+      })
+      .catch((e) => console.error('Error loading report details:', e));
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedReportPayment?.id, selectedReportPayment?.screenshots_deferred, isViewReportDialogOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleRefresh = () => {
     fetchData(true);
   };

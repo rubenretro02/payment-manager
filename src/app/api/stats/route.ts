@@ -5,38 +5,21 @@ export async function GET() {
   try {
     const supabase = createAdminClient();
 
-    // Get user counts
-    const { count: totalUsers } = await supabase
-      .from('users')
-      .select('*', { count: 'exact', head: true })
-      .eq('role', 'user');
+    // All five aggregates are independent — run them in parallel instead of
+    // five sequential round-trips.
+    const [usersRes, ibosRes, pendingCountRes, owedRes, paidRes] = await Promise.all([
+      supabase.from('users').select('*', { count: 'exact', head: true }).eq('role', 'user'),
+      supabase.from('users').select('*', { count: 'exact', head: true }).eq('role', 'ibo'),
+      supabase.from('payments').select('*', { count: 'exact', head: true }).in('status', ['pending', 'submitted']),
+      supabase.from('payments').select('amount_owed').in('status', ['pending', 'submitted']),
+      supabase.from('payments').select('amount_paid').eq('status', 'confirmed'),
+    ]);
 
-    const { count: totalIBOs } = await supabase
-      .from('users')
-      .select('*', { count: 'exact', head: true })
-      .eq('role', 'ibo');
-
-    // Get pending payments count
-    const { count: pendingPayments } = await supabase
-      .from('payments')
-      .select('*', { count: 'exact', head: true })
-      .in('status', ['pending', 'submitted']);
-
-    // Get total owed
-    const { data: owedData } = await supabase
-      .from('payments')
-      .select('amount_owed')
-      .in('status', ['pending', 'submitted']);
-
-    const totalOwed = owedData?.reduce((sum, p) => sum + (Number(p.amount_owed) || 0), 0) || 0;
-
-    // Get total paid
-    const { data: paidData } = await supabase
-      .from('payments')
-      .select('amount_paid')
-      .eq('status', 'confirmed');
-
-    const totalPaid = paidData?.reduce((sum, p) => sum + (Number(p.amount_paid) || 0), 0) || 0;
+    const totalUsers = usersRes.count;
+    const totalIBOs = ibosRes.count;
+    const pendingPayments = pendingCountRes.count;
+    const totalOwed = owedRes.data?.reduce((sum, p) => sum + (Number(p.amount_owed) || 0), 0) || 0;
+    const totalPaid = paidRes.data?.reduce((sum, p) => sum + (Number(p.amount_paid) || 0), 0) || 0;
 
     // Calculate collection rate
     const total = totalPaid + totalOwed;

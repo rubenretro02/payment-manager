@@ -15,26 +15,21 @@ export async function GET(request: NextRequest) {
 
     const supabase = createAdminClient();
 
-    // Get accounts assigned to this user
-    const { data: accounts, error: accountsError } = await supabase
-      .from('accounts')
-      .select('*')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false });
+    // Accounts assigned to this user + lookup tables, all in parallel (they
+    // don't depend on each other).
+    const [{ data: accounts, error: accountsError }, { data: platforms }, { data: projects }] = await Promise.all([
+      supabase
+        .from('accounts')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false }),
+      supabase.from('platforms').select('*'),
+      supabase.from('projects').select('*'),
+    ]);
 
     if (accountsError) {
       throw accountsError;
     }
-
-    // Get platforms
-    const { data: platforms } = await supabase
-      .from('platforms')
-      .select('*');
-
-    // Get projects
-    const { data: projects } = await supabase
-      .from('projects')
-      .select('*');
 
     // Manually join the data
     const data = (accounts || []).map(account => ({

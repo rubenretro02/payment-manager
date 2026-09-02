@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -199,14 +199,43 @@ export default function PaymentsPage() {
     }
   }, [paymentIdFromUrl, payments]);
 
+  // Mutation bookkeeping for the optimistic confirm/reject flow:
+  //  - overridesRef: local status patches that must survive any refetch until
+  //    the server reflects them (a poll that started BEFORE the mutation could
+  //    otherwise resolve after it and flip the row back — the "reappears then
+  //    disappears" flicker).
+  //  - inFlightRef: payment ids with a request in progress, so several
+  //    payments can be confirmed back-to-back but the same one never twice.
+  //  - fetchSeqRef: ignore responses from fetches older than the latest one.
+  const overridesRef = useRef(new Map<string, Partial<Payment>>());
+  const inFlightRef = useRef(new Set<string>());
+  const fetchSeqRef = useRef(0);
+
+  const applyOverrides = (list: Payment[]): Payment[] => {
+    if (overridesRef.current.size === 0) return list;
+    return list.map((p) => {
+      const patch = overridesRef.current.get(p.id);
+      return patch ? { ...p, ...patch } : p;
+    });
+  };
+
   async function fetchPayments(showRefreshing = false) {
     if (showRefreshing) setRefreshing(true);
+    const seq = ++fetchSeqRef.current;
     try {
       const response = await fetch(isPartner ? `/api/payments?owner_id=${user!.id}` : '/api/payments');
       const data = await response.json();
+      if (seq !== fetchSeqRef.current) return; // a newer fetch superseded this one
       if (data.success) {
-        setCached(CACHE_KEYS.payments, data.data || []);
-        setPayments(data.data || []);
+        const fresh: Payment[] = data.data || [];
+        // Drop overrides the server already reflects.
+        for (const [id, patch] of overridesRef.current) {
+          const row = fresh.find((p) => p.id === id);
+          if (row && (!patch.status || row.status === patch.status)) overridesRef.current.delete(id);
+        }
+        const merged = applyOverrides(fresh);
+        setCached(CACHE_KEYS.payments, merged);
+        setPayments(merged);
       }
     } catch (error) {
       console.error('Error fetching payments:', error);
@@ -215,6 +244,25 @@ export default function PaymentsPage() {
       setRefreshing(false);
     }
   }
+
+  // List rows omit the screenshot URLs (they can be inline base64 images and
+  // made the list 30+ MB). Load the full row the first time a payment is
+  // opened in the details or screenshots dialog.
+  useEffect(() => {
+    const p = selectedPayment;
+    if (!p || !p.screenshots_deferred || !(showDetails || showScreenshot)) return;
+    let cancelled = false;
+    fetch(`/api/payments/${p.id}`)
+      .then((r) => r.json())
+      .then((json) => {
+        if (cancelled || !json.success) return;
+        setSelectedPayment((cur) => (cur && cur.id === p.id ? { ...cur, ...json.data, screenshots_deferred: false } : cur));
+      })
+      .catch((e) => console.error('Error loading payment details:', e));
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedPayment?.id, selectedPayment?.screenshots_deferred, showDetails, showScreenshot]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Compute date filter window once per render
   const dateFilter = (() => {
@@ -371,9 +419,10 @@ export default function PaymentsPage() {
     rejected: dateFilteredPayments.filter(p => p.status === 'rejected').length,
   };
 
-  // Check if payment has any screenshots
+  // Check if payment has any screenshots (list rows only carry the flags)
   const hasScreenshots = (payment: Payment) => {
-    return payment.company_screenshot_url || payment.payment_screenshot_url || payment.screenshot_url ||
+    return payment.has_company_screenshot || payment.has_payment_screenshot ||
+      payment.company_screenshot_url || payment.payment_screenshot_url || payment.screenshot_url ||
       payment.company_screenshot_file_id || payment.payment_screenshot_file_id;
   };
 
@@ -485,22 +534,37 @@ export default function PaymentsPage() {
 
   // Confirm/reject are optimistic: the row flips and the dialog closes right
   // away, the request finishes in the background and a silent refetch
-  // re-syncs. On failure the previous list is restored.
-  const applyLocalStatus = (list: Payment[], id: string, patch: Partial<Payment>): Payment[] =>
-    list.map(p => (p.id === id ? { ...p, ...patch } : p));
+  // re-syncs. Several payments can be processed back-to-back. On failure the
+  // row is restored.
+  const applyLocalPatch = (target: Payment, patch: Partial<Payment>) => {
+    overridesRef.current.set(target.id, patch);
+    setPayments((prev) => {
+      const next = prev.map((p) => (p.id === target.id ? { ...p, ...patch } : p));
+      setCached(CACHE_KEYS.payments, next);
+      return next;
+    });
+  };
+
+  const rollbackLocalPatch = (target: Payment) => {
+    overridesRef.current.delete(target.id);
+    setPayments((prev) => {
+      const next = prev.map((p) => (p.id === target.id ? target : p));
+      setCached(CACHE_KEYS.payments, next);
+      return next;
+    });
+  };
 
   const handleConfirm = async () => {
-    if (!selectedPayment || isSubmitting) return;
+    if (!selectedPayment) return;
     const target = selectedPayment;
+    if (inFlightRef.current.has(target.id)) return;
     const notes = adminNotes;
-    const previous = payments;
-    const optimistic = applyLocalStatus(previous, target.id, {
+    inFlightRef.current.add(target.id);
+    applyLocalPatch(target, {
       status: 'confirmed',
       confirmed_at: new Date().toISOString(),
       admin_notes: notes || null,
     });
-    setPayments(optimistic);
-    setCached(CACHE_KEYS.payments, optimistic);
     setConfirmAction(null);
     setSelectedPayment(null);
     setAdminNotes('');
@@ -515,31 +579,29 @@ export default function PaymentsPage() {
       if (data.success) {
         fetchPayments();
       } else {
-        setPayments(previous);
-        setCached(CACHE_KEYS.payments, previous);
+        rollbackLocalPatch(target);
         alert('Error: ' + (data.error || 'Failed to confirm payment'));
       }
     } catch (error) {
       console.error('Error confirming payment:', error);
-      setPayments(previous);
-      setCached(CACHE_KEYS.payments, previous);
+      rollbackLocalPatch(target);
       alert('Error confirming payment');
     } finally {
+      inFlightRef.current.delete(target.id);
       setIsSubmitting(false);
     }
   };
 
   const handleReject = async () => {
-    if (!selectedPayment || isSubmitting) return;
+    if (!selectedPayment) return;
     const target = selectedPayment;
+    if (inFlightRef.current.has(target.id)) return;
     const reason = rejectionReason;
-    const previous = payments;
-    const optimistic = applyLocalStatus(previous, target.id, {
+    inFlightRef.current.add(target.id);
+    applyLocalPatch(target, {
       status: 'rejected',
       rejection_reason: reason,
     });
-    setPayments(optimistic);
-    setCached(CACHE_KEYS.payments, optimistic);
     setConfirmAction(null);
     setSelectedPayment(null);
     setRejectionReason('');
@@ -577,16 +639,15 @@ export default function PaymentsPage() {
           }
         }
       } else {
-        setPayments(previous);
-        setCached(CACHE_KEYS.payments, previous);
+        rollbackLocalPatch(target);
         alert('Error: ' + (data.error || 'Failed to reject payment'));
       }
     } catch (error) {
       console.error('Error rejecting payment:', error);
-      setPayments(previous);
-      setCached(CACHE_KEYS.payments, previous);
+      rollbackLocalPatch(target);
       alert('Error rejecting payment');
     } finally {
+      inFlightRef.current.delete(target.id);
       setIsSubmitting(false);
     }
   };

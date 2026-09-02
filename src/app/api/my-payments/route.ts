@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/server';
+import { PAYMENT_LIST_COLUMNS, idSet, withScreenshotFlags } from '@/lib/supabase/db';
 
 export async function GET(request: NextRequest) {
   try {
@@ -25,52 +26,52 @@ export async function GET(request: NextRequest) {
       .select('id')
       .eq('user_id', userId);
     const myAccountIds = (myAccounts || []).map((a) => a.id);
+    const scope = myAccountIds.length > 0
+      ? `user_id.eq.${userId},account_id.in.(${myAccountIds.join(',')})`
+      : null;
 
-    // Fetch payments filed by this user OR tied to any of their accounts.
-    let query = supabase
+    // One round-trip for the list (account + platform embedded) plus two
+    // id-only queries for the screenshot flags. The screenshot URL columns are
+    // deliberately excluded (they can hold inline base64 images — huge);
+    // the detail endpoint returns them on demand.
+    let listQuery = supabase
       .from('payments')
-      .select('*')
+      .select(`${PAYMENT_LIST_COLUMNS}, account:accounts(*, platform:platforms(*))`)
       .order('created_at', { ascending: false });
-    query = myAccountIds.length > 0
-      ? query.or(`user_id.eq.${userId},account_id.in.(${myAccountIds.join(',')})`)
-      : query.eq('user_id', userId);
-    const { data: payments, error } = await query;
+    let companyQuery = supabase
+      .from('payments')
+      .select('id')
+      .or('company_screenshot_url.not.is.null,screenshot_url.not.is.null');
+    let paymentShotQuery = supabase
+      .from('payments')
+      .select('id')
+      .not('payment_screenshot_url', 'is', null);
+
+    if (scope) {
+      listQuery = listQuery.or(scope);
+      companyQuery = companyQuery.or(scope);
+      paymentShotQuery = paymentShotQuery.or(scope);
+    } else {
+      listQuery = listQuery.eq('user_id', userId);
+      companyQuery = companyQuery.eq('user_id', userId);
+      paymentShotQuery = paymentShotQuery.eq('user_id', userId);
+    }
+
+    const [{ data: payments, error }, companyRes, paymentShotRes] = await Promise.all([
+      listQuery,
+      companyQuery,
+      paymentShotQuery,
+    ]);
 
     if (error) {
       throw error;
     }
 
-    // Get accounts and platforms for the payments
-    const accountIds = [...new Set(payments?.map(p => p.account_id).filter(Boolean))];
-
-    let accounts: Array<{ id: string; platform_id: string; full_name: string; [key: string]: unknown }> = [];
-    let platforms: Array<{ id: string; display_name: string; [key: string]: unknown }> = [];
-
-    if (accountIds.length > 0) {
-      const { data: accountsData } = await supabase
-        .from('accounts')
-        .select('*')
-        .in('id', accountIds);
-      accounts = accountsData || [];
-
-      const platformIds = [...new Set(accounts.map(a => a.platform_id).filter(Boolean))];
-      if (platformIds.length > 0) {
-        const { data: platformsData } = await supabase
-          .from('platforms')
-          .select('*')
-          .in('id', platformIds);
-        platforms = platformsData || [];
-      }
-    }
-
-    // Join the data
-    const data = (payments || []).map(payment => ({
-      ...payment,
-      account: payment.account_id ? {
-        ...accounts.find(a => a.id === payment.account_id),
-        platform: platforms.find(p => p.id === accounts.find(a => a.id === payment.account_id)?.platform_id),
-      } : null,
-    }));
+    const data = withScreenshotFlags(
+      (payments || []) as unknown as { id: string }[],
+      idSet(companyRes.data),
+      idSet(paymentShotRes.data)
+    );
 
     return NextResponse.json({ success: true, data });
   } catch (error) {

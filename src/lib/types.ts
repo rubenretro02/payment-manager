@@ -143,6 +143,13 @@ export interface Payment {
   screenshot_url?: string | null;
   screenshot_uploaded_at: string | null;
 
+  // Set on rows coming from LIST endpoints, which omit the screenshot URL
+  // columns (they can hold inline base64 images). The flags say whether a
+  // screenshot exists; fetch /api/payments/[id] to get the actual URLs.
+  has_company_screenshot?: boolean;
+  has_payment_screenshot?: boolean;
+  screenshots_deferred?: boolean;
+
   payment_method: PaymentMethod | null;
   payment_reference: string | null;
   // Scheduled cycle date this payment was made for. Set at submission time
@@ -162,6 +169,21 @@ export interface Payment {
   user?: User;
   account?: Account;
   period?: PaymentPeriod;
+}
+
+// Custodial HD wallet derived from the vault seed. Public data only — the
+// key is re-derived server-side from the unlocked vault when needed.
+export interface Wallet {
+  id: string;
+  chain_family: 'evm' | 'solana';
+  derivation_index: number;
+  address: string;
+  network: string;
+  name: string | null;
+  created_at: string;
+  updated_at: string;
+  // Accounts whose wallet_address currently points at this wallet.
+  assigned_accounts?: { id: string; full_name: string; user_name: string | null }[];
 }
 
 export interface Notification {

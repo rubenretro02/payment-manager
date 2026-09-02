@@ -120,6 +120,24 @@ export default function MyPaymentsPage() {
     setIsDetailDialogOpen(true);
   };
 
+  // List rows omit the screenshot URLs (they can be inline base64 images);
+  // load the full row when the detail dialog opens.
+  useEffect(() => {
+    const p = selectedPayment;
+    if (!p || !p.screenshots_deferred || !isDetailDialogOpen) return;
+    let cancelled = false;
+    fetch(`/api/payments/${p.id}`)
+      .then((r) => r.json())
+      .then((json) => {
+        if (cancelled || !json.success) return;
+        setSelectedPayment((cur) => (cur && cur.id === p.id ? { ...cur, ...json.data, screenshots_deferred: false } : cur));
+      })
+      .catch((e) => console.error('Error loading payment details:', e));
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedPayment?.id, selectedPayment?.screenshots_deferred, isDetailDialogOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
@@ -429,15 +447,16 @@ export default function MyPaymentsPage() {
               </div>
 
               {/* Screenshots */}
-              {(selectedPayment.company_screenshot_url || selectedPayment.payment_screenshot_url) && (
+              {(selectedPayment.company_screenshot_url || selectedPayment.payment_screenshot_url ||
+                selectedPayment.company_screenshot_file_id || selectedPayment.payment_screenshot_file_id) && (
                 <div className="space-y-2">
                   <p className="font-medium text-sm">Screenshots</p>
                   <Tabs defaultValue="company" className="w-full">
                     <TabsList className="grid w-full grid-cols-2">
-                      <TabsTrigger value="company" disabled={!selectedPayment.company_screenshot_url}>
+                      <TabsTrigger value="company" disabled={!selectedPayment.company_screenshot_url && !selectedPayment.company_screenshot_file_id}>
                         Company Payment
                       </TabsTrigger>
-                      <TabsTrigger value="sent" disabled={!selectedPayment.payment_screenshot_url}>
+                      <TabsTrigger value="sent" disabled={!selectedPayment.payment_screenshot_url && !selectedPayment.payment_screenshot_file_id}>
                         Payment Sent
                       </TabsTrigger>
                     </TabsList>
