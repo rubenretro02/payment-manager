@@ -75,6 +75,7 @@ import {
 } from '@/lib/payment-dates';
 import { isCommissionAccount } from '@/lib/account-utils';
 import { useAuth } from '@/hooks/useAuth';
+import { useAutoRefresh } from '@/hooks/useAutoRefresh';
 
 const statusColors: Record<string, string> = {
   production: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400',
@@ -194,6 +195,10 @@ export default function AccountsPage() {
     if (user) fetchData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
+
+  // Silent background refresh so status/assignment changes made elsewhere
+  // (or reports filed by users) show up without a manual reload.
+  useAutoRefresh(() => fetchData(), { enabled: !!user });
 
   async function fetchData() {
     try {

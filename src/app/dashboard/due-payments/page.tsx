@@ -53,6 +53,7 @@ import { format, startOfDay, startOfWeek, startOfMonth, startOfYear, endOfDay, e
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import { getCached, setCached, CACHE_KEYS } from '@/lib/client-cache';
+import { useAutoRefresh } from '@/hooks/useAutoRefresh';
 
 interface DueAccountInfo {
   account_id: string;
@@ -147,7 +148,9 @@ export default function DuePaymentsPage() {
     auto_confirm: true,
   });
 
-  async function fetchData(showRefreshing = false) {
+  // `background` = silent auto-refresh: no error toasts, so a flaky
+  // connection doesn't pop one every poll.
+  async function fetchData(showRefreshing = false, background = false) {
     if (showRefreshing) setRefreshing(true);
     try {
       const [dueRes, methodsRes] = await Promise.all([
@@ -164,7 +167,7 @@ export default function DuePaymentsPage() {
           toast.warning('No accounts found. Check that they have user_id assigned and status is production/nesting/active.');
         }
       } else {
-        toast.error(`Due Payments API failed: ${dueJson.error || 'unknown error'}`);
+        if (!background) toast.error(`Due Payments API failed: ${dueJson.error || 'unknown error'}`);
         console.error('Due Payments API error:', dueJson);
       }
       if (methodsJson.success) {
@@ -174,7 +177,7 @@ export default function DuePaymentsPage() {
       }
     } catch (error) {
       console.error('Error fetching due payments:', error);
-      toast.error('Failed to load due payments');
+      if (!background) toast.error('Failed to load due payments');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -184,6 +187,10 @@ export default function DuePaymentsPage() {
   useEffect(() => {
     fetchData();
   }, []);
+
+  // Silent background refresh so new reports move rows between buckets
+  // without a manual Refresh.
+  useAutoRefresh(() => fetchData(false, true));
 
   const sendReminders = async () => {
     setSendingReminders(true);
@@ -352,7 +359,7 @@ export default function DuePaymentsPage() {
         toast.success(reportForm.auto_confirm ? 'Payment reported and confirmed' : 'Payment reported');
         setReportDialogOpen(false);
         setSelectedItem(null);
-        await fetchData();
+        fetchData();
       } else {
         toast.error(json.error || 'Failed to submit report');
       }

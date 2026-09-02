@@ -8,9 +8,11 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { CreditCard, Loader2, AlertCircle } from 'lucide-react';
 import { getSupabaseClient } from '@/lib/supabase/client';
+import { useAuth } from '@/hooks/useAuth';
 
 export default function LoginPage() {
   const router = useRouter();
+  const { refetch } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -69,8 +71,10 @@ export default function LoginPage() {
           return;
         }
 
-        // Store user in localStorage for our auth hook
+        // Store user in localStorage and refresh the shared auth state before
+        // navigating, otherwise the dashboard layout still sees "logged out".
         localStorage.setItem('auth_user', JSON.stringify(userData));
+        await refetch();
 
         // Route based on role: regular users/partners go to my-accounts, admins/IBOs to dashboard
         if (userData.role === 'user' || userData.role === 'partner') {

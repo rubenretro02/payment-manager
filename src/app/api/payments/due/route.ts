@@ -117,6 +117,34 @@ export async function GET() {
 
     const result: DueAccountInfo[] = [];
 
+    // ONE payments query for every account instead of one per account (the
+    // per-account version was 20+ sequential round-trips and made this board
+    // slow). Covers the longest lookback any frequency uses (monthly, ~6
+    // cycles); each account trims to its own cutoff below, so classification
+    // is unchanged.
+    // NOTE: don't filter by user_id here. A payment for an account+cycle
+    // counts as that cycle's payment regardless of who reported it. If we
+    // filter by account.user_id and the account was reassigned mid-cycle,
+    // the previous user's report disappears and the account flips to
+    // overdue even though the cycle is satisfied.
+    const maxLookbackDays = Math.max(60, 31 * 6);
+    const globalCutoff = new Date(today);
+    globalCutoff.setDate(globalCutoff.getDate() - maxLookbackDays);
+    const { data: allPayments } = await supabase
+      .from('payments')
+      .select('id, status, amount_owed, created_at, for_cycle_date, account_id')
+      .in('account_id', accounts.map((a) => a.id))
+      .gte('created_at', globalCutoff.toISOString())
+      .in('status', ['submitted', 'confirmed', 'pending'])
+      .order('created_at', { ascending: false });
+    type ExistingPayment = NonNullable<typeof allPayments>[number];
+    const paymentsByAccount = new Map<string, ExistingPayment[]>();
+    for (const p of allPayments || []) {
+      const list = paymentsByAccount.get(p.account_id) || [];
+      list.push(p);
+      paymentsByAccount.set(p.account_id, list);
+    }
+
     for (const account of accounts) {
       // Commission accounts don't have a payment schedule — user reports
       // when they get a commission. Skip from the Due Payments screen.
@@ -157,19 +185,9 @@ export async function GET() {
       const lookbackDays = Math.max(60, cycleDays * 6);
       const lookbackCutoff = new Date(today);
       lookbackCutoff.setDate(lookbackCutoff.getDate() - lookbackDays);
-      // NOTE: don't filter by user_id here. A payment for an account+cycle
-      // counts as that cycle's payment regardless of who reported it. If we
-      // filter by account.user_id and the account was reassigned mid-cycle,
-      // the previous user's report disappears and the account flips to
-      // overdue even though the cycle is satisfied.
-      const paymentsQuery = supabase
-        .from('payments')
-        .select('id, status, amount_owed, created_at, for_cycle_date')
-        .eq('account_id', account.id)
-        .gte('created_at', lookbackCutoff.toISOString())
-        .in('status', ['submitted', 'confirmed', 'pending'])
-        .order('created_at', { ascending: false });
-      const { data: existingPayments } = await paymentsQuery;
+      const lookbackCutoffIso = lookbackCutoff.toISOString();
+      const existingPayments: ExistingPayment[] = (paymentsByAccount.get(account.id) || [])
+        .filter((p) => p.created_at >= lookbackCutoffIso);
 
       const legacyStartIso = legacyPeriodStart.toISOString();
       const currentPayment =
@@ -236,7 +254,6 @@ export async function GET() {
       // report to the nearest cycle, which is the just-passed one whenever a
       // user reports on/just after the due date. Surface it as Reported,
       // anchored to the cycle it was actually for.
-      type ExistingPayment = NonNullable<typeof existingPayments>[number];
       let previousReport: ExistingPayment | null = null;
       let previousReportDate: Date | null = null;
       if (!currentPayment) {

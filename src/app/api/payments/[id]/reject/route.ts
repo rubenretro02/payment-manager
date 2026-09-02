@@ -1,6 +1,40 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/server';
 import { sendUserNotification } from '@/lib/notifications';
+
+// Runs after the response has been sent so the admin never waits on Telegram.
+async function notifyRejected(
+  payment: { user_id: string | null; account_id: string | null; amount_paid: number | null; amount_owed: number },
+  reason: string
+) {
+  try {
+    if (!payment.user_id) return;
+    const supabase = createAdminClient();
+    const { data: user } = await supabase
+      .from('users')
+      .select('telegram_id')
+      .eq('id', payment.user_id)
+      .single();
+
+    const { data: account } = await supabase
+      .from('accounts')
+      .select('full_name, platform:platforms(display_name)')
+      .eq('id', payment.account_id!)
+      .single();
+
+    if (user?.telegram_id) {
+      const accountData = account as { full_name: string; platform: { display_name: string } | null } | null;
+      await sendUserNotification(user.telegram_id, 'payment_rejected', {
+        amount: payment.amount_paid || payment.amount_owed,
+        accountName: accountData?.full_name || 'Account',
+        platformName: accountData?.platform?.display_name || 'Platform',
+        reason,
+      });
+    }
+  } catch (notifError) {
+    console.error('Error sending notification:', notifError);
+  }
+}
 
 export async function POST(
   request: NextRequest,
@@ -67,35 +101,7 @@ export async function POST(
       );
     }
 
-    // Try to send notification (don't fail if this fails)
-    try {
-      if (payment.user_id) {
-        const { data: user } = await supabase
-          .from('users')
-          .select('telegram_id')
-          .eq('id', payment.user_id)
-          .single();
-
-        const { data: account } = await supabase
-          .from('accounts')
-          .select('full_name, platform:platforms(display_name)')
-          .eq('id', payment.account_id)
-          .single();
-
-        if (user?.telegram_id) {
-          const accountData = account as { full_name: string; platform: { display_name: string } | null } | null;
-          await sendUserNotification(user.telegram_id, 'payment_rejected', {
-            amount: payment.amount_paid || payment.amount_owed,
-            accountName: accountData?.full_name || 'Account',
-            platformName: accountData?.platform?.display_name || 'Platform',
-            reason: rejection_reason,
-          });
-        }
-      }
-    } catch (notifError) {
-      console.error('Error sending notification:', notifError);
-      // Don't fail the request
-    }
+    after(() => notifyRejected(payment, rejection_reason));
 
     return NextResponse.json({ success: true });
   } catch (error) {

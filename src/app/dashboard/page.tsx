@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { useAuth } from '@/hooks/useAuth';
+import { useAutoRefresh } from '@/hooks/useAutoRefresh';
 import {
   Users,
   CreditCard,
@@ -38,28 +39,31 @@ export default function DashboardPage() {
   const [payments, setPayments] = useState<Payment[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    async function fetchData() {
-      try {
-        const [statsRes, paymentsRes] = await Promise.all([
-          fetch('/api/stats'),
-          fetch('/api/payments?status=submitted'),
-        ]);
+  async function fetchData() {
+    try {
+      const [statsRes, paymentsRes] = await Promise.all([
+        fetch('/api/stats'),
+        fetch('/api/payments?status=submitted'),
+      ]);
 
-        const statsData = await statsRes.json();
-        const paymentsData = await paymentsRes.json();
+      const statsData = await statsRes.json();
+      const paymentsData = await paymentsRes.json();
 
-        if (statsData.success) setStats(statsData.data);
-        if (paymentsData.success) setPayments(paymentsData.data || []);
-      } catch (error) {
-        console.error('Error fetching data:', error);
-      } finally {
-        setLoading(false);
-      }
+      if (statsData.success) setStats(statsData.data);
+      if (paymentsData.success) setPayments(paymentsData.data || []);
+    } catch (error) {
+      console.error('Error fetching data:', error);
+    } finally {
+      setLoading(false);
     }
+  }
 
+  useEffect(() => {
     fetchData();
   }, []);
+
+  // Silent background refresh so the pending count and list stay current.
+  useAutoRefresh(() => fetchData());
 
   const isAdmin = user?.role === 'admin';
   const isIBO = user?.role === 'ibo';

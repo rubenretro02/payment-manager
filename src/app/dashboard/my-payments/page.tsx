@@ -35,6 +35,8 @@ import { useAuth } from '@/hooks/useAuth';
 import type { Payment } from '@/lib/types';
 import { ScreenshotImage } from '@/components/ScreenshotImage';
 import { getScreenshotSrc } from '@/lib/screenshots';
+import { useAutoRefresh } from '@/hooks/useAutoRefresh';
+import { getCached, setCached, userCacheKey } from '@/lib/client-cache';
 
 const statusConfig: Record<string, { label: string; color: string; icon: typeof Clock }> = {
   pending: { label: 'Pending', color: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400', icon: Clock },
@@ -45,8 +47,11 @@ const statusConfig: Record<string, { label: string; color: string; icon: typeof 
 
 export default function MyPaymentsPage() {
   const { user } = useAuth();
-  const [payments, setPayments] = useState<Payment[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Seed from the in-memory cache (shared with My Accounts) so this tab
+  // renders instantly on revisit while it refetches in the background.
+  const cachedPayments = user?.id ? getCached<Payment[]>(userCacheKey('my-payments', user.id)) : undefined;
+  const [payments, setPayments] = useState<Payment[]>(() => cachedPayments || []);
+  const [loading, setLoading] = useState(cachedPayments === undefined);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedPayment, setSelectedPayment] = useState<Payment | null>(null);
   const [isDetailDialogOpen, setIsDetailDialogOpen] = useState(false);
@@ -60,6 +65,7 @@ export default function MyPaymentsPage() {
       const data = await response.json();
       if (data.success) {
         setPayments(data.data || []);
+        if (user?.id) setCached(userCacheKey('my-payments', user.id), data.data || []);
       }
     } catch (error) {
       console.error('Error fetching payments:', error);
@@ -75,6 +81,9 @@ export default function MyPaymentsPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
+
+  // Silent background refresh so a confirmation/rejection shows up on its own.
+  useAutoRefresh(() => fetchPayments(), { enabled: !!user?.id });
 
   const handleRefresh = () => {
     fetchPayments(true);

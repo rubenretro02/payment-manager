@@ -31,3 +31,9 @@ export const CACHE_KEYS = {
   duePayments: 'payments:due',
   paymentMethods: 'payment-methods',
 } as const;
+
+// Per-user keys for the mini-app pages, so a user's data is never seeded
+// from another user's (the cache is also cleared on logout).
+export function userCacheKey(kind: 'my-accounts' | 'my-payments', userId: string): string {
+  return `${kind}:${userId}`;
+}

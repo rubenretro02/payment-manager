@@ -45,6 +45,7 @@ import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { getCached, setCached, CACHE_KEYS } from '@/lib/client-cache';
 import { ImageLightbox } from '@/components/ImageLightbox';
 import { getScreenshotSrc } from '@/lib/screenshots';
+import { useAutoRefresh } from '@/hooks/useAutoRefresh';
 
 // Grouped views (By Account / By User), mirroring the Reports breakdown tables.
 interface AccountGroup {
@@ -180,6 +181,10 @@ export default function PaymentsPage() {
     if (user) fetchPayments();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
+
+  // Silent background refresh: new reports from users appear without a
+  // manual Refresh, and the list re-syncs when the tab regains focus.
+  useAutoRefresh(() => fetchPayments(), { enabled: !!user });
 
   // Open payment from URL parameter (deep link from notifications)
   useEffect(() => {
@@ -478,26 +483,46 @@ export default function PaymentsPage() {
     }
   };
 
+  // Confirm/reject are optimistic: the row flips and the dialog closes right
+  // away, the request finishes in the background and a silent refetch
+  // re-syncs. On failure the previous list is restored.
+  const applyLocalStatus = (list: Payment[], id: string, patch: Partial<Payment>): Payment[] =>
+    list.map(p => (p.id === id ? { ...p, ...patch } : p));
+
   const handleConfirm = async () => {
     if (!selectedPayment || isSubmitting) return;
+    const target = selectedPayment;
+    const notes = adminNotes;
+    const previous = payments;
+    const optimistic = applyLocalStatus(previous, target.id, {
+      status: 'confirmed',
+      confirmed_at: new Date().toISOString(),
+      admin_notes: notes || null,
+    });
+    setPayments(optimistic);
+    setCached(CACHE_KEYS.payments, optimistic);
+    setConfirmAction(null);
+    setSelectedPayment(null);
+    setAdminNotes('');
     setIsSubmitting(true);
     try {
-      const response = await fetch(`/api/payments/${selectedPayment.id}/confirm`, {
+      const response = await fetch(`/api/payments/${target.id}/confirm`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ admin_notes: adminNotes, confirmed_by: user?.id }),
+        body: JSON.stringify({ admin_notes: notes, confirmed_by: user?.id }),
       });
       const data = await response.json();
       if (data.success) {
-        await fetchPayments();
-        setConfirmAction(null);
-        setSelectedPayment(null);
-        setAdminNotes('');
+        fetchPayments();
       } else {
+        setPayments(previous);
+        setCached(CACHE_KEYS.payments, previous);
         alert('Error: ' + (data.error || 'Failed to confirm payment'));
       }
     } catch (error) {
       console.error('Error confirming payment:', error);
+      setPayments(previous);
+      setCached(CACHE_KEYS.payments, previous);
       alert('Error confirming payment');
     } finally {
       setIsSubmitting(false);
@@ -506,47 +531,60 @@ export default function PaymentsPage() {
 
   const handleReject = async () => {
     if (!selectedPayment || isSubmitting) return;
+    const target = selectedPayment;
+    const reason = rejectionReason;
+    const previous = payments;
+    const optimistic = applyLocalStatus(previous, target.id, {
+      status: 'rejected',
+      rejection_reason: reason,
+    });
+    setPayments(optimistic);
+    setCached(CACHE_KEYS.payments, optimistic);
+    setConfirmAction(null);
+    setSelectedPayment(null);
+    setRejectionReason('');
     setIsSubmitting(true);
     try {
-      const response = await fetch(`/api/payments/${selectedPayment.id}/reject`, {
+      const response = await fetch(`/api/payments/${target.id}/reject`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rejection_reason: rejectionReason }),
+        body: JSON.stringify({ rejection_reason: reason }),
       });
       const data = await response.json();
       if (data.success) {
+        fetchPayments();
+
         // Offer to send WhatsApp explaining the rejection (only if user has phone)
-        const userPhone = selectedPayment.user?.phone;
+        const userPhone = target.user?.phone;
         if (userPhone) {
           const wantsWhatsApp = confirm(
-            `Payment rejected. Send WhatsApp to ${selectedPayment.user?.telegram_first_name || 'user'} explaining the reason?`
+            `Payment rejected. Send WhatsApp to ${target.user?.telegram_first_name || 'user'} explaining the reason?`
           );
           if (wantsWhatsApp) {
             const appUrl = typeof window !== 'undefined' ? window.location.origin : 'https://reportpayment.blackgoatt.com';
-            const accountName = selectedPayment.account?.full_name || 'your account';
-            const platform = selectedPayment.account?.platform?.display_name || '';
+            const accountName = target.account?.full_name || 'your account';
+            const platform = target.account?.platform?.display_name || '';
             const message =
-              `Hi ${selectedPayment.user?.telegram_first_name || ''},\n\n` +
+              `Hi ${target.user?.telegram_first_name || ''},\n\n` +
               `❌ Your payment was rejected:\n\n` +
               `📋 Account: ${accountName}\n` +
               (platform ? `🏢 Platform: ${platform}\n` : '') +
-              `💰 Amount: $${Number(selectedPayment.amount_paid || 0).toFixed(2)}\n\n` +
-              `📝 Reason: ${rejectionReason}\n\n` +
+              `💰 Amount: $${Number(target.amount_paid || 0).toFixed(2)}\n\n` +
+              `📝 Reason: ${reason}\n\n` +
               `Please review and resubmit the payment:\n${appUrl}`;
             const cleanPhone = userPhone.replace(/\D/g, '');
             window.open(`https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`, '_blank');
           }
         }
-
-        await fetchPayments();
-        setConfirmAction(null);
-        setSelectedPayment(null);
-        setRejectionReason('');
       } else {
+        setPayments(previous);
+        setCached(CACHE_KEYS.payments, previous);
         alert('Error: ' + (data.error || 'Failed to reject payment'));
       }
     } catch (error) {
       console.error('Error rejecting payment:', error);
+      setPayments(previous);
+      setCached(CACHE_KEYS.payments, previous);
       alert('Error rejecting payment');
     } finally {
       setIsSubmitting(false);

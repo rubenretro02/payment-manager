@@ -1,10 +1,10 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
 import { getAllPayments, createPayment } from '@/lib/supabase/db';
 import { sendUserNotification, notifyAdminsNewPayment } from '@/lib/notifications';
 import { createAdminClient } from '@/lib/supabase/server';
-import { matchTransactionToPayment, findRecentIncomingMatch } from '@/lib/basescan';
 import { findNearestCycleDate, type PaymentFrequency } from '@/lib/payment-dates';
 import { isCommissionAccount } from '@/lib/account-utils';
+import type { Payment } from '@/lib/types';
 
 export async function GET(request: NextRequest) {
   try {
@@ -20,170 +20,183 @@ export async function GET(request: NextRequest) {
   }
 }
 
+interface CreatePaymentBody {
+  user_id?: string;
+  account_id?: string;
+  status?: string;
+  for_cycle_date?: string | null;
+  amount_paid?: number;
+  amount_owed?: number;
+  [key: string]: unknown;
+}
+
+interface CreateResult {
+  status: number;
+  payload: Record<string, unknown>;
+}
+
+// A second identical report for the same account + cycle inside this window
+// is an accidental double submission (double tap, retry after a slow
+// response), not a new report. Deliberate "Add another" reports come minutes
+// later, so they are unaffected.
+const DUPLICATE_WINDOW_MS = 2 * 60 * 1000;
+
+// Requests currently being processed, keyed by account/cycle/kind. Two taps
+// that arrive before the first insert has finished share one result instead
+// of both inserting. Module state is fine here: the app runs as a single
+// long-lived Node process.
+const inFlight = new Map<string, Promise<CreateResult>>();
+
+function duplicateKey(body: CreatePaymentBody): string | null {
+  if (!body.account_id) return null;
+  return [body.account_id, body.status || 'submitted', body.for_cycle_date || '', body.amount_paid ?? ''].join('|');
+}
+
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    console.log('Creating payment with data:', JSON.stringify(body, null, 2));
+    const body = (await request.json()) as CreatePaymentBody;
+    const key = duplicateKey(body);
 
-    // SERVER-SIDE Basescan auto-verification.
-    // Two paths to auto-confirm a payment:
-    //   1) Client passed a specific verified_tx_hash → re-verify that exact tx
-    //   2) No hash but account has a Base wallet → scan recent incoming transfers
-    //      looking for one that matches the claimed amount (within tolerance).
-    let autoConfirmed = false;
-    if (body.account_id) {
-      try {
-        const supabase = createAdminClient();
-        const { data: account } = await supabase
-          .from('accounts')
-          .select('wallet_address, wallet_network, payment_frequency, payment_day, biweekly_first_day, biweekly_second_day, project:projects(display_name)')
-          .eq('id', body.account_id)
-          .single();
-
-        // Tag with for_cycle_date so attribution doesn't rely on the
-        // fuzzy cycle-window heuristic. Commission accounts have no
-        // schedule, so they stay null.
-        if (account && !isCommissionAccount(account) && !body.for_cycle_date) {
-          const cycle = findNearestCycleDate(
-            new Date(),
-            (account.payment_frequency as PaymentFrequency) || 'weekly',
-            account.payment_day ?? null,
-            account.biweekly_first_day ?? null,
-            account.biweekly_second_day ?? null
-          );
-          body.for_cycle_date = cycle.toISOString().split('T')[0];
-        }
-
-        const isBaseWallet = account?.wallet_address && (account.wallet_network || 'base') === 'base';
-        console.log('[auto-verify] account_id', body.account_id, 'wallet:', account?.wallet_address, 'network:', account?.wallet_network, 'isBaseWallet:', isBaseWallet, 'amount_paid:', body.amount_paid);
-
-        if (isBaseWallet) {
-          // Path 1: explicit tx hash provided
-          if (body.verified_tx_hash) {
-            const verification = await matchTransactionToPayment({
-              txHash: body.verified_tx_hash,
-              expectedWallet: account.wallet_address,
-              expectedAmountUsd: body.amount_paid ? Number(body.amount_paid) : undefined,
-            });
-
-            if (verification.found && verification.confirmed && verification.wallet_match) {
-              body.status = 'confirmed';
-              body.confirmed_at = new Date().toISOString();
-              body.payment_reference = body.verified_tx_hash;
-              const tokenInfo = verification.matched_transfer
-                ? `${verification.matched_amount_usd?.toFixed(2)} ${verification.matched_transfer.token_symbol}`
-                : 'native ETH';
-              body.admin_notes = `[AUTO-CONFIRMED via Basescan] Verified ${tokenInfo} sent to ${account.wallet_address.slice(0, 10)}...${account.wallet_address.slice(-6)}`;
-              autoConfirmed = true;
-              console.log('Payment auto-confirmed via tx hash:', body.verified_tx_hash);
-            }
-          }
-
-          // Path 2: scan recent incoming transfers — runs when path 1 didn't auto-confirm
-          if (!autoConfirmed && body.amount_paid) {
-            // Don't double-credit a tx hash already used by another confirmed payment
-            const { data: usedRefs } = await supabase
-              .from('payments')
-              .select('payment_reference')
-              .eq('status', 'confirmed')
-              .eq('account_id', body.account_id)
-              .not('payment_reference', 'is', null)
-              .limit(100);
-            const excludeHashes = (usedRefs || [])
-              .map(r => r.payment_reference)
-              .filter((h): h is string => typeof h === 'string' && /^0x[a-fA-F0-9]{64}$/.test(h));
-
-            const match = await findRecentIncomingMatch({
-              walletAddress: account.wallet_address,
-              expectedAmountUsd: Number(body.amount_paid),
-              // hoursBack/tolerance use the wider defaults (7d / $1) now
-              excludeHashes,
-            });
-
-            if (match.found && match.tx_hash) {
-              body.status = 'confirmed';
-              body.confirmed_at = new Date().toISOString();
-              body.payment_reference = match.tx_hash;
-              body.admin_notes = `[AUTO-CONFIRMED via wallet scan] Matched ${match.amount_usd?.toFixed(2)} ${match.token_symbol} incoming to ${account.wallet_address.slice(0, 10)}...${account.wallet_address.slice(-6)}. From: ${match.from?.slice(0, 10)}...`;
-              autoConfirmed = true;
-              console.log('[auto-verify] AUTO-CONFIRMED via wallet scan:', match.tx_hash);
-            } else {
-              console.log('[auto-verify] no match. Reason:', match.error || `candidates=${match.candidates_count || 0}`);
-            }
-          }
-        } else {
-          console.log('[auto-verify] Skipping — wallet not configured or not Base network');
-        }
-      } catch (verifyError) {
-        console.error('[auto-verify] Server-side verification error (non-fatal):', verifyError);
+    let run = key ? inFlight.get(key) : undefined;
+    if (!run) {
+      run = handleCreate(body);
+      if (key) {
+        inFlight.set(key, run);
+        run.finally(() => inFlight.delete(key)).catch(() => null);
       }
     }
 
-    const result = await createPayment(body);
-
-    if (result.error) {
-      console.error('Payment creation error:', result.error);
-      return NextResponse.json({ success: false, error: result.error }, { status: 500 });
-    }
-
-    if (!result.data) {
-      return NextResponse.json({ success: false, error: 'No data returned from database' }, { status: 500 });
-    }
-
-    // Send notifications
-    try {
-      const supabase = createAdminClient();
-
-      // Get user info for notification
-      const { data: user } = await supabase
-        .from('users')
-        .select('telegram_id, telegram_first_name, telegram_username')
-        .eq('id', body.user_id)
-        .single();
-
-      // Get account info
-      const { data: account } = await supabase
-        .from('accounts')
-        .select('full_name, platform:platforms(display_name)')
-        .eq('id', body.account_id)
-        .single();
-
-      const accountData = account as { full_name: string; platform: { display_name: string } | null } | null;
-
-      // Send notification to user — confirmed if auto-verified, submitted otherwise
-      if (user?.telegram_id) {
-        await sendUserNotification(
-          user.telegram_id,
-          autoConfirmed ? 'payment_confirmed' : 'payment_submitted',
-          {
-            amount: body.amount_paid || body.amount_owed,
-            accountName: accountData?.full_name || 'Account',
-            platformName: accountData?.platform?.display_name || 'Platform',
-          }
-        );
-      }
-
-      // Notify all admins — only ping for new payments needing review,
-      // not for ones already auto-confirmed by the blockchain.
-      if (user && !autoConfirmed) {
-        await notifyAdminsNewPayment({
-          userName: user.telegram_first_name || 'User',
-          userUsername: user.telegram_username || undefined,
-          amount: body.amount_paid || body.amount_owed,
-          accountName: accountData?.full_name || 'Account',
-          platformName: accountData?.platform?.display_name || 'Platform',
-          paymentId: result.data.id,
-        });
-      }
-    } catch (notifError) {
-      console.error('Error sending notifications (non-critical):', notifError);
-      // Don't fail the payment creation if notifications fail
-    }
-
-    return NextResponse.json({ success: true, data: result.data });
+    const result = await run;
+    return NextResponse.json(result.payload, { status: result.status });
   } catch (error) {
     console.error('Error creating payment:', error);
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     return NextResponse.json({ success: false, error: errorMessage }, { status: 500 });
+  }
+}
+
+async function handleCreate(body: CreatePaymentBody): Promise<CreateResult> {
+  try {
+    const supabase = createAdminClient();
+
+    // Tag with for_cycle_date so attribution doesn't rely on the fuzzy
+    // cycle-window heuristic. Commission accounts have no schedule, so they
+    // stay null.
+    if (body.account_id && !body.for_cycle_date) {
+      const { data: account } = await supabase
+        .from('accounts')
+        .select('payment_frequency, payment_day, biweekly_first_day, biweekly_second_day, project:projects(display_name)')
+        .eq('id', body.account_id)
+        .single();
+
+      if (account && !isCommissionAccount(account)) {
+        const cycle = findNearestCycleDate(
+          new Date(),
+          (account.payment_frequency as PaymentFrequency) || 'weekly',
+          account.payment_day ?? null,
+          account.biweekly_first_day ?? null,
+          account.biweekly_second_day ?? null
+        );
+        body.for_cycle_date = cycle.toISOString().split('T')[0];
+      }
+    }
+
+    if (body.account_id) {
+      const existing = await findRecentDuplicate(body);
+      if (existing) {
+        console.log('[payments] Duplicate submission ignored, returning existing payment', existing.id);
+        return { status: 200, payload: { success: true, data: existing, duplicate: true } };
+      }
+    }
+
+    const result = await createPayment(body as Partial<Payment>);
+
+    if (result.error) {
+      console.error('Payment creation error:', result.error);
+      return { status: 500, payload: { success: false, error: result.error } };
+    }
+    if (!result.data) {
+      return { status: 500, payload: { success: false, error: 'No data returned from database' } };
+    }
+
+    // Telegram notifications run after the response is sent so the user
+    // never waits on them.
+    const paymentId = result.data.id;
+    after(() => notifyNewPayment(body, paymentId));
+
+    return { status: 200, payload: { success: true, data: result.data } };
+  } catch (error) {
+    console.error('Error creating payment:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    return { status: 500, payload: { success: false, error: errorMessage } };
+  }
+}
+
+async function findRecentDuplicate(body: CreatePaymentBody): Promise<Payment | null> {
+  const supabase = createAdminClient();
+  const status = body.status || 'submitted';
+  const since = new Date(Date.now() - DUPLICATE_WINDOW_MS).toISOString();
+
+  let query = supabase
+    .from('payments')
+    .select('*')
+    .eq('account_id', body.account_id!)
+    .eq('status', status)
+    .gte('created_at', since);
+
+  query = body.for_cycle_date
+    ? query.eq('for_cycle_date', body.for_cycle_date)
+    : query.is('for_cycle_date', null);
+
+  // Issue reports (pending) for the same cycle are never legitimately filed
+  // twice; payment reports must also match the amount to count as duplicates.
+  if (status !== 'pending') {
+    query = query.eq('amount_paid', body.amount_paid ?? 0);
+  }
+
+  const { data } = await query.order('created_at', { ascending: false }).limit(1);
+  return (data?.[0] as Payment | undefined) || null;
+}
+
+async function notifyNewPayment(body: CreatePaymentBody, paymentId: string): Promise<void> {
+  try {
+    if (!body.user_id) return;
+    const supabase = createAdminClient();
+
+    const { data: user } = await supabase
+      .from('users')
+      .select('telegram_id, telegram_first_name, telegram_username')
+      .eq('id', body.user_id)
+      .single();
+
+    const { data: account } = await supabase
+      .from('accounts')
+      .select('full_name, platform:platforms(display_name)')
+      .eq('id', body.account_id!)
+      .single();
+
+    const accountData = account as { full_name: string; platform: { display_name: string } | null } | null;
+    const amount = Number(body.amount_paid ?? body.amount_owed ?? 0);
+
+    if (user?.telegram_id) {
+      await sendUserNotification(user.telegram_id, 'payment_submitted', {
+        amount,
+        accountName: accountData?.full_name || 'Account',
+        platformName: accountData?.platform?.display_name || 'Platform',
+      });
+    }
+
+    if (user) {
+      await notifyAdminsNewPayment({
+        userName: user.telegram_first_name || 'User',
+        userUsername: user.telegram_username || undefined,
+        amount,
+        accountName: accountData?.full_name || 'Account',
+        platformName: accountData?.platform?.display_name || 'Platform',
+        paymentId,
+      });
+    }
+  } catch (notifError) {
+    console.error('Error sending notifications (non-critical):', notifError);
   }
 }

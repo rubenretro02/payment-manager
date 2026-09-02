@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sendPaymentReminders, sendReminderToAccount } from '@/lib/notifications';
 
-export const maxDuration = 60;
-
 /**
  * POST /api/notifications/reminders/manual
  *

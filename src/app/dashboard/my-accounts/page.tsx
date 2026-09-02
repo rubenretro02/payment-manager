@@ -66,6 +66,8 @@ import {
 } from '@/lib/payment-dates';
 import { isCommissionAccount } from '@/lib/account-utils';
 import { ScreenshotImage } from '@/components/ScreenshotImage';
+import { useAutoRefresh } from '@/hooks/useAutoRefresh';
+import { getCached, setCached, CACHE_KEYS, userCacheKey } from '@/lib/client-cache';
 
 const statusColors: Record<string, string> = {
   production: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400',
@@ -120,10 +122,16 @@ interface UploadedImage {
 
 export default function MyAccountsPage() {
   const { user } = useAuth();
-  const [accounts, setAccounts] = useState<Account[]>([]);
-  const [payments, setPayments] = useState<Payment[]>([]);
-  const [adminPaymentMethods, setAdminPaymentMethods] = useState<AdminPaymentMethod[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Seed from the in-memory cache so coming back to this tab renders the
+  // last-known data instantly while it refetches in the background.
+  const cachedAccounts = user?.id ? getCached<Account[]>(userCacheKey('my-accounts', user.id)) : undefined;
+  const cachedPayments = user?.id ? getCached<Payment[]>(userCacheKey('my-payments', user.id)) : undefined;
+  const [accounts, setAccounts] = useState<Account[]>(() => cachedAccounts || []);
+  const [payments, setPayments] = useState<Payment[]>(() => cachedPayments || []);
+  const [adminPaymentMethods, setAdminPaymentMethods] = useState<AdminPaymentMethod[]>(
+    () => getCached<AdminPaymentMethod[]>(CACHE_KEYS.paymentMethods) || []
+  );
+  const [loading, setLoading] = useState(cachedAccounts === undefined);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedAccount, setSelectedAccount] = useState<Account | null>(null);
   const [selectedReportPayment, setSelectedReportPayment] = useState<Payment | null>(null);
@@ -180,16 +188,24 @@ export default function MyAccountsPage() {
       const methodsData = await methodsRes.json();
       const paymentsData = await paymentsRes.json();
 
-      if (accountsData.success) setAccounts(accountsData.data || []);
-      if (paymentsData.success) setPayments(paymentsData.data || []);
+      if (accountsData.success) {
+        setAccounts(accountsData.data || []);
+        if (user?.id) setCached(userCacheKey('my-accounts', user.id), accountsData.data || []);
+      }
+      if (paymentsData.success) {
+        setPayments(paymentsData.data || []);
+        if (user?.id) setCached(userCacheKey('my-payments', user.id), paymentsData.data || []);
+      }
       if (methodsData.success) {
         const activeMethods = (methodsData.data || []).filter((m: AdminPaymentMethod) => m.is_active);
         setAdminPaymentMethods(activeMethods);
+        setCached(CACHE_KEYS.paymentMethods, activeMethods);
+        // Only pick a default when nothing is selected yet — this also runs on
+        // background refreshes, which must not override the user's choice.
         const primary = activeMethods.find((m: AdminPaymentMethod) => m.is_primary);
-        if (primary) {
-          setPaymentForm(prev => ({ ...prev, payment_method: primary.id }));
-        } else if (activeMethods.length > 0) {
-          setPaymentForm(prev => ({ ...prev, payment_method: activeMethods[0].id }));
+        const defaultId = primary?.id || activeMethods[0]?.id || '';
+        if (defaultId) {
+          setPaymentForm(prev => (prev.payment_method ? prev : { ...prev, payment_method: defaultId }));
         }
       }
     } catch (error) {
@@ -434,6 +450,10 @@ export default function MyAccountsPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
+
+  // Keep the cards fresh: refetch when the app comes back to the foreground
+  // and poll while visible, so an admin confirmation shows up on its own.
+  useAutoRefresh(() => fetchData(), { enabled: !!user?.id });
 
   const handleRefresh = () => {
     fetchData(true);
@@ -715,11 +735,7 @@ export default function MyAccountsPage() {
       return;
     }
 
-    // Detect if the reference field contains a Base tx hash — server will re-verify
     const refValue = (paymentForm.payment_reference || '').trim();
-    const looksLikeTxHash = /^0x[a-fA-F0-9]{64}$/.test(refValue);
-    const accountHasBaseWallet = !!selectedAccount.wallet_address && (selectedAccount.wallet_network || 'base') === 'base';
-    const canAutoVerify = looksLikeTxHash && accountHasBaseWallet;
 
     // Both screenshots are mandatory now: company-payment proof AND
     // payment-sent proof — even for crypto/auto-verify reports.
@@ -780,12 +796,6 @@ export default function MyAccountsPage() {
         paymentData.payment_screenshot_file_id = paymentProofImage.fileId;
       }
 
-      // If the reference field is a Base tx hash, let the server re-verify it
-      // and auto-confirm if it matches the account's wallet.
-      if (canAutoVerify) {
-        paymentData.verified_tx_hash = refValue;
-      }
-
       console.log('Submitting payment:', paymentData);
 
       const response = await fetch('/api/payments', {
@@ -798,15 +808,20 @@ export default function MyAccountsPage() {
       console.log('Payment response:', data);
 
       if (data.success) {
+        // Show the new report on the card immediately (no waiting for the
+        // refetch), then refresh in the background.
+        const created = data.data as Payment | undefined;
+        if (created?.id) {
+          setPayments(prev => (prev.some(p => p.id === created.id) ? prev : [created, ...prev]));
+        }
         setIsPaymentDialogOpen(false);
         resetForm();
-        const wasAutoConfirmed = data.data?.status === 'confirmed';
         alert(
-          wasAutoConfirmed
-            ? '✓ Payment auto-confirmed via blockchain verification! Thank you.'
+          data.duplicate
+            ? 'This payment was already reported a moment ago. No duplicate was created.'
             : 'Payment submitted successfully! Admin will review it. You will receive a notification when it is confirmed.'
         );
-        await fetchData();
+        fetchData();
       } else {
         // Show the server's error so the user (and admin) knows what failed
         const msg = data.error || data.message || 'Failed to submit payment';
@@ -2061,9 +2076,22 @@ export default function MyAccountsPage() {
                   const data = await response.json();
 
                   if (data.success) {
+                    // Mark the cycle as reported on the card right away — the
+                    // page used to stay unchanged here, which is what led users
+                    // to report the same issue twice.
+                    const created = data.data as Payment | undefined;
+                    if (created?.id) {
+                      setPayments(prev => (prev.some(p => p.id === created.id) ? prev : [created, ...prev]));
+                    }
                     setIsNoPaymentDialogOpen(false);
                     setNoPaymentForm({ reason: '' });
-                    alert('Issue reported successfully! Admin will review it.');
+                    setSelectedCycleStr(null);
+                    alert(
+                      data.duplicate
+                        ? 'This issue was already reported a moment ago. No duplicate was created.'
+                        : 'Issue reported successfully! Admin will review it.'
+                    );
+                    fetchData();
                   } else {
                     alert('Error: ' + (data.error || 'Failed to report issue'));
                   }
