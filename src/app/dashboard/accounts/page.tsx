@@ -76,6 +76,8 @@ import {
 import { isCommissionAccount } from '@/lib/account-utils';
 import { useAuth } from '@/hooks/useAuth';
 import { useAutoRefresh } from '@/hooks/useAutoRefresh';
+import { GenerateWalletDialog } from '@/components/wallets/GenerateWalletDialog';
+import { NETWORKS } from '@/lib/wallets/networks';
 
 const statusColors: Record<string, string> = {
   production: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400',
@@ -906,12 +908,23 @@ export default function AccountsPage() {
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div className="grid gap-2 sm:col-span-2">
                       <Label htmlFor="wallet_address">Wallet Address</Label>
-                      <Input
-                        id="wallet_address"
-                        placeholder="0x..."
-                        value={newAccount.wallet_address}
-                        onChange={(e) => setNewAccount({ ...newAccount, wallet_address: e.target.value })}
-                      />
+                      <div className="flex gap-2">
+                        <Input
+                          id="wallet_address"
+                          placeholder="0x... or generate one from the vault"
+                          value={newAccount.wallet_address}
+                          onChange={(e) => setNewAccount({ ...newAccount, wallet_address: e.target.value })}
+                        />
+                        {user?.role === 'admin' && (
+                          <GenerateWalletDialog
+                            network={newAccount.wallet_network}
+                            accountName={newAccount.full_name || undefined}
+                            onCreated={(address, network) =>
+                              setNewAccount((prev) => ({ ...prev, wallet_address: address, wallet_network: network }))
+                            }
+                          />
+                        )}
+                      </div>
                     </div>
                     <div className="grid gap-2">
                       <Label htmlFor="wallet_network">Network</Label>
@@ -923,11 +936,9 @@ export default function AccountsPage() {
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="base">Base</SelectItem>
-                          <SelectItem value="ethereum">Ethereum</SelectItem>
-                          <SelectItem value="polygon">Polygon</SelectItem>
-                          <SelectItem value="arbitrum">Arbitrum</SelectItem>
-                          <SelectItem value="optimism">Optimism</SelectItem>
+                          {NETWORKS.map((n) => (
+                            <SelectItem key={n.key} value={n.key}>{n.label}</SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
                     </div>
@@ -2081,12 +2092,24 @@ export default function AccountsPage() {
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div className="grid gap-2 sm:col-span-2">
                     <Label htmlFor="edit_wallet_address">Wallet Address</Label>
-                    <Input
-                      id="edit_wallet_address"
-                      placeholder="0x..."
-                      value={newAccount.wallet_address}
-                      onChange={(e) => setNewAccount({ ...newAccount, wallet_address: e.target.value })}
-                    />
+                    <div className="flex gap-2">
+                      <Input
+                        id="edit_wallet_address"
+                        placeholder="0x... or generate one from the vault"
+                        value={newAccount.wallet_address}
+                        onChange={(e) => setNewAccount({ ...newAccount, wallet_address: e.target.value })}
+                      />
+                      {user?.role === 'admin' && (
+                        <GenerateWalletDialog
+                          network={newAccount.wallet_network}
+                          accountName={newAccount.full_name || selectedAccount?.full_name || undefined}
+                          accountId={selectedAccount?.id}
+                          onCreated={(address, network) =>
+                            setNewAccount((prev) => ({ ...prev, wallet_address: address, wallet_network: network }))
+                          }
+                        />
+                      )}
+                    </div>
                   </div>
                   <div className="grid gap-2">
                     <Label htmlFor="edit_wallet_network">Network</Label>
@@ -2098,11 +2121,9 @@ export default function AccountsPage() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="base">Base</SelectItem>
-                        <SelectItem value="ethereum">Ethereum</SelectItem>
-                        <SelectItem value="polygon">Polygon</SelectItem>
-                        <SelectItem value="arbitrum">Arbitrum</SelectItem>
-                        <SelectItem value="optimism">Optimism</SelectItem>
+                        {NETWORKS.map((n) => (
+                          <SelectItem key={n.key} value={n.key}>{n.label}</SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>

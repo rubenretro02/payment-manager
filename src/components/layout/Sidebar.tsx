@@ -18,6 +18,7 @@ import {
   BarChart3,
   CalendarClock,
   History,
+  Wallet,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useState } from 'react';
@@ -30,6 +31,7 @@ const adminLinks = [
   { href: '/dashboard/payments', label: 'Payments', icon: CreditCard },
   { href: '/dashboard/reports', label: 'Reports', icon: BarChart3 },
   { href: '/dashboard/accounts', label: 'Accounts', icon: Building2 },
+  { href: '/dashboard/wallets', label: 'Wallets', icon: Wallet },
   { href: '/dashboard/platforms', label: 'Platforms', icon: Layers },
   { href: '/dashboard/projects', label: 'Projects', icon: UserCircle },
   { href: '/dashboard/payment-methods', label: 'Payment Methods', icon: CreditCard },

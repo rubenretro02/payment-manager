@@ -19,6 +19,7 @@ import {
   UserCircle,
   MoreHorizontal,
   LogOut,
+  Wallet,
 } from 'lucide-react';
 import {
   Sheet,
@@ -70,6 +71,7 @@ const adminMoreItems = [
   { href: '/dashboard/reports', label: 'Reports', icon: BarChart3 },
   { href: '/dashboard/users', label: 'Users', icon: Users },
   { href: '/dashboard/accounts', label: 'Accounts', icon: Building2 },
+  { href: '/dashboard/wallets', label: 'Wallets', icon: Wallet },
   { href: '/dashboard/platforms', label: 'Platforms', icon: Layers },
   { href: '/dashboard/projects', label: 'Projects', icon: UserCircle },
   { href: '/dashboard/payment-methods', label: 'Payment Methods', icon: CreditCard },
