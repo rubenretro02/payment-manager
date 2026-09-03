@@ -315,6 +315,18 @@ export async function addSeed(
   return seed;
 }
 
+/**
+ * Re-check the vault password (used before SIGNING anything). Same
+ * rate-limiting as unlock; throws VaultError on a wrong password.
+ */
+export async function verifyVaultPassword(password: string): Promise<void> {
+  assertNotRateLimited();
+  const records = await loadRecords();
+  if (records.length === 0) throw new VaultError('Vault is not set up yet', 'NOT_CONFIGURED', 404);
+  if (!decryptMnemonic(records[0], password)) registerFailure();
+  state.failures = 0;
+}
+
 export function lockVault(request?: NextRequest): void {
   // Any holder of a valid token may lock the whole vault (safer default).
   void request;
@@ -402,6 +414,17 @@ export class Deriver {
   address(family: 'evm' | 'solana', path: string): string {
     return family === 'solana' ? this.solana(path) : this.evm(path);
   }
+}
+
+/** Signing account for a wallet at an arbitrary derivation path (EVM). */
+export function deriveEvmAccountAtPath(mnemonic: string, path: string): HDAccount {
+  return hdKeyToAccount(EvmHDKey.fromMasterSeed(mnemonicToSeedSync(mnemonic)), { path: path as `m/44'/60'/${string}` });
+}
+
+/** Signing keypair for a wallet at an arbitrary derivation path (Solana). */
+export function deriveSolanaKeypairAtPath(mnemonic: string, path: string): Keypair {
+  const node = HDKey.fromMasterSeed(mnemonicToSeedSync(mnemonic)).derive(path);
+  return Keypair.fromSeed(node.privateKey);
 }
 
 export function detectFamily(address: string): 'evm' | 'solana' | null {

@@ -49,7 +49,11 @@ import {
   ArrowUpDown,
   Inbox,
   CheckCircle2,
+  Send,
+  Fuel,
+  ArrowLeftRight,
 } from 'lucide-react';
+import { SendDialog } from '@/components/wallets/SendDialog';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import { Textarea } from '@/components/ui/textarea';
@@ -67,9 +71,31 @@ interface TokenBalance {
   amount: number;
   usd: number | null;
   native: boolean;
+  contract?: string | null;
   verified?: boolean;
   spam?: boolean;
 }
+interface GasSettings {
+  gas_wallet_evm: string | null;
+  gas_wallet_solana: string | null;
+}
+interface TransferRow {
+  id: string;
+  wallet_id: string | null;
+  network: string;
+  from_address: string;
+  to_address: string;
+  token_symbol: string;
+  amount: number;
+  tx_hash: string | null;
+  status: 'sent' | 'confirmed' | 'failed';
+  error: string | null;
+  purpose: 'send' | 'gas';
+  created_at: string;
+  wallet?: { name: string | null; address: string } | { name: string | null; address: string }[] | null;
+}
+const txUrl = (network: string, hash: string) =>
+  `${(getNetwork(network)?.explorer || '').replace('/address/', '/tx/').replace('/account/', '/tx/')}${hash}`;
 interface DiscoverSeedResult {
   seed: { id: number; name: string };
   evm: { checked: number; added: Wallet[]; errors: string[] };
@@ -285,6 +311,16 @@ export default function WalletsPage() {
   const [depositsLoading, setDepositsLoading] = useState(false);
   const [scanningDeposits, setScanningDeposits] = useState(false);
 
+  // Send / gas tank / transfers
+  const [sendWallet, setSendWallet] = useState<Wallet | null>(null);
+  const [gasSettings, setGasSettings] = useState<GasSettings>({ gas_wallet_evm: null, gas_wallet_solana: null });
+  const [gasOpen, setGasOpen] = useState(false);
+  const [gasDraft, setGasDraft] = useState<GasSettings>({ gas_wallet_evm: null, gas_wallet_solana: null });
+  const [gasSaving, setGasSaving] = useState(false);
+  const [transfersOpen, setTransfersOpen] = useState(false);
+  const [transfers, setTransfers] = useState<TransferRow[]>([]);
+  const [transfersLoading, setTransfersLoading] = useState(false);
+
   // Create dialog
   const [createOpen, setCreateOpen] = useState(false);
   const [createForm, setCreateForm] = useState({ network: 'base', name: '', account_id: 'none', seed_id: '' });
@@ -343,11 +379,57 @@ export default function WalletsPage() {
     }
   }
 
+  async function loadGasSettings() {
+    try {
+      const res = await vault.authFetch('/api/wallets/settings');
+      const json = await res.json();
+      if (json.success) setGasSettings(json.data as GasSettings);
+    } catch {
+      /* optional */
+    }
+  }
+
+  async function saveGasSettings() {
+    setGasSaving(true);
+    try {
+      const res = await vault.authFetch('/api/wallets/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(gasDraft),
+      });
+      const json = await res.json();
+      if (!json.success) {
+        toast.error(json.error || 'Could not save');
+        return;
+      }
+      setGasSettings(json.data as GasSettings);
+      setGasOpen(false);
+      toast.success('Gas-tank wallets saved');
+    } finally {
+      setGasSaving(false);
+    }
+  }
+
+  async function loadTransfers() {
+    setTransfersLoading(true);
+    try {
+      const res = await vault.authFetch('/api/wallets/transfers?limit=150');
+      const json = await res.json();
+      if (json.success) setTransfers(json.data || []);
+      else if (res.status !== 401) toast.error(json.error || 'Failed to load transfers');
+    } catch {
+      toast.error('Failed to load transfers');
+    } finally {
+      setTransfersLoading(false);
+    }
+  }
+
   useEffect(() => {
     if (unlocked) {
       loadWallets();
       loadBalances();
       loadAccounts();
+      loadGasSettings();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [unlocked]);
@@ -758,6 +840,14 @@ export default function WalletsPage() {
               <Inbox className="h-4 w-4" />
               Deposits
             </Button>
+            <Button variant="outline" onClick={() => { setTransfersOpen(true); loadTransfers(); }} className="gap-2" title="Everything sent from this app">
+              <ArrowLeftRight className="h-4 w-4" />
+              Transfers
+            </Button>
+            <Button variant="outline" onClick={() => { setGasDraft(gasSettings); setGasOpen(true); }} className="gap-2" title="Wallets that pay network fees for the others">
+              <Fuel className="h-4 w-4" />
+              Gas tank
+            </Button>
             <Button variant="outline" onClick={() => vault.lock()} className="gap-2">
               <Lock className="h-4 w-4" />
               Lock
@@ -1032,6 +1122,16 @@ export default function WalletsPage() {
                           <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={(e) => { e.stopPropagation(); setAssignFor(w); setAssignAccountId(''); }}>
                             <Link2 className="h-3 w-3 mr-1" /> Assign to account
                           </Button>
+                          {w.source === 'seed' && (
+                            <Button size="sm" variant="ghost" className="h-6 px-2 text-xs text-primary" onClick={(e) => { e.stopPropagation(); setSendWallet(w); }} title="Send from this wallet">
+                              <Send className="h-3 w-3 mr-1" /> Send
+                            </Button>
+                          )}
+                          {(gasSettings.gas_wallet_evm === w.id || gasSettings.gas_wallet_solana === w.id) && (
+                            <Badge variant="outline" className="text-[10px] gap-1 border-orange-300 text-orange-800 bg-orange-50" title="Pays network fees for the other wallets">
+                              <Fuel className="h-3 w-3" /> Gas tank
+                            </Badge>
+                          )}
                           <span className="inline-flex items-center gap-1 text-primary ml-auto">
                             <History className="h-3 w-3" /> Transactions
                           </span>
@@ -1473,6 +1573,120 @@ export default function WalletsPage() {
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setDepositsOpen(false)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Send */}
+      <SendDialog
+        wallet={sendWallet}
+        onClose={() => setSendWallet(null)}
+        myWallets={wallets}
+        balances={sendWallet ? balanceFor(sendWallet.id)?.balances || [] : []}
+        gasWallet={
+          sendWallet
+            ? wallets.find((w) => w.id === (sendWallet.chain_family === 'solana' ? gasSettings.gas_wallet_solana : gasSettings.gas_wallet_evm) && w.id !== sendWallet.id) || null
+            : null
+        }
+        vault={vault}
+        adminId={user?.id}
+        onSent={() => { loadBalances(); }}
+      />
+
+      {/* Gas tank settings */}
+      <Dialog open={gasOpen} onOpenChange={(o) => !gasSaving && setGasOpen(o)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Fuel className="h-5 w-5 text-primary" /> Gas tank</DialogTitle>
+            <DialogDescription>
+              Receiving wallets usually hold only USDC and no ETH or SOL for fees. Pick one wallet per family that keeps a little native coin; when you send from a wallet that has no gas, one click tops it up from here.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4">
+            {(['evm', 'solana'] as const).map((family) => {
+              const key = family === 'evm' ? 'gas_wallet_evm' : 'gas_wallet_solana';
+              const options = wallets.filter((w) => w.source === 'seed' && w.chain_family === family);
+              const current = wallets.find((w) => w.id === gasDraft[key]);
+              const native = current ? (balanceFor(current.id)?.balances || []).filter((b) => b.native && b.amount > 0) : [];
+              return (
+                <div key={family} className="grid gap-2">
+                  <Label>{family === 'evm' ? 'EVM gas wallet (pays ETH / POL / BNB / AVAX / SEI fees)' : 'Solana gas wallet (pays SOL fees)'}</Label>
+                  <Select value={gasDraft[key] || 'none'} onValueChange={(v) => setGasDraft({ ...gasDraft, [key]: v === 'none' ? null : v })}>
+                    <SelectTrigger><SelectValue placeholder="None" /></SelectTrigger>
+                    <SelectContent className="max-h-64">
+                      <SelectItem value="none">None</SelectItem>
+                      {options.map((w) => (
+                        <SelectItem key={w.id} value={w.id}>{w.name || shortAddress(w.address)} · {shortAddress(w.address)}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {current && (
+                    <p className="text-xs text-muted-foreground">
+                      Fuel available: {native.length === 0 ? 'none — send some native coin to it first' : native.map((b) => `${fmtAmount(b.amount)} ${b.symbol} (${getNetwork(b.network)?.label})`).join(' · ')}
+                    </p>
+                  )}
+                </div>
+              );
+            })}
+            <p className="text-xs text-muted-foreground">Tip: keep the gas wallet funded with a few dollars of ETH on Base and Ethereum, and a bit of SOL. Fees on Base are about a cent per transfer.</p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setGasOpen(false)} disabled={gasSaving}>Cancel</Button>
+            <Button onClick={saveGasSettings} disabled={gasSaving}>
+              {gasSaving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Fuel className="h-4 w-4 mr-2" />}
+              Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Transfers made from the app */}
+      <Dialog open={transfersOpen} onOpenChange={setTransfersOpen}>
+        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><ArrowLeftRight className="h-5 w-5 text-primary" /> Transfers sent from the app</DialogTitle>
+            <DialogDescription>Every send and gas top-up made here, including failed attempts.</DialogDescription>
+          </DialogHeader>
+          {transfersLoading && transfers.length === 0 ? (
+            <div className="flex justify-center py-8"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>
+          ) : transfers.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <ArrowLeftRight className="h-10 w-10 mx-auto mb-3 opacity-50" />
+              <p className="font-medium">Nothing sent yet</p>
+            </div>
+          ) : (
+            <div className="divide-y rounded-lg border">
+              {transfers.map((t) => {
+                const w = Array.isArray(t.wallet) ? t.wallet[0] : t.wallet;
+                return (
+                  <div key={t.id} className="flex items-start gap-3 p-3">
+                    <div className={`h-8 w-8 rounded-full flex items-center justify-center shrink-0 ${t.status === 'failed' ? 'bg-red-100 text-red-700' : t.status === 'confirmed' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                      {t.status === 'failed' ? <AlertTriangle className="h-4 w-4" /> : t.purpose === 'gas' ? <Fuel className="h-4 w-4" /> : <ArrowUpRight className="h-4 w-4" />}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-semibold">-{fmtAmount(t.amount)} {t.token_symbol}</span>
+                        <Badge variant="outline" className="text-[10px]">{getNetwork(t.network)?.label || t.network}</Badge>
+                        {t.purpose === 'gas' && <Badge variant="outline" className="text-[10px] border-orange-300 text-orange-800">gas top-up</Badge>}
+                        <Badge className={`text-[10px] ${t.status === 'failed' ? 'bg-red-100 text-red-800' : t.status === 'confirmed' ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800'}`}>{t.status}</Badge>
+                      </div>
+                      <p className="text-xs text-muted-foreground truncate">
+                        from {w?.name || shortAddress(t.from_address)} → {shortAddress(t.to_address)} · {format(new Date(t.created_at), 'MMM d, yyyy HH:mm')}
+                      </p>
+                      {t.error && <p className="text-xs text-red-700 truncate">{t.error}</p>}
+                    </div>
+                    {t.tx_hash && (
+                      <a href={txUrl(t.network, t.tx_hash)} target="_blank" rel="noreferrer" className="text-muted-foreground hover:text-foreground shrink-0" title="Open in explorer">
+                        <ExternalLink className="h-4 w-4" />
+                      </a>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setTransfersOpen(false)}>Close</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

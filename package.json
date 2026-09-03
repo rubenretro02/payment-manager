@@ -24,6 +24,7 @@
     "@radix-ui/react-switch": "^1.2.6",
     "@radix-ui/react-tabs": "^1.1.13",
     "@scure/bip39": "^2.4.0",
+    "@solana/spl-token": "^0.4.15",
     "@solana/web3.js": "^1.98.4",
     "@supabase/ssr": "^0.10.2",
     "@supabase/supabase-js": "^2.105.1",

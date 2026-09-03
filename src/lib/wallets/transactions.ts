@@ -67,7 +67,7 @@ export const BLOCKSCOUT_BASES: Partial<Record<NetworkKey, string>> = Object.from
     .map(([k, v]) => [k, v.base])
 );
 
-const TX_EXPLORER: Record<NetworkKey, string> = {
+export const TX_EXPLORER: Record<NetworkKey, string> = {
   ethereum: 'https://etherscan.io/tx/',
   base: 'https://basescan.org/tx/',
   arbitrum: 'https://arbiscan.io/tx/',
