@@ -34,7 +34,14 @@ import {
   Unlink,
   Loader2,
   AlertTriangle,
+  Search,
+  X,
+  History,
+  ArrowDownLeft,
+  ArrowUpRight,
+  Coins,
 } from 'lucide-react';
+import { format } from 'date-fns';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import { useWalletVault } from '@/hooks/useWalletVault';
@@ -62,6 +69,26 @@ interface AccountOption {
   wallet_address: string | null;
   user_name: string | null;
 }
+interface TxItem {
+  id: string;
+  network: string;
+  hash: string;
+  timestamp: string | null;
+  direction: 'in' | 'out' | 'self';
+  kind: 'native' | 'token';
+  symbol: string;
+  amount: number;
+  counterparty: string | null;
+  status: 'ok' | 'failed';
+  explorer_url: string | null;
+  verified?: boolean;
+}
+interface TxResult {
+  items: TxItem[];
+  unsupported: string[];
+  errors: string[];
+  fetched_at: string;
+}
 
 const fmtUsd = (n: number) => `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const fmtAmount = (n: number) =>
@@ -83,6 +110,14 @@ export default function WalletsPage() {
   const [loadingBalances, setLoadingBalances] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
   const [filterNetwork, setFilterNetwork] = useState('all');
+  const [onlyWithBalance, setOnlyWithBalance] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  // Transactions dialog
+  const [txWallet, setTxWallet] = useState<Wallet | null>(null);
+  const [txData, setTxData] = useState<TxResult | null>(null);
+  const [txLoading, setTxLoading] = useState(false);
+  const [txNetwork, setTxNetwork] = useState('all');
 
   // Create dialog
   const [createOpen, setCreateOpen] = useState(false);
@@ -230,6 +265,23 @@ export default function WalletsPage() {
     }
   };
 
+  const openTransactions = async (w: Wallet) => {
+    setTxWallet(w);
+    setTxData(null);
+    setTxNetwork('all');
+    setTxLoading(true);
+    try {
+      const res = await vault.authFetch(`/api/wallets/${w.id}/transactions?limit=40`);
+      const json = await res.json();
+      if (json.success) setTxData(json.data);
+      else if (res.status !== 401) toast.error(json.error || 'Failed to load transactions');
+    } catch {
+      toast.error('Failed to load transactions');
+    } finally {
+      setTxLoading(false);
+    }
+  };
+
   const handleUnassign = async (wallet: Wallet, accountId: string) => {
     const res = await vault.authFetch(`/api/wallets/${wallet.id}`, {
       method: 'PATCH',
@@ -253,9 +305,25 @@ export default function WalletsPage() {
   }
 
   const balanceFor = (id: string) => balances?.wallets.find((b) => b.wallet_id === id);
-  const visibleWallets = filterNetwork === 'all'
-    ? wallets
-    : wallets.filter((w) => (filterNetwork === 'solana' ? w.chain_family === 'solana' : w.chain_family === 'evm'));
+  const q = searchQuery.trim().toLowerCase();
+  const hasBalance = (id: string) => (balanceFor(id)?.balances.length || 0) > 0;
+  const visibleWallets = wallets.filter((w) => {
+    if (filterNetwork === 'solana' && w.chain_family !== 'solana') return false;
+    if (filterNetwork === 'evm' && w.chain_family !== 'evm') return false;
+    if (onlyWithBalance && !hasBalance(w.id)) return false;
+    if (!q) return true;
+    const b = balanceFor(w.id);
+    const haystack: (string | null | undefined)[] = [
+      w.name,
+      w.address,
+      w.network,
+      getNetwork(w.network)?.label,
+      `${w.chain_family === 'solana' ? 'solana account' : 'metamask account'} ${w.derivation_index + 1}`,
+      ...(w.assigned_accounts || []).flatMap((a) => [a.full_name, a.user_name]),
+      ...(b?.balances || []).flatMap((t) => [t.symbol, getNetwork(t.network)?.label]),
+    ];
+    return haystack.some((s) => !!s && s.toLowerCase().includes(q));
+  });
 
   return (
     <div className="space-y-6 animate-in">
@@ -288,29 +356,50 @@ export default function WalletsPage() {
 
       <VaultGate vault={vault}>
         {/* Summary */}
+        {/* Summary cards double as filters: click to toggle */}
         <div className="grid gap-3 grid-cols-2 md:grid-cols-4">
-          <Card className="col-span-2">
+          <Card
+            className={`col-span-2 cursor-pointer transition-all hover:border-green-500/60 active:scale-[0.99] ${onlyWithBalance ? 'ring-2 ring-green-500 border-green-500' : ''}`}
+            onClick={() => setOnlyWithBalance((v) => !v)}
+            title={onlyWithBalance ? 'Showing only wallets with balance — click to show all' : 'Click to show only wallets with balance'}
+          >
             <CardContent className="p-4">
-              <p className="text-xs text-muted-foreground">Total balance (USD)</p>
-              <p className="text-3xl font-extrabold text-green-700">
-                {balances ? fmtUsd(balances.total_usd) : '—'}
-              </p>
-              <p className="text-xs text-muted-foreground mt-1">
-                {balances ? `Updated ${new Date(balances.fetched_at).toLocaleTimeString()}` : 'Loading balances…'}
-                {loadingBalances && balances ? ' · refreshing' : ''}
-              </p>
+              <div className="flex items-start justify-between">
+                <div>
+                  <p className="text-xs text-muted-foreground">Total balance (USD)</p>
+                  <p className="text-3xl font-extrabold text-green-700">
+                    {balances ? fmtUsd(balances.total_usd) : '—'}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {balances ? `Updated ${new Date(balances.fetched_at).toLocaleTimeString()}` : 'Loading balances…'}
+                    {loadingBalances && balances ? ' · refreshing' : ''}
+                  </p>
+                </div>
+                <div className="text-right">
+                  <Coins className={`h-5 w-5 ml-auto ${onlyWithBalance ? 'text-green-600' : 'text-muted-foreground/40'}`} />
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {balances ? `${wallets.filter((w) => hasBalance(w.id)).length} with balance` : ''}
+                  </p>
+                </div>
+              </div>
             </CardContent>
           </Card>
-          <Card>
+          <Card
+            className={`cursor-pointer transition-all hover:border-blue-500/60 active:scale-[0.98] ${filterNetwork === 'evm' ? 'ring-2 ring-blue-500 border-blue-500' : ''}`}
+            onClick={() => setFilterNetwork((f) => (f === 'evm' ? 'all' : 'evm'))}
+          >
             <CardContent className="p-4">
               <p className="text-xs text-muted-foreground">EVM wallets</p>
-              <p className="text-2xl font-bold">{wallets.filter((w) => w.chain_family === 'evm').length}</p>
+              <p className="text-2xl font-bold text-blue-700">{wallets.filter((w) => w.chain_family === 'evm').length}</p>
             </CardContent>
           </Card>
-          <Card>
+          <Card
+            className={`cursor-pointer transition-all hover:border-purple-500/60 active:scale-[0.98] ${filterNetwork === 'solana' ? 'ring-2 ring-purple-500 border-purple-500' : ''}`}
+            onClick={() => setFilterNetwork((f) => (f === 'solana' ? 'all' : 'solana'))}
+          >
             <CardContent className="p-4">
               <p className="text-xs text-muted-foreground">Solana wallets</p>
-              <p className="text-2xl font-bold">{wallets.filter((w) => w.chain_family === 'solana').length}</p>
+              <p className="text-2xl font-bold text-purple-700">{wallets.filter((w) => w.chain_family === 'solana').length}</p>
             </CardContent>
           </Card>
         </div>
@@ -325,18 +414,55 @@ export default function WalletsPage() {
           </div>
         )}
 
-        {/* Filter */}
-        <div className="flex items-center gap-2">
-          <Label className="text-sm text-muted-foreground">Show:</Label>
-          <Select value={filterNetwork} onValueChange={setFilterNetwork}>
-            <SelectTrigger className="w-[180px]"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All wallets</SelectItem>
-              <SelectItem value="evm">EVM only</SelectItem>
-              <SelectItem value="solana">Solana only</SelectItem>
-            </SelectContent>
-          </Select>
+        {/* Search + filter */}
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              placeholder="Search by name, address, network, account, user or token…"
+              className="pl-10 pr-9"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                title="Clear"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <Label className="text-sm text-muted-foreground">Show:</Label>
+            <Select value={filterNetwork} onValueChange={setFilterNetwork}>
+              <SelectTrigger className="w-[150px]"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All wallets</SelectItem>
+                <SelectItem value="evm">EVM only</SelectItem>
+                <SelectItem value="solana">Solana only</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button
+              type="button"
+              variant={onlyWithBalance ? 'default' : 'outline'}
+              size="sm"
+              className="gap-1"
+              onClick={() => setOnlyWithBalance((v) => !v)}
+            >
+              <Coins className="h-3.5 w-3.5" />
+              With balance
+            </Button>
+          </div>
         </div>
+        {(q || filterNetwork !== 'all' || onlyWithBalance) && (
+          <p className="text-xs text-muted-foreground -mt-2">
+            Showing {visibleWallets.length} of {wallets.length} wallets
+            {onlyWithBalance ? ' · with balance only' : ''}
+          </p>
+        )}
 
         {/* List */}
         <Card>
@@ -345,9 +471,22 @@ export default function WalletsPage() {
               <div className="flex justify-center py-12"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>
             ) : visibleWallets.length === 0 ? (
               <div className="p-12 text-center text-muted-foreground">
-                <WalletIcon className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                <p className="font-medium">No wallets yet</p>
-                <p className="text-sm">Create one with “New wallet”.</p>
+                {wallets.length === 0 ? (
+                  <>
+                    <WalletIcon className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                    <p className="font-medium">No wallets yet</p>
+                    <p className="text-sm">Create one with “New wallet”.</p>
+                  </>
+                ) : (
+                  <>
+                    <Search className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                    <p className="font-medium">No matches</p>
+                    <p className="text-sm">{q ? `No wallets match “${searchQuery}”` : 'Nothing in this filter'}</p>
+                    <Button variant="outline" size="sm" className="mt-4" onClick={() => { setSearchQuery(''); setFilterNetwork('all'); }}>
+                      Clear search
+                    </Button>
+                  </>
+                )}
               </div>
             ) : (
               <div className="divide-y">
@@ -356,13 +495,19 @@ export default function WalletsPage() {
                   const b = balanceFor(w.id);
                   const explorer = explorerAddressUrl(w.network, w.address);
                   return (
-                    <div key={w.id} className="p-4 flex flex-col gap-3 md:flex-row md:items-start md:justify-between hover:bg-muted/40 transition-colors">
+                    <div
+                      key={w.id}
+                      className="p-4 flex flex-col gap-3 md:flex-row md:items-start md:justify-between hover:bg-muted/40 transition-colors cursor-pointer"
+                      onClick={() => openTransactions(w)}
+                      title="Click to see transactions"
+                    >
                       <div className="min-w-0 flex-1 space-y-1.5">
                         {/* Name */}
                         <div className="flex items-center gap-2 flex-wrap">
                           {editingId === w.id ? (
                             <form
                               className="flex items-center gap-2"
+                              onClick={(e) => e.stopPropagation()}
                               onSubmit={(e) => { e.preventDefault(); saveName(w.id); }}
                             >
                               <Input value={editName} onChange={(e) => setEditName(e.target.value)} className="h-8 w-56" autoFocus />
@@ -376,7 +521,7 @@ export default function WalletsPage() {
                                 type="button"
                                 className="text-muted-foreground hover:text-foreground"
                                 title="Rename"
-                                onClick={() => { setEditingId(w.id); setEditName(w.name || ''); }}
+                                onClick={(e) => { e.stopPropagation(); setEditingId(w.id); setEditName(w.name || ''); }}
                               >
                                 <Pencil className="h-3.5 w-3.5" />
                               </button>
@@ -393,11 +538,11 @@ export default function WalletsPage() {
                         {/* Address */}
                         <div className="flex items-center gap-2 text-sm">
                           <code className="font-mono text-xs bg-muted px-2 py-1 rounded break-all">{w.address}</code>
-                          <button type="button" onClick={() => copy(w.address)} className="text-muted-foreground hover:text-foreground" title="Copy">
+                          <button type="button" onClick={(e) => { e.stopPropagation(); copy(w.address); }} className="text-muted-foreground hover:text-foreground" title="Copy">
                             {copied === w.address ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4" />}
                           </button>
                           {explorer && (
-                            <a href={explorer} target="_blank" rel="noreferrer" className="text-muted-foreground hover:text-foreground" title="Open in explorer">
+                            <a href={explorer} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="text-muted-foreground hover:text-foreground" title="Open in explorer">
                               <ExternalLink className="h-4 w-4" />
                             </a>
                           )}
@@ -417,15 +562,18 @@ export default function WalletsPage() {
                               <Badge key={a.id} variant="outline" className="gap-1 bg-teal-50 border-teal-300 text-teal-800">
                                 <Link2 className="h-3 w-3" />
                                 {a.full_name}{a.user_name ? ` · ${a.user_name}` : ''}
-                                <button type="button" onClick={() => handleUnassign(w, a.id)} title="Unassign" className="ml-1 hover:text-red-600">
+                                <button type="button" onClick={(e) => { e.stopPropagation(); handleUnassign(w, a.id); }} title="Unassign" className="ml-1 hover:text-red-600">
                                   <Unlink className="h-3 w-3" />
                                 </button>
                               </Badge>
                             ))
                           )}
-                          <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={() => { setAssignFor(w); setAssignAccountId(''); }}>
+                          <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={(e) => { e.stopPropagation(); setAssignFor(w); setAssignAccountId(''); }}>
                             <Link2 className="h-3 w-3 mr-1" /> Assign to account
                           </Button>
+                          <span className="inline-flex items-center gap-1 text-primary ml-auto">
+                            <History className="h-3 w-3" /> Transactions
+                          </span>
                         </div>
                       </div>
 
@@ -504,6 +652,117 @@ export default function WalletsPage() {
               {creating ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Plus className="h-4 w-4 mr-2" />}
               Create
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Transactions dialog */}
+      <Dialog open={txWallet !== null} onOpenChange={(o) => !o && setTxWallet(null)}>
+        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <History className="h-5 w-5 text-primary" />
+              {txWallet?.name || 'Wallet'} · transactions
+            </DialogTitle>
+            <DialogDescription className="font-mono text-xs break-all">{txWallet?.address}</DialogDescription>
+          </DialogHeader>
+
+          {txLoading && (
+            <div className="flex flex-col items-center justify-center py-10 gap-2 text-muted-foreground">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              <p className="text-xs">Checking every network…</p>
+            </div>
+          )}
+
+          {!txLoading && txData && (() => {
+            const nets = [...new Set(txData.items.map((t) => t.network))];
+            const items = txNetwork === 'all' ? txData.items : txData.items.filter((t) => t.network === txNetwork);
+            return (
+              <div className="space-y-3">
+                {nets.length > 1 && (
+                  <div className="flex flex-wrap gap-1">
+                    <Badge
+                      variant="outline"
+                      className={`cursor-pointer ${txNetwork === 'all' ? 'bg-primary text-primary-foreground border-primary' : ''}`}
+                      onClick={() => setTxNetwork('all')}
+                    >
+                      All ({txData.items.length})
+                    </Badge>
+                    {nets.map((n) => (
+                      <Badge
+                        key={n}
+                        variant="outline"
+                        className={`cursor-pointer ${txNetwork === n ? 'bg-primary text-primary-foreground border-primary' : ''}`}
+                        onClick={() => setTxNetwork(n)}
+                      >
+                        {getNetwork(n)?.label || n} ({txData.items.filter((t) => t.network === n).length})
+                      </Badge>
+                    ))}
+                  </div>
+                )}
+
+                {items.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <History className="h-10 w-10 mx-auto mb-3 opacity-50" />
+                    <p className="font-medium">No transactions found</p>
+                    <p className="text-xs">Nothing received or sent on the networks we can read.</p>
+                  </div>
+                ) : (
+                  <div className="divide-y rounded-lg border">
+                    {items.map((t) => {
+                      const incoming = t.direction === 'in';
+                      return (
+                        <div key={t.id} className="flex items-center gap-3 p-3">
+                          <div className={`h-8 w-8 rounded-full flex items-center justify-center shrink-0 ${incoming ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                            {incoming ? <ArrowDownLeft className="h-4 w-4" /> : <ArrowUpRight className="h-4 w-4" />}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className={`font-semibold ${incoming ? 'text-green-700' : 'text-red-700'}`}>
+                                {incoming ? '+' : '-'}{fmtAmount(t.amount)} {t.symbol}
+                              </span>
+                              <Badge variant="outline" className="text-[10px]">{getNetwork(t.network)?.label || t.network}</Badge>
+                              {t.status === 'failed' && <Badge className="bg-red-100 text-red-800 text-[10px]">failed</Badge>}
+                              {t.verified === false && (
+                                <Badge variant="outline" className="text-[10px] text-amber-700 border-amber-300" title="Token not in our list — could be spam/airdrop">
+                                  unverified token
+                                </Badge>
+                              )}
+                            </div>
+                            <p className="text-xs text-muted-foreground truncate">
+                              {incoming ? 'from' : 'to'} {t.counterparty ? shortAddress(t.counterparty) : '—'}
+                              {t.timestamp ? ` · ${format(new Date(t.timestamp), 'MMM d, yyyy HH:mm')}` : ''}
+                            </p>
+                          </div>
+                          {t.explorer_url && (
+                            <a href={t.explorer_url} target="_blank" rel="noreferrer" className="text-muted-foreground hover:text-foreground shrink-0" title="Open in explorer">
+                              <ExternalLink className="h-4 w-4" />
+                            </a>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {(txData.unsupported.length > 0 || txData.errors.length > 0) && (
+                  <div className="text-xs text-muted-foreground space-y-1">
+                    {txData.unsupported.length > 0 && (
+                      <p>
+                        History not available yet for {txData.unsupported.map((n) => getNetwork(n)?.label || n).join(', ')} (no free indexer). Use the explorer link on the wallet.
+                      </p>
+                    )}
+                    {txData.errors.length > 0 && (
+                      <p className="text-amber-700">Did not respond: {txData.errors.join(' · ')}</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setTxWallet(null)}>Close</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
