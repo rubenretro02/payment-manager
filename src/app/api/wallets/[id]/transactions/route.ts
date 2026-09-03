@@ -1,7 +1,8 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
 import { authorize } from '@/lib/wallets/vault';
 import { getWallet } from '@/lib/wallets/store';
 import { fetchTransactions } from '@/lib/wallets/transactions';
+import { scanWalletTokens } from '@/lib/wallets/discovery';
 
 /** GET /api/wallets/[id]/transactions?limit=40 → recent activity across every network. */
 export async function GET(
@@ -21,6 +22,14 @@ export async function GET(
       { id: wallet.id, address: wallet.address, chain_family: wallet.chain_family },
       limit
     );
+
+    // Opening a wallet is a good moment to refresh its discovered tokens
+    // (at most once an hour, in the background).
+    const lastScan = wallet.token_scan_at ? Date.parse(wallet.token_scan_at) : 0;
+    if (Date.now() - lastScan > 60 * 60 * 1000) {
+      after(() => scanWalletTokens(wallet).catch(() => undefined));
+    }
+
     return NextResponse.json({ success: true, data: result });
   } catch (error) {
     return NextResponse.json({ success: false, error: error instanceof Error ? error.message : 'Failed' }, { status: 500 });

@@ -1,6 +1,7 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
 import { authorize } from '@/lib/wallets/vault';
-import { assignWalletToAccount, createWallet, listWallets } from '@/lib/wallets/store';
+import { assignWalletToAccount, createWallet, createWatchWallet, listWallets } from '@/lib/wallets/store';
+import { scanWalletTokens } from '@/lib/wallets/discovery';
 import { isNetworkKey } from '@/lib/wallets/networks';
 
 const locked = () =>
@@ -18,22 +19,27 @@ export async function GET(request: NextRequest) {
 }
 
 /**
- * POST /api/wallets { network, name?, account_id? }
- * Derives the next key for the network's family and stores its address.
- * With account_id, the account's payment destination is set to it.
+ * POST /api/wallets
+ *   { network, name?, account_id? }          → derive the NEXT unused account of the seed
+ *   { address, network, name?, account_id? } → watch-only wallet (address only, no keys)
+ * With account_id, the account's payment destination is set to the wallet.
  */
 export async function POST(request: NextRequest) {
   const session = authorize(request);
   if (!session) return locked();
   try {
-    const body = (await request.json()) as { network?: string; name?: string; account_id?: string };
+    const body = (await request.json()) as { network?: string; name?: string; account_id?: string; address?: string };
     if (!isNetworkKey(body.network)) {
       return NextResponse.json({ success: false, error: 'Unknown network' }, { status: 400 });
     }
-    const wallet = await createWallet(session.mnemonic, body.network, body.name);
+    const wallet = body.address
+      ? await createWatchWallet({ address: body.address, network: body.network, name: body.name })
+      : await createWallet(session.mnemonic, body.network, body.name);
     if (body.account_id) {
       await assignWalletToAccount(wallet, body.account_id, body.network);
     }
+    // A watched address may already hold tokens — discover them in the background.
+    if (body.address) after(() => scanWalletTokens(wallet).catch(() => undefined));
     return NextResponse.json({ success: true, data: wallet });
   } catch (error) {
     return NextResponse.json({ success: false, error: error instanceof Error ? error.message : 'Failed' }, { status: 500 });

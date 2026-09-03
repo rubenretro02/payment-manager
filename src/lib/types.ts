@@ -176,10 +176,15 @@ export interface Payment {
 export interface Wallet {
   id: string;
   chain_family: 'evm' | 'solana';
-  derivation_index: number;
+  // null for watch-only wallets
+  derivation_index: number | null;
+  derivation_path: string | null;
+  // 'seed' = derived from the vault; 'watch' = address only (no keys)
+  source: 'seed' | 'watch';
   address: string;
   network: string;
   name: string | null;
+  token_scan_at?: string | null;
   created_at: string;
   updated_at: string;
   // Accounts whose wallet_address currently points at this wallet.

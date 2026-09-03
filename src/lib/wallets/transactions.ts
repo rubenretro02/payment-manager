@@ -54,6 +54,13 @@ const INDEXERS: Partial<Record<NetworkKey, Indexer>> = {
   avalanche: { kind: 'etherscan', base: 'https://api.routescan.io/v2/network/mainnet/evm/43114/etherscan/api' },
 };
 
+/** Blockscout instances (v2 REST) — also used by token discovery. */
+export const BLOCKSCOUT_BASES: Partial<Record<NetworkKey, string>> = Object.fromEntries(
+  (Object.entries(INDEXERS) as [NetworkKey, Indexer][])
+    .filter(([, v]) => v.kind === 'blockscout')
+    .map(([k, v]) => [k, v.base])
+);
+
 const TX_EXPLORER: Record<NetworkKey, string> = {
   ethereum: 'https://etherscan.io/tx/',
   base: 'https://basescan.org/tx/',

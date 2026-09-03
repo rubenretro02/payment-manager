@@ -88,6 +88,13 @@ export function explorerAddressUrl(key: string, address: string): string | null 
 // Symbols treated as $1.00 for the unified USD total.
 export const STABLE_SYMBOLS = new Set(['USDC', 'USDBC', 'USDC.E', 'USDT', 'DAI', 'DAI.E', 'PYUSD', 'USDS']);
 
+// Airdrop spam is common on EVM: tokens whose symbol/name is a URL or a
+// "claim your reward" lure. They're still listed, just hidden by default.
+const SPAM_RE = /(https?:|www\.|\.(com|cfd|xyz|io|net|org|site|top|vip|pro|app|fun|lol|link|info|me)\b|claim|visit|airdrop|reward|bonus|voucher|giveaway)/i;
+export function isSpamToken(symbol: string | null | undefined, name?: string | null): boolean {
+  return SPAM_RE.test(`${symbol || ''} ${name || ''}`);
+}
+
 export function shortAddress(address: string): string {
   if (address.length <= 14) return address;
   return `${address.slice(0, 6)}…${address.slice(-4)}`;

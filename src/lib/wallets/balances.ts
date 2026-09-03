@@ -1,17 +1,19 @@
 // Server-side balance aggregation across every supported chain.
 //
 // EVM: one Multicall per chain for ALL wallets (native via Multicall3's
-// getEthBalance + ERC-20 balanceOf/decimals/symbol), using viem's public RPCs
-// unless RPC_URL_<CHAIN> overrides them. Solana: getBalance + parsed token
-// accounts (classic + Token-2022), which enumerates every SPL token natively.
+// getEthBalance + ERC-20 balanceOf/decimals/symbol for the curated list, plus
+// balanceOf for every token discovered per wallet), through verified public
+// RPCs with fallback. Solana: getBalance + parsed token accounts (classic +
+// Token-2022), which enumerates every SPL token natively.
 // Prices for native coins come from CoinGecko's free endpoint (cached 60s);
-// stablecoins count as $1. Any chain that fails is reported in `errors` and
-// skipped, never blocking the others.
+// stablecoins count as $1; discovered tokens use the explorer's exchange rate
+// when it has one. Any chain that fails is reported in `errors` and skipped.
 
-import { createPublicClient, http, erc20Abi, formatUnits, type Address, type ContractFunctionParameters } from 'viem';
+import { createPublicClient, erc20Abi, formatUnits, type Address, type ContractFunctionParameters } from 'viem';
 import { Connection, PublicKey, LAMPORTS_PER_SOL, type ParsedAccountData } from '@solana/web3.js';
-import { EVM_CHAINS, SOLANA_COINGECKO_ID, SOLANA_KNOWN_MINTS, evmRpcUrl, solanaRpcUrl, type EvmChainDef } from './chains';
-import { STABLE_SYMBOLS, type NetworkKey } from './networks';
+import { EVM_CHAINS, SOLANA_COINGECKO_ID, SOLANA_KNOWN_MINTS, evmTransport, solanaRpcUrl, type EvmChainDef } from './chains';
+import { STABLE_SYMBOLS, isSpamToken, type NetworkKey } from './networks';
+import type { DiscoveredToken } from './store';
 
 const CANONICAL_MULTICALL3: Address = '0xcA11bde05977b3631167028862bE2a173976CA11';
 const ETH_BALANCE_ABI = [
@@ -40,6 +42,10 @@ export interface TokenBalance {
   usd: number | null;
   native: boolean;
   contract: string | null;
+  /** curated/native = true; discovered via explorer = false */
+  verified: boolean;
+  /** heuristic: URL/claim-style airdrop spam */
+  spam: boolean;
 }
 
 export interface WalletBalance {
@@ -117,16 +123,19 @@ function symbolMatches(expected: string, onChain: unknown): boolean {
 async function fetchEvmChain(
   def: EvmChainDef,
   wallets: WalletRef[],
-  prices: Record<string, number>
+  prices: Record<string, number>,
+  extraTokens: Map<string, DiscoveredToken[]>
 ): Promise<Map<string, TokenBalance[]>> {
   const byWallet = new Map<string, TokenBalance[]>();
   if (wallets.length === 0) return byWallet;
 
-  const client = createPublicClient({
-    chain: def.chain,
-    transport: http(evmRpcUrl(def), { timeout: 8_000 }),
-  });
+  const client = createPublicClient({ chain: def.chain, transport: evmTransport(def) });
   const multicallAddress = (def.chain.contracts?.multicall3?.address as Address | undefined) ?? CANONICAL_MULTICALL3;
+  const curated = new Set(def.tokens.map((t) => t.address.toLowerCase()));
+
+  // Discovered tokens on this chain, per wallet (excluding curated ones)
+  const extraFor = (w: WalletRef): DiscoveredToken[] =>
+    (extraTokens.get(w.id) || []).filter((t) => t.network === def.key && !curated.has(t.contract.toLowerCase()));
 
   const contracts: ContractFunctionParameters[] = [];
   for (const t of def.tokens) {
@@ -138,11 +147,14 @@ async function fetchEvmChain(
     for (const t of def.tokens) {
       contracts.push({ address: t.address, abi: erc20Abi, functionName: 'balanceOf', args: [w.address as Address] });
     }
+    for (const t of extraFor(w)) {
+      contracts.push({ address: t.contract as Address, abi: erc20Abi, functionName: 'balanceOf', args: [w.address as Address] });
+    }
   }
 
   const results = await withTimeout(
-    client.multicall({ contracts, allowFailure: true, multicallAddress }),
-    12_000,
+    client.multicall({ contracts, allowFailure: true, multicallAddress, batchSize: 4096 }),
+    20_000,
     def.key
   );
 
@@ -170,13 +182,22 @@ async function fetchEvmChain(
     const nativeRaw = value();
     if (typeof nativeRaw === 'bigint' && nativeRaw > BigInt(0)) {
       const amount = Number(formatUnits(nativeRaw, def.chain.nativeCurrency.decimals));
-      list.push({ network: def.key, symbol: nativeSymbol, amount, usd: usdValue(nativeSymbol, amount, true, def.coingeckoId, prices), native: true, contract: null });
+      list.push({ network: def.key, symbol: nativeSymbol, amount, usd: usdValue(nativeSymbol, amount, true, def.coingeckoId, prices), native: true, contract: null, verified: true, spam: false });
     }
     for (const t of tokenMeta) {
       const raw = value();
       if (!t.valid || typeof raw !== 'bigint' || raw === BigInt(0)) continue;
       const amount = Number(formatUnits(raw, t.decimals));
-      list.push({ network: def.key, symbol: t.symbol, amount, usd: usdValue(t.symbol, amount, false, def.coingeckoId, prices), native: false, contract: t.address });
+      list.push({ network: def.key, symbol: t.symbol, amount, usd: usdValue(t.symbol, amount, false, def.coingeckoId, prices), native: false, contract: t.address, verified: true, spam: false });
+    }
+    for (const t of extraFor(w)) {
+      const raw = value();
+      if (typeof raw !== 'bigint' || raw === BigInt(0)) continue;
+      const decimals = t.decimals ?? 18;
+      const amount = Number(formatUnits(raw, decimals));
+      const symbol = t.symbol || `${t.contract.slice(0, 6)}…`;
+      const usd = t.exchange_rate && t.exchange_rate > 0 ? amount * t.exchange_rate : usdValue(symbol, amount, false, def.coingeckoId, prices);
+      list.push({ network: def.key, symbol, amount, usd, native: false, contract: t.contract, verified: false, spam: isSpamToken(symbol, t.name) });
     }
     byWallet.set(w.id, list);
   }
@@ -207,7 +228,7 @@ async function fetchSolana(wallets: WalletRef[], prices: Record<string, number>)
     const list: TokenBalance[] = [];
     if (lamports > 0) {
       const amount = lamports / LAMPORTS_PER_SOL;
-      list.push({ network: 'solana', symbol: 'SOL', amount, usd: usdValue('SOL', amount, true, SOLANA_COINGECKO_ID, prices), native: true, contract: null });
+      list.push({ network: 'solana', symbol: 'SOL', amount, usd: usdValue('SOL', amount, true, SOLANA_COINGECKO_ID, prices), native: true, contract: null, verified: true, spam: false });
     }
     for (const { account } of [...classic.value, ...t22.value]) {
       const info = (account.data as ParsedAccountData).parsed?.info as
@@ -216,8 +237,9 @@ async function fetchSolana(wallets: WalletRef[], prices: Record<string, number>)
       const mint = info?.mint;
       const amount = info?.tokenAmount?.uiAmount ?? 0;
       if (!mint || !amount) continue;
+      const known = mint in SOLANA_KNOWN_MINTS;
       const symbol = SOLANA_KNOWN_MINTS[mint] || `${mint.slice(0, 4)}…${mint.slice(-4)}`;
-      list.push({ network: 'solana', symbol, amount, usd: usdValue(symbol, amount, false, SOLANA_COINGECKO_ID, prices), native: false, contract: mint });
+      list.push({ network: 'solana', symbol, amount, usd: usdValue(symbol, amount, false, SOLANA_COINGECKO_ID, prices), native: false, contract: mint, verified: known, spam: false });
     }
     byWallet.set(w.id, list);
   }
@@ -230,8 +252,11 @@ async function fetchSolana(wallets: WalletRef[], prices: Record<string, number>)
 
 let resultCache: { at: number; key: string; result: BalancesResult } | null = null;
 
-export async function fetchBalances(wallets: WalletRef[]): Promise<BalancesResult> {
-  const cacheKey = wallets.map((w) => w.id).sort().join(',');
+export async function fetchBalances(
+  wallets: WalletRef[],
+  extraTokens: Map<string, DiscoveredToken[]> = new Map()
+): Promise<BalancesResult> {
+  const cacheKey = wallets.map((w) => w.id).sort().join(',') + `|${[...extraTokens.values()].reduce((n, l) => n + l.length, 0)}`;
   if (resultCache && resultCache.key === cacheKey && Date.now() - resultCache.at < 10_000) {
     return resultCache.result;
   }
@@ -250,16 +275,16 @@ export async function fetchBalances(wallets: WalletRef[]): Promise<BalancesResul
   const tasks: Promise<void>[] = [
     ...EVM_CHAINS.map(async (def) => {
       try {
-        merge(await fetchEvmChain(def, evmWallets, prices));
+        merge(await fetchEvmChain(def, evmWallets, prices, extraTokens));
       } catch (error) {
-        errors.push(`${def.key}: ${error instanceof Error ? error.message : 'failed'}`);
+        errors.push(`${def.key}: ${error instanceof Error ? error.message.split('\n')[0] : 'failed'}`);
       }
     }),
     (async () => {
       try {
         merge(await fetchSolana(solWallets, prices));
       } catch (error) {
-        errors.push(`solana: ${error instanceof Error ? error.message : 'failed'}`);
+        errors.push(`solana: ${error instanceof Error ? error.message.split('\n')[0] : 'failed'}`);
       }
     })(),
   ];
@@ -268,7 +293,8 @@ export async function fetchBalances(wallets: WalletRef[]): Promise<BalancesResul
   const result: BalancesResult = {
     wallets: wallets.map((w) => {
       const balances = (perWallet.get(w.id) || []).sort((a, b) => (b.usd ?? 0) - (a.usd ?? 0));
-      return { wallet_id: w.id, balances, total_usd: balances.reduce((s, b) => s + (b.usd ?? 0), 0) };
+      // Spam tokens never count towards totals
+      return { wallet_id: w.id, balances, total_usd: balances.filter((b) => !b.spam).reduce((s, b) => s + (b.usd ?? 0), 0) };
     }),
     total_usd: 0,
     prices,

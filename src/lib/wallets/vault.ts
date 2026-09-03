@@ -11,7 +11,7 @@
 import crypto from 'crypto';
 import { validateMnemonic, mnemonicToSeedSync } from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english.js';
-import { mnemonicToAccount, type HDAccount } from 'viem/accounts';
+import { mnemonicToAccount, hdKeyToAccount, HDKey as EvmHDKey, type HDAccount } from 'viem/accounts';
 import { HDKey } from 'micro-ed25519-hdkey';
 import { Keypair } from '@solana/web3.js';
 import type { NextRequest } from 'next/server';
@@ -244,4 +244,102 @@ export function deriveSolanaKeypair(mnemonic: string, index: number): Keypair {
 
 export function deriveSolanaAddress(mnemonic: string, index: number): string {
   return deriveSolanaKeypair(mnemonic, index).publicKey.toBase58();
+}
+
+// ---------------------------------------------------------------------------
+// Derivation path templates + bulk derivation
+// ---------------------------------------------------------------------------
+// Wallet apps don't all derive the same way from one seed. MetaMask, Zerion,
+// Trust and Coinbase Wallet use the BIP-44 standard path; Ledger has two of
+// its own. "Locate address" checks all of them so an address that exists in
+// another app can be matched (or ruled out) against this seed.
+
+export interface PathTemplate {
+  id: string;
+  label: string;
+  family: 'evm' | 'solana';
+  /** Highest index locateAddress scans for this template */
+  scanLimit: number;
+  path: (index: number) => string;
+}
+
+export const PATH_TEMPLATES: PathTemplate[] = [
+  { id: 'evm-standard', label: 'BIP-44 standard (MetaMask, Zerion, Trust, Coinbase Wallet)', family: 'evm', scanLimit: 2000, path: (i) => `m/44'/60'/0'/0/${i}` },
+  { id: 'evm-ledger-live', label: 'Ledger Live', family: 'evm', scanLimit: 500, path: (i) => `m/44'/60'/${i}'/0/0` },
+  { id: 'evm-ledger-legacy', label: 'Ledger Legacy / MyEtherWallet', family: 'evm', scanLimit: 500, path: (i) => `m/44'/60'/0'/${i}` },
+  { id: 'sol-standard', label: 'Solana standard (MetaMask, Phantom)', family: 'solana', scanLimit: 500, path: (i) => `m/44'/501'/${i}'/0'` },
+  { id: 'sol-legacy', label: 'Solana legacy (Solflare)', family: 'solana', scanLimit: 200, path: (i) => `m/44'/501'/${i}'` },
+];
+
+export const STANDARD_EVM_TEMPLATE = PATH_TEMPLATES[0];
+export const STANDARD_SOL_TEMPLATE = PATH_TEMPLATES[3];
+
+export function templateFor(family: 'evm' | 'solana', id?: string | null): PathTemplate {
+  const found = id ? PATH_TEMPLATES.find((t) => t.id === id && t.family === family) : undefined;
+  return found || (family === 'solana' ? STANDARD_SOL_TEMPLATE : STANDARD_EVM_TEMPLATE);
+}
+
+/** Derives many addresses from one seed cheaply (master keys computed once). */
+export class Deriver {
+  private evmMaster: EvmHDKey;
+  private solMaster: HDKey;
+
+  constructor(mnemonic: string) {
+    const seed = mnemonicToSeedSync(mnemonic);
+    this.evmMaster = EvmHDKey.fromMasterSeed(seed);
+    this.solMaster = HDKey.fromMasterSeed(seed);
+  }
+
+  evm(path: string): string {
+    return hdKeyToAccount(this.evmMaster, { path: path as `m/44'/60'/${string}` }).address;
+  }
+
+  solana(path: string): string {
+    return Keypair.fromSeed(this.solMaster.derive(path).privateKey).publicKey.toBase58();
+  }
+
+  address(family: 'evm' | 'solana', path: string): string {
+    return family === 'solana' ? this.solana(path) : this.evm(path);
+  }
+}
+
+export function detectFamily(address: string): 'evm' | 'solana' | null {
+  const a = address.trim();
+  if (/^0x[0-9a-fA-F]{40}$/.test(a)) return 'evm';
+  if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(a)) return 'solana';
+  return null;
+}
+
+export interface LocateMatch {
+  template: PathTemplate;
+  index: number;
+  path: string;
+  address: string;
+}
+
+/**
+ * Is this address derived from the vault seed? Scans every known template
+ * for the address's family. Pure computation, no network.
+ */
+export function locateAddress(
+  mnemonic: string,
+  address: string
+): { family: 'evm' | 'solana' | null; match: LocateMatch | null; scanned: { template: string; upTo: number }[] } {
+  const family = detectFamily(address);
+  if (!family) return { family: null, match: null, scanned: [] };
+  const deriver = new Deriver(mnemonic);
+  const target = family === 'evm' ? address.trim().toLowerCase() : address.trim();
+  const scanned: { template: string; upTo: number }[] = [];
+  for (const template of PATH_TEMPLATES.filter((t) => t.family === family)) {
+    for (let i = 0; i < template.scanLimit; i++) {
+      const path = template.path(i);
+      const derived = deriver.address(family, path);
+      if ((family === 'evm' ? derived.toLowerCase() : derived) === target) {
+        scanned.push({ template: template.label, upTo: i });
+        return { family, match: { template, index: i, path, address: derived }, scanned };
+      }
+    }
+    scanned.push({ template: template.label, upTo: template.scanLimit - 1 });
+  }
+  return { family, match: null, scanned };
 }

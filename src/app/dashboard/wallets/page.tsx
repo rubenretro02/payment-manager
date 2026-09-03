@@ -40,6 +40,10 @@ import {
   ArrowDownLeft,
   ArrowUpRight,
   Coins,
+  Sparkles,
+  Eye,
+  ScanSearch,
+  Crosshair,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
@@ -56,6 +60,38 @@ interface TokenBalance {
   amount: number;
   usd: number | null;
   native: boolean;
+  verified?: boolean;
+  spam?: boolean;
+}
+interface DiscoverResult {
+  evm: { checked: number; added: Wallet[]; errors: string[] };
+  solana: { checked: number; added: Wallet[]; errors: string[] };
+}
+interface LocateResult {
+  family: 'evm' | 'solana' | null;
+  found: boolean;
+  match: { template: string; template_id: string; index: number; path: string; address: string } | null;
+  scanned: { template: string; upTo: number }[];
+  wallet: Wallet | null;
+}
+interface TokenScanStatus {
+  running: boolean;
+  total: number;
+  done: number;
+  found: number;
+  started_at: string | null;
+  finished_at: string | null;
+  errors: string[];
+}
+
+// "Account 3" for the standard path, the raw path for anything else.
+function walletSubtitle(w: Wallet): string {
+  if (w.derivation_index === null || w.derivation_index === undefined) return 'Seed';
+  const i = w.derivation_index;
+  if (w.chain_family === 'solana') {
+    return w.derivation_path && w.derivation_path !== `m/44'/501'/${i}'/0'` ? w.derivation_path : `Solana Account ${i + 1}`;
+  }
+  return w.derivation_path && w.derivation_path !== `m/44'/60'/0'/0/${i}` ? w.derivation_path : `Account ${i + 1}`;
 }
 interface BalancesResult {
   wallets: { wallet_id: string; balances: TokenBalance[]; total_usd: number }[];
@@ -118,6 +154,20 @@ export default function WalletsPage() {
   const [txData, setTxData] = useState<TxResult | null>(null);
   const [txLoading, setTxLoading] = useState(false);
   const [txNetwork, setTxNetwork] = useState('all');
+
+  // Discover / locate / watch-only / token scan
+  const [discoverOpen, setDiscoverOpen] = useState(false);
+  const [discovering, setDiscovering] = useState(false);
+  const [discoverResult, setDiscoverResult] = useState<DiscoverResult | null>(null);
+  const [locateOpen, setLocateOpen] = useState(false);
+  const [locateInput, setLocateInput] = useState('');
+  const [locating, setLocating] = useState(false);
+  const [locateResult, setLocateResult] = useState<LocateResult | null>(null);
+  const [watchOpen, setWatchOpen] = useState(false);
+  const [watchForm, setWatchForm] = useState({ address: '', network: 'base', name: '' });
+  const [watching, setWatching] = useState(false);
+  const [tokenScan, setTokenScan] = useState<TokenScanStatus | null>(null);
+  const [showSpam, setShowSpam] = useState(false);
 
   // Create dialog
   const [createOpen, setCreateOpen] = useState(false);
@@ -282,6 +332,127 @@ export default function WalletsPage() {
     }
   };
 
+  const jsonHeaders = { 'Content-Type': 'application/json' };
+
+  const runDiscovery = async () => {
+    setDiscovering(true);
+    setDiscoverResult(null);
+    try {
+      const res = await vault.authFetch('/api/wallets/discover', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ gap: 20 }) });
+      const json = await res.json();
+      if (!json.success) {
+        if (res.status !== 401) toast.error(json.error || 'Discovery failed');
+        return;
+      }
+      const data = json.data as DiscoverResult;
+      setDiscoverResult(data);
+      const n = data.evm.added.length + data.solana.added.length;
+      toast.success(n > 0 ? `${n} account${n === 1 ? '' : 's'} imported from the seed` : 'No new accounts with activity found');
+      await loadWallets();
+      loadBalances();
+    } catch {
+      toast.error('Discovery failed');
+    } finally {
+      setDiscovering(false);
+    }
+  };
+
+  const runLocate = async (add: boolean) => {
+    const address = locateInput.trim();
+    if (!address) return;
+    setLocating(true);
+    try {
+      const res = await vault.authFetch('/api/wallets/locate', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ address, add }) });
+      const json = await res.json();
+      if (!json.success) {
+        if (res.status !== 401) toast.error(json.error || 'Lookup failed');
+        return;
+      }
+      setLocateResult(json.data as LocateResult);
+      if (add && json.data.wallet) {
+        toast.success('Wallet imported from the seed');
+        await loadWallets();
+        loadBalances();
+      }
+    } catch {
+      toast.error('Lookup failed');
+    } finally {
+      setLocating(false);
+    }
+  };
+
+  const addWatch = async (address: string, network: string, name: string): Promise<boolean> => {
+    setWatching(true);
+    try {
+      const res = await vault.authFetch('/api/wallets', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ address: address.trim(), network, name: name.trim() || undefined }) });
+      const json = await res.json();
+      if (!json.success) {
+        if (res.status !== 401) toast.error(json.error || 'Failed to add address');
+        return false;
+      }
+      toast.success('Address added as watch-only');
+      await loadWallets();
+      loadBalances();
+      return true;
+    } catch {
+      toast.error('Failed to add address');
+      return false;
+    } finally {
+      setWatching(false);
+    }
+  };
+
+  const refreshTokenScan = async () => {
+    try {
+      const res = await vault.authFetch('/api/wallets/token-scan');
+      const json = await res.json();
+      if (json.success) setTokenScan(json.data as TokenScanStatus);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const startTokenScan = async () => {
+    try {
+      const res = await vault.authFetch('/api/wallets/token-scan', { method: 'POST' });
+      const json = await res.json();
+      if (!json.success) {
+        if (res.status !== 401) toast.error(json.error || 'Could not start the scan');
+        return;
+      }
+      setTokenScan(json.data as TokenScanStatus);
+      toast.info(json.data.started ? `Scanning ${json.data.total} wallets for tokens…` : 'A token scan is already running');
+    } catch {
+      toast.error('Could not start the scan');
+    }
+  };
+
+  // Token-scan progress: check once when unlocked, then poll while it runs.
+  useEffect(() => {
+    if (!unlocked) return;
+    refreshTokenScan();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [unlocked]);
+  useEffect(() => {
+    if (!tokenScan?.running) return;
+    const timer = setInterval(async () => {
+      try {
+        const res = await vault.authFetch('/api/wallets/token-scan');
+        const json = await res.json();
+        if (!json.success) return;
+        setTokenScan(json.data as TokenScanStatus);
+        if (!json.data.running) {
+          toast.success(`Token scan finished: ${json.data.found} token${json.data.found === 1 ? '' : 's'} found`);
+          loadBalances();
+        }
+      } catch {
+        /* keep polling */
+      }
+    }, 2000);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tokenScan?.running]);
+
   const handleUnassign = async (wallet: Wallet, accountId: string) => {
     const res = await vault.authFetch(`/api/wallets/${wallet.id}`, {
       method: 'PATCH',
@@ -306,7 +477,7 @@ export default function WalletsPage() {
 
   const balanceFor = (id: string) => balances?.wallets.find((b) => b.wallet_id === id);
   const q = searchQuery.trim().toLowerCase();
-  const hasBalance = (id: string) => (balanceFor(id)?.balances.length || 0) > 0;
+  const hasBalance = (id: string) => (balanceFor(id)?.balances.filter((t) => !t.spam).length || 0) > 0;
   const visibleWallets = wallets.filter((w) => {
     if (filterNetwork === 'solana' && w.chain_family !== 'solana') return false;
     if (filterNetwork === 'evm' && w.chain_family !== 'evm') return false;
@@ -318,7 +489,9 @@ export default function WalletsPage() {
       w.address,
       w.network,
       getNetwork(w.network)?.label,
-      `${w.chain_family === 'solana' ? 'solana account' : 'metamask account'} ${w.derivation_index + 1}`,
+      walletSubtitle(w),
+      w.source === 'watch' ? 'watch-only' : 'seed',
+      w.derivation_path,
       ...(w.assigned_accounts || []).flatMap((a) => [a.full_name, a.user_name]),
       ...(b?.balances || []).flatMap((t) => [t.symbol, getNetwork(t.network)?.label]),
     ];
@@ -342,11 +515,27 @@ export default function WalletsPage() {
               <RefreshCw className={`h-4 w-4 ${loadingBalances ? 'animate-spin' : ''}`} />
               Refresh
             </Button>
+            <Button variant="outline" onClick={() => { setDiscoverResult(null); setDiscoverOpen(true); }} className="gap-2" title="Import every account of the seed that has activity">
+              <Sparkles className="h-4 w-4" />
+              Discover from seed
+            </Button>
+            <Button variant="outline" onClick={() => { setLocateResult(null); setLocateOpen(true); }} className="gap-2" title="Check if an address comes from this seed (any derivation path)">
+              <Crosshair className="h-4 w-4" />
+              Find address
+            </Button>
+            <Button variant="outline" onClick={() => setWatchOpen(true)} className="gap-2" title="Track an address that is not from this seed">
+              <Eye className="h-4 w-4" />
+              Watch address
+            </Button>
+            <Button variant="outline" onClick={startTokenScan} disabled={!!tokenScan?.running} className="gap-2" title="Find every token held by every wallet (via block explorers)">
+              {tokenScan?.running ? <Loader2 className="h-4 w-4 animate-spin" /> : <ScanSearch className="h-4 w-4" />}
+              {tokenScan?.running ? `Scanning ${tokenScan.done}/${tokenScan.total}` : 'Scan tokens'}
+            </Button>
             <Button variant="outline" onClick={() => vault.lock()} className="gap-2">
               <Lock className="h-4 w-4" />
               Lock
             </Button>
-            <Button onClick={() => setCreateOpen(true)} className="gap-2">
+            <Button onClick={() => setCreateOpen(true)} className="gap-2" title="Derives the next account of the seed that does not exist yet">
               <Plus className="h-4 w-4" />
               New wallet
             </Button>
@@ -455,6 +644,9 @@ export default function WalletsPage() {
               <Coins className="h-3.5 w-3.5" />
               With balance
             </Button>
+            <Button type="button" variant="ghost" size="sm" className="text-xs text-muted-foreground" onClick={() => setShowSpam((v) => !v)}>
+              {showSpam ? 'Hide spam tokens' : 'Show spam tokens'}
+            </Button>
           </div>
         </div>
         {(q || filterNetwork !== 'all' || onlyWithBalance) && (
@@ -516,7 +708,7 @@ export default function WalletsPage() {
                             </form>
                           ) : (
                             <>
-                              <p className="font-semibold">{w.name || `${net?.label || w.network} #${w.derivation_index + 1}`}</p>
+                              <p className="font-semibold">{w.name || (w.derivation_index !== null ? `Account ${w.derivation_index + 1}` : shortAddress(w.address))}</p>
                               <button
                                 type="button"
                                 className="text-muted-foreground hover:text-foreground"
@@ -530,9 +722,15 @@ export default function WalletsPage() {
                           <Badge variant="outline" className={w.chain_family === 'solana' ? 'border-purple-300 text-purple-800 bg-purple-50' : 'border-blue-300 text-blue-800 bg-blue-50'}>
                             {w.chain_family === 'solana' ? 'Solana' : `EVM · ${net?.label || w.network} preferred`}
                           </Badge>
-                          <span className="text-xs text-muted-foreground">
-                            {w.chain_family === 'solana' ? `Solana Account ${w.derivation_index + 1}` : `MetaMask Account ${w.derivation_index + 1}`}
-                          </span>
+                          {w.source === 'watch' ? (
+                            <Badge variant="outline" className="text-[10px] gap-1 border-amber-300 text-amber-800 bg-amber-50" title="Address only — not derived from your seed, no keys here">
+                              <Eye className="h-3 w-3" /> Watch-only
+                            </Badge>
+                          ) : (
+                            <span className="text-xs text-muted-foreground" title={w.derivation_path || ''}>
+                              {walletSubtitle(w)}
+                            </span>
+                          )}
                         </div>
 
                         {/* Address */}
@@ -581,19 +779,40 @@ export default function WalletsPage() {
                       <div className="md:text-right md:w-72 shrink-0">
                         <p className="text-lg font-bold">{b ? fmtUsd(b.total_usd) : (balances ? '$0.00' : '…')}</p>
                         <div className="flex flex-wrap gap-1 md:justify-end mt-1">
-                          {b && b.balances.length > 0 ? (
-                            b.balances.slice(0, 8).map((t, i) => (
-                              <Badge key={`${t.network}-${t.symbol}-${i}`} variant="secondary" className="font-mono text-[11px]" title={`${t.symbol} on ${getNetwork(t.network)?.label || t.network}`}>
-                                {fmtAmount(t.amount)} {t.symbol}
-                                <span className="ml-1 opacity-60">{getNetwork(t.network)?.label || t.network}</span>
-                              </Badge>
-                            ))
-                          ) : (
-                            <span className="text-xs text-muted-foreground">No balance</span>
-                          )}
-                          {b && b.balances.length > 8 && (
-                            <span className="text-xs text-muted-foreground">+{b.balances.length - 8} more</span>
-                          )}
+                          {(() => {
+                            const all = b?.balances || [];
+                            const nonSpam = all.filter((t) => !t.spam);
+                            const visible = showSpam ? all : nonSpam;
+                            const spamCount = all.length - nonSpam.length;
+                            if (visible.length === 0) {
+                              return (
+                                <span className="text-xs text-muted-foreground">
+                                  {balances ? 'No balance' : '…'}{spamCount > 0 ? ` · ${spamCount} spam hidden` : ''}
+                                </span>
+                              );
+                            }
+                            return (
+                              <>
+                                {visible.slice(0, 8).map((t, i) => (
+                                  <Badge
+                                    key={`${t.network}-${t.symbol}-${i}`}
+                                    variant="secondary"
+                                    className={`font-mono text-[11px] ${t.verified === false ? 'border border-dashed border-amber-400' : ''} ${t.spam ? 'opacity-60 line-through' : ''}`}
+                                    title={`${t.symbol} on ${getNetwork(t.network)?.label || t.network}${t.verified === false ? ' · discovered token (not in curated list)' : ''}${t.spam ? ' · looks like airdrop spam' : ''}`}
+                                  >
+                                    {fmtAmount(t.amount)} {t.symbol}
+                                    <span className="ml-1 opacity-60">{getNetwork(t.network)?.label || t.network}</span>
+                                  </Badge>
+                                ))}
+                                {visible.length > 8 && (
+                                  <span className="text-xs text-muted-foreground">+{visible.length - 8} more</span>
+                                )}
+                                {!showSpam && spamCount > 0 && (
+                                  <span className="text-xs text-muted-foreground">· {spamCount} spam hidden</span>
+                                )}
+                              </>
+                            );
+                          })()}
                         </div>
                       </div>
                     </div>
@@ -651,6 +870,156 @@ export default function WalletsPage() {
             <Button onClick={handleCreate} disabled={creating}>
               {creating ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Plus className="h-4 w-4 mr-2" />}
               Create
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Discover from seed */}
+      <Dialog open={discoverOpen} onOpenChange={(o) => !discovering && setDiscoverOpen(o)}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Sparkles className="h-5 w-5 text-primary" /> Discover accounts from the seed</DialogTitle>
+            <DialogDescription>
+              Walks the standard derivation paths (the ones MetaMask, Zerion, Trust and Phantom use) from Account 1 upward and imports every account that has ever had activity on any supported network. Stops after 20 unused accounts in a row. Takes up to a minute.
+            </DialogDescription>
+          </DialogHeader>
+          {discoverResult && (
+            <div className="rounded-lg border bg-muted/40 p-3 text-sm space-y-2">
+              <p><span className="font-semibold">EVM:</span> checked {discoverResult.evm.checked} new indexes, imported {discoverResult.evm.added.length}.</p>
+              <p><span className="font-semibold">Solana:</span> checked {discoverResult.solana.checked} new indexes, imported {discoverResult.solana.added.length}.</p>
+              {[...discoverResult.evm.added, ...discoverResult.solana.added].length > 0 && (
+                <ul className="text-xs font-mono space-y-0.5 max-h-40 overflow-y-auto">
+                  {[...discoverResult.evm.added, ...discoverResult.solana.added].map((w) => (
+                    <li key={w.id}>{w.name} · {shortAddress(w.address)}</li>
+                  ))}
+                </ul>
+              )}
+              {[...discoverResult.evm.errors, ...discoverResult.solana.errors].length > 0 && (
+                <p className="text-xs text-amber-700">Some checks failed: {[...discoverResult.evm.errors, ...discoverResult.solana.errors].slice(0, 5).join(' · ')}</p>
+              )}
+              <p className="text-xs text-muted-foreground">
+                An account that is not found here was not created from this seed on a standard path. Use “Find address” to check the other derivation paths, or “Watch address” to track it anyway.
+              </p>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDiscoverOpen(false)} disabled={discovering}>Close</Button>
+            <Button onClick={runDiscovery} disabled={discovering}>
+              {discovering ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Sparkles className="h-4 w-4 mr-2" />}
+              {discovering ? 'Scanning…' : discoverResult ? 'Scan again' : 'Start'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Find address in seed */}
+      <Dialog open={locateOpen} onOpenChange={(o) => !locating && setLocateOpen(o)}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Crosshair className="h-5 w-5 text-primary" /> Is this address from my seed?</DialogTitle>
+            <DialogDescription>
+              Paste an address from MetaMask, Zerion or any other app. It is checked against the BIP-44 standard path, Ledger Live, Ledger Legacy and both Solana paths.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3">
+            <div className="grid gap-2">
+              <Label htmlFor="locate_address">Address</Label>
+              <Input
+                id="locate_address"
+                placeholder="0x… or Solana address"
+                value={locateInput}
+                onChange={(e) => { setLocateInput(e.target.value); setLocateResult(null); }}
+                className="font-mono"
+              />
+            </div>
+            {locateResult && (
+              locateResult.found && locateResult.match ? (
+                <div className="rounded-lg border border-green-300 bg-green-50 dark:bg-green-950/30 p-3 text-sm space-y-1">
+                  <p className="font-semibold text-green-800 dark:text-green-300">✓ Derived from your seed</p>
+                  <p>{locateResult.match.template}</p>
+                  <p className="font-mono text-xs">index {locateResult.match.index} · {locateResult.match.path}</p>
+                  {locateResult.wallet && <p className="text-xs text-green-700">Added as “{locateResult.wallet.name}”.</p>}
+                </div>
+              ) : (
+                <div className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 p-3 text-sm space-y-2">
+                  <p className="font-semibold text-amber-900 dark:text-amber-200">✗ Not derived from your seed</p>
+                  <p className="text-xs">Checked: {locateResult.scanned.map((s) => `${s.template.split(' (')[0]} up to index ${s.upTo}`).join(' · ')}.</p>
+                  <p className="text-xs">It belongs to a different seed phrase, an imported private key, or a hardware wallet. You can still track its balances and history as watch-only.</p>
+                </div>
+              )
+            )}
+          </div>
+          <DialogFooter className="flex-col sm:flex-row gap-2">
+            <Button variant="outline" onClick={() => setLocateOpen(false)} disabled={locating}>Close</Button>
+            {locateResult && !locateResult.found && (
+              <Button
+                variant="secondary"
+                disabled={watching}
+                onClick={async () => {
+                  const ok = await addWatch(locateInput, locateResult.family === 'solana' ? 'solana' : 'base', '');
+                  if (ok) setLocateOpen(false);
+                }}
+              >
+                {watching ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Eye className="h-4 w-4 mr-2" />}
+                Add as watch-only
+              </Button>
+            )}
+            {locateResult && locateResult.found && !locateResult.wallet ? (
+              <Button onClick={() => runLocate(true)} disabled={locating}>
+                {locating ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Plus className="h-4 w-4 mr-2" />}
+                Add to my wallets
+              </Button>
+            ) : (
+              <Button onClick={() => runLocate(false)} disabled={locating || !locateInput.trim()}>
+                {locating ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Crosshair className="h-4 w-4 mr-2" />}
+                Check
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Watch-only address */}
+      <Dialog open={watchOpen} onOpenChange={(o) => !watching && setWatchOpen(o)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Eye className="h-5 w-5 text-primary" /> Watch an address</DialogTitle>
+            <DialogDescription>Balances and history for an address that is not from this seed (other wallet, exchange, hardware). No keys are involved.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3">
+            <div className="grid gap-2">
+              <Label>Address</Label>
+              <Input value={watchForm.address} onChange={(e) => setWatchForm({ ...watchForm, address: e.target.value })} placeholder="0x… or Solana address" className="font-mono" />
+            </div>
+            <div className="grid gap-2">
+              <Label>Family / preferred network</Label>
+              <Select value={watchForm.network} onValueChange={(v) => setWatchForm({ ...watchForm, network: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {NETWORKS.map((n) => <SelectItem key={n.key} value={n.key}>{n.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-2">
+              <Label>Name (optional)</Label>
+              <Input value={watchForm.name} onChange={(e) => setWatchForm({ ...watchForm, name: e.target.value })} placeholder="e.g. Farah Borgelin" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setWatchOpen(false)} disabled={watching}>Cancel</Button>
+            <Button
+              disabled={watching || !watchForm.address.trim()}
+              onClick={async () => {
+                const ok = await addWatch(watchForm.address, watchForm.network, watchForm.name);
+                if (ok) {
+                  setWatchOpen(false);
+                  setWatchForm({ address: '', network: 'base', name: '' });
+                }
+              }}
+            >
+              {watching ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Eye className="h-4 w-4 mr-2" />}
+              Add
             </Button>
           </DialogFooter>
         </DialogContent>
