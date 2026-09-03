@@ -47,6 +47,8 @@ import {
   ArrowUp,
   KeyRound,
   ArrowUpDown,
+  Inbox,
+  CheckCircle2,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
@@ -83,6 +85,31 @@ interface LocateResult {
   wallet: Wallet | null;
 }
 type SortKey = 'balance-desc' | 'balance-asc' | 'name' | 'newest' | 'oldest';
+interface DepositRow {
+  id: string;
+  network: string;
+  tx_hash: string;
+  address: string;
+  from_address: string | null;
+  token_symbol: string;
+  amount: number;
+  usd_value: number | null;
+  occurred_at: string | null;
+  created_at: string;
+  matched_payment_id: string | null;
+  payment?: { id: string; status: string; amount_paid: number; account: { full_name: string } | { full_name: string }[] | null } | null;
+}
+interface DepositScanState {
+  running: boolean;
+  last_run: {
+    new_deposits: number;
+    matched: number;
+    errors: string[];
+    watched: { evm: number; solana: number };
+    started_at: string;
+    finished_at: string;
+  } | null;
+}
 interface TokenScanStatus {
   running: boolean;
   total: number;
@@ -250,6 +277,13 @@ export default function WalletsPage() {
   const [addSeedForm, setAddSeedForm] = useState({ name: '', mnemonic: '', password: '', evm_count: '1', solana_count: '1' });
   const [addingSeed, setAddingSeed] = useState(false);
   const seeds = vault.status?.seeds || [];
+
+  // On-chain deposits / auto-confirm
+  const [depositsOpen, setDepositsOpen] = useState(false);
+  const [deposits, setDeposits] = useState<DepositRow[]>([]);
+  const [depositState, setDepositState] = useState<DepositScanState | null>(null);
+  const [depositsLoading, setDepositsLoading] = useState(false);
+  const [scanningDeposits, setScanningDeposits] = useState(false);
 
   // Create dialog
   const [createOpen, setCreateOpen] = useState(false);
@@ -560,6 +594,52 @@ export default function WalletsPage() {
     }
   };
 
+  const loadDeposits = async () => {
+    setDepositsLoading(true);
+    try {
+      const res = await vault.authFetch('/api/wallets/deposits?limit=150');
+      const json = await res.json();
+      if (json.success) {
+        setDeposits(json.data.deposits || []);
+        setDepositState(json.data.state || null);
+      } else if (res.status !== 401) {
+        toast.error(json.error || 'Failed to load deposits');
+      }
+    } catch {
+      toast.error('Failed to load deposits');
+    } finally {
+      setDepositsLoading(false);
+    }
+  };
+
+  const scanDepositsNow = async () => {
+    setScanningDeposits(true);
+    try {
+      const res = await vault.authFetch('/api/wallets/deposits/scan', { method: 'POST' });
+      const json = await res.json();
+      if (!json.success) {
+        if (res.status !== 401) toast.error(json.error || 'Scan failed');
+        return;
+      }
+      const s = json.data as NonNullable<DepositScanState['last_run']>;
+      toast.success(`Scan done: ${s.new_deposits} new deposit${s.new_deposits === 1 ? '' : 's'}, ${s.matched} report${s.matched === 1 ? '' : 's'} auto-confirmed`);
+      await loadDeposits();
+      loadBalances();
+    } catch {
+      toast.error('Scan failed');
+    } finally {
+      setScanningDeposits(false);
+    }
+  };
+
+  const walletLabelFor = (address: string): string => {
+    const key = address.startsWith('0x') ? address.toLowerCase() : address;
+    const w = wallets.find((x) => (x.chain_family === 'evm' ? x.address.toLowerCase() : x.address) === key);
+    if (!w) return shortAddress(address);
+    const acct = (w.assigned_accounts || []).map((a) => a.full_name).join(', ');
+    return `${w.name || shortAddress(w.address)}${acct ? ` → ${acct}` : ''}`;
+  };
+
   // Back-to-top button once the list has been scrolled a bit.
   useEffect(() => {
     const onScroll = () => setShowTop(window.scrollY > 500);
@@ -673,6 +753,10 @@ export default function WalletsPage() {
             <Button variant="outline" onClick={startTokenScan} disabled={!!tokenScan?.running} className="gap-2" title="Find every token held by every wallet (via block explorers)">
               {tokenScan?.running ? <Loader2 className="h-4 w-4 animate-spin" /> : <ScanSearch className="h-4 w-4" />}
               {tokenScan?.running ? `Scanning ${tokenScan.done}/${tokenScan.total}` : 'Scan tokens'}
+            </Button>
+            <Button variant="outline" onClick={() => { setDepositsOpen(true); loadDeposits(); }} className="gap-2" title="Incoming deposits detected on-chain and the reports they auto-confirmed">
+              <Inbox className="h-4 w-4" />
+              Deposits
             </Button>
             <Button variant="outline" onClick={() => vault.lock()} className="gap-2">
               <Lock className="h-4 w-4" />
@@ -1299,6 +1383,99 @@ export default function WalletsPage() {
           <ArrowUp className="h-5 w-5" />
         </Button>
       )}
+
+      {/* Deposits / auto-confirm */}
+      <Dialog open={depositsOpen} onOpenChange={setDepositsOpen}>
+        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Inbox className="h-5 w-5 text-primary" /> On-chain deposits</DialogTitle>
+            <DialogDescription>
+              Every stablecoin that arrives at an account&apos;s wallet is detected automatically. When the amount matches that account&apos;s open report, the report is confirmed and the user is notified — no Etherscan involved.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between rounded-lg border bg-muted/40 p-3 text-xs">
+            <div className="space-y-0.5">
+              {depositState?.last_run ? (
+                <>
+                  <p>
+                    Watching <span className="font-semibold">{depositState.last_run.watched.evm}</span> EVM address{depositState.last_run.watched.evm === 1 ? '' : 'es'} on 10 networks
+                    {depositState.last_run.watched.solana > 0 ? ` and ${depositState.last_run.watched.solana} on Solana` : ''}.
+                  </p>
+                  <p className="text-muted-foreground">
+                    Last scan {format(new Date(depositState.last_run.finished_at), 'MMM d, HH:mm:ss')} · runs every 3 minutes and right after each report
+                    {depositState.running ? ' · scanning now…' : ''}
+                  </p>
+                  {depositState.last_run.errors.filter((e) => !e.startsWith('ambiguous')).length > 0 && (
+                    <p className="text-amber-700">
+                      Issues: {depositState.last_run.errors.filter((e) => !e.startsWith('ambiguous')).slice(0, 3).join(' · ')}
+                    </p>
+                  )}
+                </>
+              ) : (
+                <p className="text-muted-foreground">The watcher has not run since the server started. It starts 20 seconds after boot, or run it now.</p>
+              )}
+            </div>
+            <Button size="sm" onClick={scanDepositsNow} disabled={scanningDeposits || !!depositState?.running} className="gap-2 shrink-0">
+              {scanningDeposits || depositState?.running ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              Scan now
+            </Button>
+          </div>
+
+          {depositsLoading && deposits.length === 0 ? (
+            <div className="flex justify-center py-8"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>
+          ) : deposits.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <Inbox className="h-10 w-10 mx-auto mb-3 opacity-50" />
+              <p className="font-medium">No deposits detected yet</p>
+              <p className="text-xs">Only activity after the watcher started is tracked; older payments stay manual.</p>
+            </div>
+          ) : (
+            <div className="divide-y rounded-lg border">
+              {deposits.map((d) => {
+                const acct = Array.isArray(d.payment?.account) ? d.payment?.account[0] : d.payment?.account;
+                return (
+                  <div key={d.id} className="flex items-start gap-3 p-3">
+                    <div className={`h-8 w-8 rounded-full flex items-center justify-center shrink-0 ${d.matched_payment_id ? 'bg-green-100 text-green-700' : d.usd_value === null ? 'bg-muted text-muted-foreground' : 'bg-amber-100 text-amber-700'}`}>
+                      {d.matched_payment_id ? <CheckCircle2 className="h-4 w-4" /> : <ArrowDownLeft className="h-4 w-4" />}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-semibold">+{fmtAmount(d.amount)} {d.token_symbol}</span>
+                        <Badge variant="outline" className="text-[10px]">{getNetwork(d.network)?.label || d.network}</Badge>
+                        {d.matched_payment_id ? (
+                          <Badge className="bg-green-100 text-green-800 text-[10px]">Confirmed{acct?.full_name ? ` → ${acct.full_name}` : ''}</Badge>
+                        ) : d.usd_value === null ? (
+                          <Badge variant="outline" className="text-[10px] text-muted-foreground">Not a stablecoin · manual</Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-[10px] text-amber-700 border-amber-300">No matching report yet</Badge>
+                        )}
+                      </div>
+                      <p className="text-xs text-muted-foreground truncate">
+                        to {walletLabelFor(d.address)} · from {d.from_address ? shortAddress(d.from_address) : '—'}
+                        {d.occurred_at ? ` · ${format(new Date(d.occurred_at), 'MMM d, yyyy HH:mm')}` : ''}
+                      </p>
+                    </div>
+                    <a
+                      href={`${getNetwork(d.network)?.explorer.replace('/address/', d.network === 'solana' ? '/tx/' : '/tx/').replace('/account/', '/tx/')}${d.tx_hash}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-muted-foreground hover:text-foreground shrink-0"
+                      title="Open in explorer"
+                    >
+                      <ExternalLink className="h-4 w-4" />
+                    </a>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDepositsOpen(false)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Transactions dialog */}
       <Dialog open={txWallet !== null} onOpenChange={(o) => !o && setTxWallet(null)}>

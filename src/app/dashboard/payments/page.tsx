@@ -903,6 +903,11 @@ export default function PaymentsPage() {
                         <Badge className={config.color}>
                           {config.label}
                         </Badge>
+                        {payment.admin_notes?.startsWith('[AUTO-CONFIRMED') && (
+                          <Badge className="bg-emerald-100 text-emerald-800" title={payment.admin_notes}>
+                            on-chain ✓
+                          </Badge>
+                        )}
                       </div>
 
                       {canModerate && (payment.status === 'submitted' || payment.status === 'pending') && (

@@ -4,6 +4,7 @@ import { sendUserNotification, notifyAdminsNewPayment } from '@/lib/notification
 import { createAdminClient } from '@/lib/supabase/server';
 import { findNearestCycleDate, type PaymentFrequency } from '@/lib/payment-dates';
 import { isCommissionAccount } from '@/lib/account-utils';
+import { autoConfirmAfterReport } from '@/lib/wallets/deposits';
 import type { Payment } from '@/lib/types';
 
 export async function GET(request: NextRequest) {
@@ -119,10 +120,21 @@ async function handleCreate(body: CreatePaymentBody): Promise<CreateResult> {
       return { status: 500, payload: { success: false, error: 'No data returned from database' } };
     }
 
-    // Telegram notifications run after the response is sent so the user
-    // never waits on them.
+    // After the response is sent: look on-chain for a matching deposit to the
+    // account's wallet (auto-confirms the report and notifies the user when it
+    // matches), then notify as a new submission only if it is still pending.
     const paymentId = result.data.id;
-    after(() => notifyNewPayment(body, paymentId));
+    after(async () => {
+      let confirmed = false;
+      if (body.status !== 'pending' && body.account_id) {
+        try {
+          confirmed = await autoConfirmAfterReport(paymentId);
+        } catch (e) {
+          console.error('[payments] auto-confirm check failed:', e instanceof Error ? e.message : e);
+        }
+      }
+      if (!confirmed) await notifyNewPayment(body, paymentId);
+    });
 
     return { status: 200, payload: { success: true, data: result.data } };
   } catch (error) {
