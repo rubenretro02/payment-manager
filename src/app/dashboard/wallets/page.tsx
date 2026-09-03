@@ -40,7 +40,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useWalletVault } from '@/hooks/useWalletVault';
 import { useAutoRefresh } from '@/hooks/useAutoRefresh';
 import { VaultGate } from '@/components/wallets/VaultGate';
-import { NETWORKS, getNetwork, explorerAddressUrl, shortAddress } from '@/lib/wallets/networks';
+import { NETWORKS, getNetwork, explorerAddressUrl, shortAddress, acceptedNetworks } from '@/lib/wallets/networks';
 import type { Wallet } from '@/lib/types';
 
 interface TokenBalance {
@@ -65,7 +65,11 @@ interface AccountOption {
 
 const fmtUsd = (n: number) => `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const fmtAmount = (n: number) =>
-  n >= 1 ? n.toLocaleString('en-US', { maximumFractionDigits: 2 }) : n.toLocaleString('en-US', { maximumFractionDigits: 6 });
+  n > 0 && n < 0.000001
+    ? '<0.000001'
+    : n >= 1
+      ? n.toLocaleString('en-US', { maximumFractionDigits: 2 })
+      : n.toLocaleString('en-US', { maximumFractionDigits: 6 });
 
 export default function WalletsPage() {
   const { user } = useAuth();
@@ -379,7 +383,7 @@ export default function WalletsPage() {
                             </>
                           )}
                           <Badge variant="outline" className={w.chain_family === 'solana' ? 'border-purple-300 text-purple-800 bg-purple-50' : 'border-blue-300 text-blue-800 bg-blue-50'}>
-                            {net?.label || w.network}
+                            {w.chain_family === 'solana' ? 'Solana' : `EVM · ${net?.label || w.network} preferred`}
                           </Badge>
                           <span className="text-xs text-muted-foreground">
                             {w.chain_family === 'solana' ? `Solana Account ${w.derivation_index + 1}` : `MetaMask Account ${w.derivation_index + 1}`}
@@ -398,6 +402,11 @@ export default function WalletsPage() {
                             </a>
                           )}
                         </div>
+                        {w.chain_family === 'evm' && (
+                          <p className="text-[11px] text-muted-foreground">
+                            Same address on: {acceptedNetworks(w.network).map((n) => n.label).join(' · ')}
+                          </p>
+                        )}
 
                         {/* Assigned accounts */}
                         <div className="flex items-center gap-2 flex-wrap text-xs">
@@ -467,7 +476,7 @@ export default function WalletsPage() {
               <p className="text-xs text-muted-foreground">
                 {getNetwork(createForm.network)?.family === 'solana'
                   ? 'A Solana address.'
-                  : 'An EVM address — it works on every EVM network; this is the one the user will be told to send on.'}
+                  : 'An EVM address — the same address on every EVM network. The user is shown all of them, with this one first.'}
               </p>
             </div>
             <div className="grid gap-2">

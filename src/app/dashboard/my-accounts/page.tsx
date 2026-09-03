@@ -68,6 +68,7 @@ import { isCommissionAccount } from '@/lib/account-utils';
 import { ScreenshotImage } from '@/components/ScreenshotImage';
 import { useAutoRefresh } from '@/hooks/useAutoRefresh';
 import { getCached, setCached, CACHE_KEYS, userCacheKey } from '@/lib/client-cache';
+import { acceptedNetworks, acceptedTokenSymbols } from '@/lib/wallets/networks';
 
 const statusColors: Record<string, string> = {
   production: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400',
@@ -1752,7 +1753,9 @@ export default function MyAccountsPage() {
                     <span className="font-bold text-base text-purple-900 dark:text-purple-200">
                       Admin&apos;s wallet — SEND YOUR PAYMENT HERE
                     </span>
-                    <Badge className="bg-purple-600 text-xs uppercase ml-auto">{selectedAccount.wallet_network || 'base'}</Badge>
+                    <Badge className="bg-purple-600 text-xs uppercase ml-auto">
+                      {acceptedNetworks(selectedAccount.wallet_network)[0].family === 'solana' ? 'Solana' : 'EVM'}
+                    </Badge>
                   </div>
                   <div className="flex items-center gap-2 bg-white dark:bg-background rounded-lg p-3 border border-purple-200">
                     <code className="text-sm font-mono flex-1 break-all">
@@ -1771,9 +1774,48 @@ export default function MyAccountsPage() {
                       )}
                     </Button>
                   </div>
-                  <p className="text-xs text-purple-700 dark:text-purple-400 mt-2 font-semibold">
-                    ⚠️ Only send {(selectedAccount.wallet_network || 'base').toUpperCase()} network tokens to this address
-                  </p>
+                  {/* An EVM address is the same on every EVM network, so list all
+                      of them (preferred first) instead of restricting to one. */}
+                  {(() => {
+                    const nets = acceptedNetworks(selectedAccount.wallet_network);
+                    const isSolana = nets[0].family === 'solana';
+                    const tokens = acceptedTokenSymbols(selectedAccount.wallet_network);
+                    return (
+                      <div className="mt-3 space-y-2 text-xs">
+                        <div>
+                          <p className="font-semibold text-purple-900 dark:text-purple-200 mb-1">
+                            {isSolana
+                              ? 'Send on the Solana network only:'
+                              : 'You can send on ANY of these networks — same address on all of them:'}
+                          </p>
+                          <div className="flex flex-wrap gap-1">
+                            {nets.map((n, i) => (
+                              <Badge
+                                key={n.key}
+                                variant="outline"
+                                className={
+                                  i === 0 && nets.length > 1
+                                    ? 'border-purple-500 bg-purple-100 text-purple-900 font-semibold dark:bg-purple-900/40 dark:text-purple-100'
+                                    : 'border-purple-200 text-purple-800 dark:border-purple-800 dark:text-purple-300'
+                                }
+                                title={`On exchanges: ${n.exchangeLabel}`}
+                              >
+                                {n.label}{i === 0 && nets.length > 1 ? ' · preferred' : ''}
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
+                        <p className="text-purple-800 dark:text-purple-300">
+                          <span className="font-semibold">Accepted tokens:</span> {tokens.join(', ')}
+                        </p>
+                        <p className="text-red-700 dark:text-red-400 font-semibold">
+                          ⚠️ {isSolana
+                            ? 'Do NOT send from Ethereum, Base, BNB, Tron, Bitcoin or any non-Solana network — funds would be lost.'
+                            : 'Do NOT send from Solana, Tron, Bitcoin or any non-EVM network — funds would be lost.'}
+                        </p>
+                      </div>
+                    );
+                  })()}
                 </div>
               );
             })()}

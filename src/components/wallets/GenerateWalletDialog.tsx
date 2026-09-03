@@ -114,7 +114,7 @@ export function GenerateWalletDialog({ network, accountName, accountId, onCreate
                 <p className="text-xs text-muted-foreground">
                   {getNetwork(chosen)?.family === 'solana'
                     ? 'Solana address (different key family from EVM).'
-                    : 'EVM address — the same address works on every EVM network; this is the one the user will be told to send on.'}
+                    : 'EVM address — the same address on every EVM network. The user is shown all of them, with this one first.'}
                 </p>
               </div>
               {error && <p className="text-sm text-red-600">{error}</p>}

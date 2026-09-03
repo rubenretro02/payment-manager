@@ -2,9 +2,9 @@
 // node-only or heavy imports (the client bundles it for dropdowns/labels).
 //
 // EVM networks = the ones MetaMask ships by default. One EVM key gives the
-// SAME address on every EVM chain, so an EVM wallet is usable on all of them;
-// `network` on a wallet/account is just the chain the admin intends to
-// receive on. Solana is a separate key family with different addresses.
+// SAME address on every EVM chain, so an EVM wallet receives on all of them;
+// `network` on a wallet/account is only the PREFERRED chain (shown first to
+// the user). Solana is a separate key family with different addresses.
 
 export type ChainFamily = 'evm' | 'solana';
 
@@ -28,20 +28,24 @@ export interface NetworkInfo {
   nativeSymbol: string;
   /** Address explorer URL prefix */
   explorer: string;
+  /** Tokens we track on this network (display symbols; addresses live server-side in chains.ts) */
+  tokens: string[];
+  /** How exchanges usually label this network on the withdrawal screen */
+  exchangeLabel: string;
 }
 
 export const NETWORKS: readonly NetworkInfo[] = [
-  { key: 'ethereum', label: 'Ethereum', family: 'evm', nativeSymbol: 'ETH', explorer: 'https://etherscan.io/address/' },
-  { key: 'base', label: 'Base', family: 'evm', nativeSymbol: 'ETH', explorer: 'https://basescan.org/address/' },
-  { key: 'arbitrum', label: 'Arbitrum One', family: 'evm', nativeSymbol: 'ETH', explorer: 'https://arbiscan.io/address/' },
-  { key: 'optimism', label: 'OP Mainnet', family: 'evm', nativeSymbol: 'ETH', explorer: 'https://optimistic.etherscan.io/address/' },
-  { key: 'polygon', label: 'Polygon', family: 'evm', nativeSymbol: 'POL', explorer: 'https://polygonscan.com/address/' },
-  { key: 'bsc', label: 'BNB Smart Chain', family: 'evm', nativeSymbol: 'BNB', explorer: 'https://bscscan.com/address/' },
-  { key: 'avalanche', label: 'Avalanche C-Chain', family: 'evm', nativeSymbol: 'AVAX', explorer: 'https://snowtrace.io/address/' },
-  { key: 'linea', label: 'Linea', family: 'evm', nativeSymbol: 'ETH', explorer: 'https://lineascan.build/address/' },
-  { key: 'zksync', label: 'zkSync Era', family: 'evm', nativeSymbol: 'ETH', explorer: 'https://explorer.zksync.io/address/' },
-  { key: 'sei', label: 'Sei', family: 'evm', nativeSymbol: 'SEI', explorer: 'https://seitrace.com/address/' },
-  { key: 'solana', label: 'Solana', family: 'solana', nativeSymbol: 'SOL', explorer: 'https://solscan.io/account/' },
+  { key: 'ethereum', label: 'Ethereum', family: 'evm', nativeSymbol: 'ETH', explorer: 'https://etherscan.io/address/', tokens: ['ETH', 'USDC', 'USDT', 'DAI'], exchangeLabel: 'ERC20' },
+  { key: 'base', label: 'Base', family: 'evm', nativeSymbol: 'ETH', explorer: 'https://basescan.org/address/', tokens: ['ETH', 'USDC', 'USDbC', 'USDT', 'DAI'], exchangeLabel: 'Base' },
+  { key: 'arbitrum', label: 'Arbitrum One', family: 'evm', nativeSymbol: 'ETH', explorer: 'https://arbiscan.io/address/', tokens: ['ETH', 'USDC', 'USDC.e', 'USDT', 'DAI'], exchangeLabel: 'Arbitrum One' },
+  { key: 'optimism', label: 'OP Mainnet', family: 'evm', nativeSymbol: 'ETH', explorer: 'https://optimistic.etherscan.io/address/', tokens: ['ETH', 'USDC', 'USDC.e', 'USDT', 'DAI'], exchangeLabel: 'Optimism' },
+  { key: 'polygon', label: 'Polygon', family: 'evm', nativeSymbol: 'POL', explorer: 'https://polygonscan.com/address/', tokens: ['POL', 'USDC', 'USDC.e', 'USDT', 'DAI'], exchangeLabel: 'Polygon (MATIC/POL)' },
+  { key: 'bsc', label: 'BNB Smart Chain', family: 'evm', nativeSymbol: 'BNB', explorer: 'https://bscscan.com/address/', tokens: ['BNB', 'USDC', 'USDT', 'DAI'], exchangeLabel: 'BEP20 (BSC)' },
+  { key: 'avalanche', label: 'Avalanche C-Chain', family: 'evm', nativeSymbol: 'AVAX', explorer: 'https://snowtrace.io/address/', tokens: ['AVAX', 'USDC', 'USDT', 'DAI.e'], exchangeLabel: 'AVAX C-Chain (AVAXC)' },
+  { key: 'linea', label: 'Linea', family: 'evm', nativeSymbol: 'ETH', explorer: 'https://lineascan.build/address/', tokens: ['ETH', 'USDC', 'USDT', 'DAI'], exchangeLabel: 'Linea' },
+  { key: 'zksync', label: 'zkSync Era', family: 'evm', nativeSymbol: 'ETH', explorer: 'https://explorer.zksync.io/address/', tokens: ['ETH', 'USDC', 'USDC.e', 'USDT'], exchangeLabel: 'zkSync Era' },
+  { key: 'sei', label: 'Sei', family: 'evm', nativeSymbol: 'SEI', explorer: 'https://seitrace.com/address/', tokens: ['SEI', 'USDC', 'USDT'], exchangeLabel: 'Sei (EVM)' },
+  { key: 'solana', label: 'Solana', family: 'solana', nativeSymbol: 'SOL', explorer: 'https://solscan.io/account/', tokens: ['SOL', 'USDC', 'USDT', 'PYUSD', 'USDS'], exchangeLabel: 'Solana (SOL)' },
 ];
 
 export const EVM_NETWORK_KEYS = NETWORKS.filter((n) => n.family === 'evm').map((n) => n.key);
@@ -56,6 +60,24 @@ export function isNetworkKey(key: unknown): key is NetworkKey {
 
 export function familyOf(key: string): ChainFamily {
   return key === 'solana' ? 'solana' : 'evm';
+}
+
+/**
+ * Every network an address can receive on, preferred one first. An EVM
+ * address is identical on all EVM chains; a Solana address only on Solana.
+ */
+export function acceptedNetworks(networkKey: string | null | undefined): NetworkInfo[] {
+  const preferred = getNetwork(networkKey) || getNetwork('base')!;
+  const rest = NETWORKS.filter((n) => n.family === preferred.family && n.key !== preferred.key);
+  return [preferred, ...rest];
+}
+
+/** Union of tracked token symbols across the accepted networks (natives first). */
+export function acceptedTokenSymbols(networkKey: string | null | undefined): string[] {
+  const nets = acceptedNetworks(networkKey);
+  const natives = [...new Set(nets.map((n) => n.nativeSymbol))];
+  const others = [...new Set(nets.flatMap((n) => n.tokens).filter((t) => !natives.includes(t)))];
+  return [...natives, ...others];
 }
 
 export function explorerAddressUrl(key: string, address: string): string | null {

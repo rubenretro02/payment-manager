@@ -927,7 +927,7 @@ export default function AccountsPage() {
                       </div>
                     </div>
                     <div className="grid gap-2">
-                      <Label htmlFor="wallet_network">Network</Label>
+                      <Label htmlFor="wallet_network">Preferred network</Label>
                       <Select
                         value={newAccount.wallet_network}
                         onValueChange={(v) => setNewAccount({ ...newAccount, wallet_network: v })}
@@ -941,6 +941,9 @@ export default function AccountsPage() {
                           ))}
                         </SelectContent>
                       </Select>
+                      <p className="text-xs text-muted-foreground">
+                        EVM addresses accept every EVM network; the user sees all of them with this one first. Pick Solana for a Solana address.
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -2112,7 +2115,7 @@ export default function AccountsPage() {
                     </div>
                   </div>
                   <div className="grid gap-2">
-                    <Label htmlFor="edit_wallet_network">Network</Label>
+                    <Label htmlFor="edit_wallet_network">Preferred network</Label>
                     <Select
                       value={newAccount.wallet_network}
                       onValueChange={(v) => setNewAccount({ ...newAccount, wallet_network: v })}
@@ -2126,6 +2129,9 @@ export default function AccountsPage() {
                         ))}
                       </SelectContent>
                     </Select>
+                    <p className="text-xs text-muted-foreground">
+                      EVM addresses accept every EVM network; the user sees all of them with this one first. Pick Solana for a Solana address.
+                    </p>
                   </div>
                 </div>
               </div>
