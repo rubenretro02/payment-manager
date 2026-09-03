@@ -592,7 +592,10 @@ export default function WalletsPage() {
 
   const balanceFor = (id: string) => balances?.wallets.find((b) => b.wallet_id === id);
   const q = searchQuery.trim().toLowerCase();
-  const hasBalance = (id: string) => (balanceFor(id)?.balances.filter((t) => !t.spam).length || 0) > 0;
+  // Hidden by default: spam, and discovered tokens with no market price —
+  // the wallet does hold them, but they'd show as $0 and only confuse the total.
+  const isHiddenToken = (t: TokenBalance) => !!t.spam || (t.verified === false && t.usd === null);
+  const hasBalance = (id: string) => (balanceFor(id)?.balances.filter((t) => !isHiddenToken(t)).length || 0) > 0;
   const filteredWallets = wallets.filter((w) => {
     if (filterNetwork === 'solana' && w.chain_family !== 'solana') return false;
     if (filterNetwork === 'evm' && w.chain_family !== 'evm') return false;
@@ -786,7 +789,7 @@ export default function WalletsPage() {
               With balance
             </Button>
             <Button type="button" variant="ghost" size="sm" className="text-xs text-muted-foreground" onClick={() => setShowSpam((v) => !v)}>
-              {showSpam ? 'Hide spam tokens' : 'Show spam tokens'}
+              {showSpam ? 'Hide spam / unpriced tokens' : 'Show spam / unpriced tokens'}
             </Button>
           </div>
         </div>
@@ -957,34 +960,38 @@ export default function WalletsPage() {
                         <div className="flex flex-wrap gap-1 md:justify-end mt-1">
                           {(() => {
                             const all = b?.balances || [];
-                            const nonSpam = all.filter((t) => !t.spam);
-                            const visible = showSpam ? all : nonSpam;
-                            const spamCount = all.length - nonSpam.length;
+                            const shown = all.filter((t) => !isHiddenToken(t));
+                            const visible = showSpam ? all : shown;
+                            const hiddenCount = all.length - shown.length;
                             if (visible.length === 0) {
                               return (
                                 <span className="text-xs text-muted-foreground">
-                                  {balances ? 'No balance' : '…'}{spamCount > 0 ? ` · ${spamCount} spam hidden` : ''}
+                                  {balances ? 'No balance' : '…'}{hiddenCount > 0 ? ` · ${hiddenCount} hidden (spam / no price)` : ''}
                                 </span>
                               );
                             }
                             return (
                               <>
-                                {visible.slice(0, 8).map((t, i) => (
-                                  <Badge
-                                    key={`${t.network}-${t.symbol}-${i}`}
-                                    variant="secondary"
-                                    className={`font-mono text-[11px] ${t.verified === false ? 'border border-dashed border-amber-400' : ''} ${t.spam ? 'opacity-60 line-through' : ''}`}
-                                    title={`${t.symbol} on ${getNetwork(t.network)?.label || t.network}${t.verified === false ? ' · discovered token (not in curated list)' : ''}${t.spam ? ' · looks like airdrop spam' : ''}`}
-                                  >
-                                    {fmtAmount(t.amount)} {t.symbol}
-                                    <span className="ml-1 opacity-60">{getNetwork(t.network)?.label || t.network}</span>
-                                  </Badge>
-                                ))}
+                                {visible.slice(0, 8).map((t, i) => {
+                                  const unpriced = !t.spam && t.verified === false && t.usd === null;
+                                  return (
+                                    <Badge
+                                      key={`${t.network}-${t.symbol}-${i}`}
+                                      variant="secondary"
+                                      className={`font-mono text-[11px] ${t.verified === false ? 'border border-dashed border-amber-400' : ''} ${t.spam ? 'opacity-60 line-through' : ''}`}
+                                      title={`${t.symbol} on ${getNetwork(t.network)?.label || t.network}${t.verified === false ? ' · discovered token (not in curated list)' : ''}${unpriced ? ' · no market price, not counted in the total' : ''}${t.spam ? ' · looks like airdrop spam' : ''}`}
+                                    >
+                                      {fmtAmount(t.amount)} {t.symbol}
+                                      <span className="ml-1 opacity-60">{getNetwork(t.network)?.label || t.network}</span>
+                                      {unpriced && <span className="ml-1 text-amber-700">· no price</span>}
+                                    </Badge>
+                                  );
+                                })}
                                 {visible.length > 8 && (
                                   <span className="text-xs text-muted-foreground">+{visible.length - 8} more</span>
                                 )}
-                                {!showSpam && spamCount > 0 && (
-                                  <span className="text-xs text-muted-foreground">· {spamCount} spam hidden</span>
+                                {!showSpam && hiddenCount > 0 && (
+                                  <span className="text-xs text-muted-foreground">· {hiddenCount} hidden (spam / no price)</span>
                                 )}
                               </>
                             );
