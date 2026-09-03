@@ -44,10 +44,15 @@ import {
   Eye,
   ScanSearch,
   Crosshair,
+  ArrowUp,
+  KeyRound,
+  ArrowUpDown,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
+import { Textarea } from '@/components/ui/textarea';
 import { useAuth } from '@/hooks/useAuth';
+import { useTelegram } from '@/components/providers/TelegramProvider';
 import { useWalletVault } from '@/hooks/useWalletVault';
 import { useAutoRefresh } from '@/hooks/useAutoRefresh';
 import { VaultGate } from '@/components/wallets/VaultGate';
@@ -63,17 +68,21 @@ interface TokenBalance {
   verified?: boolean;
   spam?: boolean;
 }
-interface DiscoverResult {
+interface DiscoverSeedResult {
+  seed: { id: number; name: string };
   evm: { checked: number; added: Wallet[]; errors: string[] };
   solana: { checked: number; added: Wallet[]; errors: string[] };
 }
+type DiscoverResult = DiscoverSeedResult[];
 interface LocateResult {
   family: 'evm' | 'solana' | null;
   found: boolean;
-  match: { template: string; template_id: string; index: number; path: string; address: string } | null;
+  seeds_checked?: number;
+  match: { seed?: { id: number; name: string } | null; template: string; template_id: string; index: number; path: string; address: string } | null;
   scanned: { template: string; upTo: number }[];
   wallet: Wallet | null;
 }
+type SortKey = 'balance-desc' | 'balance-asc' | 'name' | 'newest' | 'oldest';
 interface TokenScanStatus {
   running: boolean;
   total: number;
@@ -118,6 +127,7 @@ interface TxItem {
   status: 'ok' | 'failed';
   explorer_url: string | null;
   verified?: boolean;
+  spam?: boolean;
 }
 interface TxResult {
   items: TxItem[];
@@ -134,8 +144,70 @@ const fmtAmount = (n: number) =>
       ? n.toLocaleString('en-US', { maximumFractionDigits: 2 })
       : n.toLocaleString('en-US', { maximumFractionDigits: 6 });
 
+// Searchable account list (the plain Select was unusable with 100+ accounts).
+function AccountPicker({
+  accounts,
+  value,
+  onChange,
+  allowNone = false,
+}: {
+  accounts: AccountOption[];
+  value: string;
+  onChange: (id: string) => void;
+  allowNone?: boolean;
+}) {
+  const [query, setQuery] = useState('');
+  const q = query.trim().toLowerCase();
+  const list = q
+    ? accounts.filter((a) => a.full_name.toLowerCase().includes(q) || (a.user_name || '').toLowerCase().includes(q))
+    : accounts;
+  const selected = accounts.find((a) => a.id === value);
+  return (
+    <div className="rounded-lg border overflow-hidden">
+      <div className="relative border-b">
+        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search account or user…"
+          className="border-0 pl-9 rounded-none focus-visible:ring-0"
+          autoFocus
+        />
+      </div>
+      <div className="max-h-56 overflow-y-auto divide-y">
+        {allowNone && (
+          <button
+            type="button"
+            onClick={() => onChange('')}
+            className={`w-full text-left px-3 py-2 text-sm hover:bg-muted ${!value ? 'bg-primary/10 font-medium' : ''}`}
+          >
+            None
+          </button>
+        )}
+        {list.length === 0 && <p className="px-3 py-4 text-sm text-muted-foreground text-center">No matches</p>}
+        {list.map((a) => (
+          <button
+            key={a.id}
+            type="button"
+            onClick={() => onChange(a.id)}
+            className={`w-full text-left px-3 py-2 text-sm hover:bg-muted flex items-center justify-between gap-2 ${value === a.id ? 'bg-primary/10 font-medium' : ''}`}
+          >
+            <span className="truncate">
+              {a.full_name}
+              {a.user_name ? <span className="text-muted-foreground"> · {a.user_name}</span> : null}
+            </span>
+            {a.wallet_address && <span className="text-[10px] text-muted-foreground shrink-0">has wallet</span>}
+          </button>
+        ))}
+      </div>
+      {selected && <p className="px-3 py-1.5 text-xs text-muted-foreground border-t bg-muted/40">Selected: {selected.full_name}</p>}
+    </div>
+  );
+}
+
 export default function WalletsPage() {
   const { user } = useAuth();
+  const { isTelegramApp } = useTelegram();
   const vault = useWalletVault();
   const unlocked = !!vault.status?.unlocked;
 
@@ -154,6 +226,7 @@ export default function WalletsPage() {
   const [txData, setTxData] = useState<TxResult | null>(null);
   const [txLoading, setTxLoading] = useState(false);
   const [txNetwork, setTxNetwork] = useState('all');
+  const [showTxSpam, setShowTxSpam] = useState(false);
 
   // Discover / locate / watch-only / token scan
   const [discoverOpen, setDiscoverOpen] = useState(false);
@@ -169,9 +242,18 @@ export default function WalletsPage() {
   const [tokenScan, setTokenScan] = useState<TokenScanStatus | null>(null);
   const [showSpam, setShowSpam] = useState(false);
 
+  // Sort / seed filter / back-to-top / add seed
+  const [sort, setSort] = useState<SortKey>('balance-desc');
+  const [seedFilter, setSeedFilter] = useState('all');
+  const [showTop, setShowTop] = useState(false);
+  const [addSeedOpen, setAddSeedOpen] = useState(false);
+  const [addSeedForm, setAddSeedForm] = useState({ name: '', mnemonic: '', password: '', evm_count: '1', solana_count: '1' });
+  const [addingSeed, setAddingSeed] = useState(false);
+  const seeds = vault.status?.seeds || [];
+
   // Create dialog
   const [createOpen, setCreateOpen] = useState(false);
-  const [createForm, setCreateForm] = useState({ network: 'base', name: '', account_id: 'none' });
+  const [createForm, setCreateForm] = useState({ network: 'base', name: '', account_id: 'none', seed_id: '' });
   const [creating, setCreating] = useState(false);
 
   // Rename
@@ -258,6 +340,7 @@ export default function WalletsPage() {
           network: createForm.network,
           name: createForm.name || undefined,
           account_id: createForm.account_id !== 'none' ? createForm.account_id : undefined,
+          seed_id: createForm.seed_id ? Number(createForm.seed_id) : undefined,
         }),
       });
       const json = await res.json();
@@ -265,9 +348,9 @@ export default function WalletsPage() {
         toast.error(json.error || 'Failed to create wallet');
         return;
       }
-      toast.success(`Wallet created: ${shortAddress(json.data.address)}`);
+      toast.success(`Wallet created: ${json.data.name} · ${shortAddress(json.data.address)}`);
       setCreateOpen(false);
-      setCreateForm({ network: 'base', name: '', account_id: 'none' });
+      setCreateForm({ network: 'base', name: '', account_id: 'none', seed_id: '' });
       await Promise.all([loadWallets(), loadAccounts()]);
       loadBalances();
     } catch {
@@ -346,7 +429,7 @@ export default function WalletsPage() {
       }
       const data = json.data as DiscoverResult;
       setDiscoverResult(data);
-      const n = data.evm.added.length + data.solana.added.length;
+      const n = data.reduce((s, r) => s + r.evm.added.length + r.solana.added.length, 0);
       toast.success(n > 0 ? `${n} account${n === 1 ? '' : 's'} imported from the seed` : 'No new accounts with activity found');
       await loadWallets();
       loadBalances();
@@ -453,6 +536,38 @@ export default function WalletsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tokenScan?.running]);
 
+  const handleAddSeed = async () => {
+    setAddingSeed(true);
+    try {
+      const r = await vault.addSeed({
+        name: addSeedForm.name,
+        mnemonic: addSeedForm.mnemonic.trim().toLowerCase(),
+        password: addSeedForm.password,
+        evm_count: Math.max(0, Math.min(50, parseInt(addSeedForm.evm_count, 10) || 0)),
+        solana_count: Math.max(0, Math.min(50, parseInt(addSeedForm.solana_count, 10) || 0)),
+      });
+      if (!r.ok) {
+        toast.error(r.error || 'Could not add the seed');
+        return;
+      }
+      toast.success(`Seed “${r.seed?.name}” added${r.evm_address ? ` · Account 1: ${shortAddress(r.evm_address)}` : ''}`);
+      setAddSeedOpen(false);
+      setAddSeedForm({ name: '', mnemonic: '', password: '', evm_count: '1', solana_count: '1' });
+      await loadWallets();
+      loadBalances();
+    } finally {
+      setAddingSeed(false);
+    }
+  };
+
+  // Back-to-top button once the list has been scrolled a bit.
+  useEffect(() => {
+    const onScroll = () => setShowTop(window.scrollY > 500);
+    window.addEventListener('scroll', onScroll, { passive: true });
+    onScroll();
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+
   const handleUnassign = async (wallet: Wallet, accountId: string) => {
     const res = await vault.authFetch(`/api/wallets/${wallet.id}`, {
       method: 'PATCH',
@@ -478,9 +593,11 @@ export default function WalletsPage() {
   const balanceFor = (id: string) => balances?.wallets.find((b) => b.wallet_id === id);
   const q = searchQuery.trim().toLowerCase();
   const hasBalance = (id: string) => (balanceFor(id)?.balances.filter((t) => !t.spam).length || 0) > 0;
-  const visibleWallets = wallets.filter((w) => {
+  const filteredWallets = wallets.filter((w) => {
     if (filterNetwork === 'solana' && w.chain_family !== 'solana') return false;
     if (filterNetwork === 'evm' && w.chain_family !== 'evm') return false;
+    if (seedFilter === 'watch' && w.source !== 'watch') return false;
+    if (seedFilter !== 'all' && seedFilter !== 'watch' && String(w.seed_id) !== seedFilter) return false;
     if (onlyWithBalance && !hasBalance(w.id)) return false;
     if (!q) return true;
     const b = balanceFor(w.id);
@@ -497,6 +614,22 @@ export default function WalletsPage() {
     ];
     return haystack.some((s) => !!s && s.toLowerCase().includes(q));
   });
+  // Default: biggest balances first (wallets whose balance hasn't loaded yet sink to the bottom).
+  const totalFor = (id: string) => balanceFor(id)?.total_usd ?? -1;
+  const visibleWallets = [...filteredWallets].sort((a, b) => {
+    switch (sort) {
+      case 'balance-asc':
+        return totalFor(a.id) - totalFor(b.id);
+      case 'name':
+        return (a.name || '').localeCompare(b.name || '');
+      case 'newest':
+        return Date.parse(b.created_at) - Date.parse(a.created_at);
+      case 'oldest':
+        return Date.parse(a.created_at) - Date.parse(b.created_at);
+      default:
+        return totalFor(b.id) - totalFor(a.id);
+    }
+  });
 
   return (
     <div className="space-y-6 animate-in">
@@ -507,7 +640,10 @@ export default function WalletsPage() {
             <WalletIcon className="h-6 w-6" />
             Wallets
           </h1>
-          <p className="text-muted-foreground">Deposit wallets derived from your seed, across every network</p>
+          <p className="text-muted-foreground">
+            Deposit wallets derived from your seed{seeds.length > 1 ? 's' : ''}, across every network
+            {unlocked && seeds.length > 0 ? ` · ${seeds.length} seed${seeds.length === 1 ? '' : 's'} · ${wallets.length} wallets` : ''}
+          </p>
         </div>
         {unlocked && (
           <div className="flex gap-2 flex-wrap">
@@ -526,6 +662,10 @@ export default function WalletsPage() {
             <Button variant="outline" onClick={() => setWatchOpen(true)} className="gap-2" title="Track an address that is not from this seed">
               <Eye className="h-4 w-4" />
               Watch address
+            </Button>
+            <Button variant="outline" onClick={() => setAddSeedOpen(true)} className="gap-2" title="Add another recovery phrase to the vault">
+              <KeyRound className="h-4 w-4" />
+              Add seed
             </Button>
             <Button variant="outline" onClick={startTokenScan} disabled={!!tokenScan?.running} className="gap-2" title="Find every token held by every wallet (via block explorers)">
               {tokenScan?.running ? <Loader2 className="h-4 w-4 animate-spin" /> : <ScanSearch className="h-4 w-4" />}
@@ -603,7 +743,8 @@ export default function WalletsPage() {
           </div>
         )}
 
-        {/* Search + filter */}
+        {/* Search + filters — pinned while scrolling the list */}
+        <div className={`sticky ${isTelegramApp ? 'top-0' : 'top-16'} z-20 -mx-4 lg:-mx-6 px-4 lg:px-6 py-2 bg-background/95 backdrop-blur border-b space-y-2`}>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -649,12 +790,42 @@ export default function WalletsPage() {
             </Button>
           </div>
         </div>
-        {(q || filterNetwork !== 'all' || onlyWithBalance) && (
-          <p className="text-xs text-muted-foreground -mt-2">
-            Showing {visibleWallets.length} of {wallets.length} wallets
-            {onlyWithBalance ? ' · with balance only' : ''}
-          </p>
-        )}
+        <div className="flex flex-wrap items-center gap-2">
+          <Label className="text-sm text-muted-foreground flex items-center gap-1">
+            <ArrowUpDown className="h-3.5 w-3.5" /> Sort:
+          </Label>
+          <Select value={sort} onValueChange={(v) => setSort(v as SortKey)}>
+            <SelectTrigger className="w-[190px]"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="balance-desc">Balance: high → low</SelectItem>
+              <SelectItem value="balance-asc">Balance: low → high</SelectItem>
+              <SelectItem value="name">Name: A → Z</SelectItem>
+              <SelectItem value="newest">Newest first</SelectItem>
+              <SelectItem value="oldest">Oldest first</SelectItem>
+            </SelectContent>
+          </Select>
+          {seeds.length > 1 && (
+            <>
+              <Label className="text-sm text-muted-foreground">Seed:</Label>
+              <Select value={seedFilter} onValueChange={setSeedFilter}>
+                <SelectTrigger className="w-[180px]"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All seeds</SelectItem>
+                  {seeds.map((s) => (
+                    <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>
+                  ))}
+                  <SelectItem value="watch">Watch-only</SelectItem>
+                </SelectContent>
+              </Select>
+            </>
+          )}
+          {(q || filterNetwork !== 'all' || onlyWithBalance || seedFilter !== 'all') && (
+            <span className="text-xs text-muted-foreground ml-auto">
+              Showing {visibleWallets.length} of {wallets.length} wallets{onlyWithBalance ? ' · with balance only' : ''}
+            </span>
+          )}
+        </div>
+        </div>
 
         {/* List */}
         <Card>
@@ -730,6 +901,11 @@ export default function WalletsPage() {
                             <span className="text-xs text-muted-foreground" title={w.derivation_path || ''}>
                               {walletSubtitle(w)}
                             </span>
+                          )}
+                          {seeds.length > 1 && w.source === 'seed' && w.seed_name && (
+                            <Badge variant="outline" className="text-[10px] gap-1" title="Seed phrase this wallet comes from">
+                              <KeyRound className="h-3 w-3" /> {w.seed_name}
+                            </Badge>
                           )}
                         </div>
 
@@ -850,19 +1026,27 @@ export default function WalletsPage() {
               <Label>Name (optional)</Label>
               <Input value={createForm.name} onChange={(e) => setCreateForm({ ...createForm, name: e.target.value })} placeholder="e.g. Rickens · Base" />
             </div>
+            {seeds.length > 1 && (
+              <div className="grid gap-2">
+                <Label>Seed</Label>
+                <Select value={createForm.seed_id || String(seeds[0].id)} onValueChange={(v) => setCreateForm({ ...createForm, seed_id: v })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {seeds.map((s) => (
+                      <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <div className="grid gap-2">
               <Label>Assign to account (optional)</Label>
-              <Select value={createForm.account_id} onValueChange={(v) => setCreateForm({ ...createForm, account_id: v })}>
-                <SelectTrigger><SelectValue placeholder="None" /></SelectTrigger>
-                <SelectContent className="max-h-72">
-                  <SelectItem value="none">None</SelectItem>
-                  {accounts.map((a) => (
-                    <SelectItem key={a.id} value={a.id}>
-                      {a.full_name}{a.user_name ? ` · ${a.user_name}` : ''}{a.wallet_address ? ' (has wallet)' : ''}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <AccountPicker
+                accounts={accounts}
+                value={createForm.account_id === 'none' ? '' : createForm.account_id}
+                onChange={(id) => setCreateForm({ ...createForm, account_id: id || 'none' })}
+                allowNone
+              />
             </div>
           </div>
           <DialogFooter>
@@ -885,21 +1069,31 @@ export default function WalletsPage() {
             </DialogDescription>
           </DialogHeader>
           {discoverResult && (
-            <div className="rounded-lg border bg-muted/40 p-3 text-sm space-y-2">
-              <p><span className="font-semibold">EVM:</span> checked {discoverResult.evm.checked} new indexes, imported {discoverResult.evm.added.length}.</p>
-              <p><span className="font-semibold">Solana:</span> checked {discoverResult.solana.checked} new indexes, imported {discoverResult.solana.added.length}.</p>
-              {[...discoverResult.evm.added, ...discoverResult.solana.added].length > 0 && (
-                <ul className="text-xs font-mono space-y-0.5 max-h-40 overflow-y-auto">
-                  {[...discoverResult.evm.added, ...discoverResult.solana.added].map((w) => (
-                    <li key={w.id}>{w.name} · {shortAddress(w.address)}</li>
-                  ))}
-                </ul>
-              )}
-              {[...discoverResult.evm.errors, ...discoverResult.solana.errors].length > 0 && (
-                <p className="text-xs text-amber-700">Some checks failed: {[...discoverResult.evm.errors, ...discoverResult.solana.errors].slice(0, 5).join(' · ')}</p>
-              )}
+            <div className="space-y-2">
+              {discoverResult.map((r) => {
+                const added = [...r.evm.added, ...r.solana.added];
+                const errors = [...r.evm.errors, ...r.solana.errors];
+                return (
+                  <div key={r.seed.id} className="rounded-lg border bg-muted/40 p-3 text-sm space-y-1">
+                    <p className="font-semibold flex items-center gap-1"><KeyRound className="h-3.5 w-3.5" /> {r.seed.name}</p>
+                    <p>
+                      EVM: checked {r.evm.checked} new indexes, imported {r.evm.added.length}. Solana: checked {r.solana.checked}, imported {r.solana.added.length}.
+                    </p>
+                    {added.length > 0 && (
+                      <ul className="text-xs font-mono space-y-0.5 max-h-32 overflow-y-auto">
+                        {added.map((w) => (
+                          <li key={w.id}>{w.name} · {shortAddress(w.address)}</li>
+                        ))}
+                      </ul>
+                    )}
+                    {errors.length > 0 && (
+                      <p className="text-xs text-amber-700">Some checks failed: {errors.slice(0, 5).join(' · ')}</p>
+                    )}
+                  </div>
+                );
+              })}
               <p className="text-xs text-muted-foreground">
-                An account that is not found here was not created from this seed on a standard path. Use “Find address” to check the other derivation paths, or “Watch address” to track it anyway.
+                An account that is not found here was not created from these seeds on a standard path. Use “Find address” to check the other derivation paths, “Add seed” if it has its own phrase, or “Watch address” to track it anyway.
               </p>
             </div>
           )}
@@ -936,16 +1130,20 @@ export default function WalletsPage() {
             {locateResult && (
               locateResult.found && locateResult.match ? (
                 <div className="rounded-lg border border-green-300 bg-green-50 dark:bg-green-950/30 p-3 text-sm space-y-1">
-                  <p className="font-semibold text-green-800 dark:text-green-300">✓ Derived from your seed</p>
+                  <p className="font-semibold text-green-800 dark:text-green-300">
+                    ✓ Derived from {locateResult.match.seed ? `“${locateResult.match.seed.name}”` : 'your seed'}
+                  </p>
                   <p>{locateResult.match.template}</p>
                   <p className="font-mono text-xs">index {locateResult.match.index} · {locateResult.match.path}</p>
                   {locateResult.wallet && <p className="text-xs text-green-700">Added as “{locateResult.wallet.name}”.</p>}
                 </div>
               ) : (
                 <div className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 p-3 text-sm space-y-2">
-                  <p className="font-semibold text-amber-900 dark:text-amber-200">✗ Not derived from your seed</p>
+                  <p className="font-semibold text-amber-900 dark:text-amber-200">
+                    ✗ Not derived from {locateResult.seeds_checked && locateResult.seeds_checked > 1 ? `any of your ${locateResult.seeds_checked} seeds` : 'your seed'}
+                  </p>
                   <p className="text-xs">Checked: {locateResult.scanned.map((s) => `${s.template.split(' (')[0]} up to index ${s.upTo}`).join(' · ')}.</p>
-                  <p className="text-xs">It belongs to a different seed phrase, an imported private key, or a hardware wallet. You can still track its balances and history as watch-only.</p>
+                  <p className="text-xs">It belongs to a different seed phrase, an imported private key, or a hardware wallet. If you have its phrase, use “Add seed”; otherwise you can track its balances and history as watch-only.</p>
                 </div>
               )
             )}
@@ -1025,6 +1223,76 @@ export default function WalletsPage() {
         </DialogContent>
       </Dialog>
 
+      {/* Add another seed phrase */}
+      <Dialog open={addSeedOpen} onOpenChange={(o) => !addingSeed && setAddSeedOpen(o)}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><KeyRound className="h-5 w-5 text-primary" /> Add another seed phrase</DialogTitle>
+            <DialogDescription>
+              A second recovery phrase (another MetaMask, Zerion, Phantom… wallet) stored in the same vault and encrypted with your vault password. Its accounts show up next to the others and “Find address” checks it too.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3">
+            <div className="grid gap-2">
+              <Label htmlFor="seed_name">Name</Label>
+              <Input id="seed_name" value={addSeedForm.name} onChange={(e) => setAddSeedForm({ ...addSeedForm, name: e.target.value })} placeholder="e.g. Zerion wallet" />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="seed_phrase">Secret Recovery Phrase (12 or 24 words)</Label>
+              <Textarea
+                id="seed_phrase"
+                value={addSeedForm.mnemonic}
+                onChange={(e) => setAddSeedForm({ ...addSeedForm, mnemonic: e.target.value })}
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck={false}
+                className="min-h-[80px] font-mono"
+                placeholder="word1 word2 word3 …"
+              />
+              <p className="text-xs text-muted-foreground">{addSeedForm.mnemonic.trim().split(/\s+/).filter(Boolean).length} words</p>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="seed_vault_password">Vault password (the same one you unlock with)</Label>
+              <Input id="seed_vault_password" type="password" autoComplete="current-password" value={addSeedForm.password} onChange={(e) => setAddSeedForm({ ...addSeedForm, password: e.target.value })} />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-2">
+                <Label>Accounts to import (EVM)</Label>
+                <Input type="number" min={0} max={50} value={addSeedForm.evm_count} onChange={(e) => setAddSeedForm({ ...addSeedForm, evm_count: e.target.value })} />
+              </div>
+              <div className="grid gap-2">
+                <Label>Accounts to import (Solana)</Label>
+                <Input type="number" min={0} max={50} value={addSeedForm.solana_count} onChange={(e) => setAddSeedForm({ ...addSeedForm, solana_count: e.target.value })} />
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">Run “Discover from seed” afterwards to pull in every account of this phrase that has activity.</p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAddSeedOpen(false)} disabled={addingSeed}>Cancel</Button>
+            <Button
+              onClick={handleAddSeed}
+              disabled={addingSeed || !addSeedForm.password || ![12, 24].includes(addSeedForm.mnemonic.trim().split(/\s+/).filter(Boolean).length)}
+            >
+              {addingSeed ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <KeyRound className="h-4 w-4 mr-2" />}
+              Add seed
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Back to top */}
+      {showTop && (
+        <Button
+          size="icon"
+          className="fixed bottom-24 right-4 md:bottom-6 md:right-6 z-40 h-11 w-11 rounded-full shadow-lg"
+          onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+          title="Back to top"
+        >
+          <ArrowUp className="h-5 w-5" />
+        </Button>
+      )}
+
       {/* Transactions dialog */}
       <Dialog open={txWallet !== null} onOpenChange={(o) => !o && setTxWallet(null)}>
         <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
@@ -1044,8 +1312,10 @@ export default function WalletsPage() {
           )}
 
           {!txLoading && txData && (() => {
-            const nets = [...new Set(txData.items.map((t) => t.network))];
-            const items = txNetwork === 'all' ? txData.items : txData.items.filter((t) => t.network === txNetwork);
+            const spamItems = txData.items.filter((t) => t.spam);
+            const baseItems = showTxSpam ? txData.items : txData.items.filter((t) => !t.spam);
+            const nets = [...new Set(baseItems.map((t) => t.network))];
+            const items = txNetwork === 'all' ? baseItems : baseItems.filter((t) => t.network === txNetwork);
             return (
               <div className="space-y-3">
                 {nets.length > 1 && (
@@ -1055,7 +1325,7 @@ export default function WalletsPage() {
                       className={`cursor-pointer ${txNetwork === 'all' ? 'bg-primary text-primary-foreground border-primary' : ''}`}
                       onClick={() => setTxNetwork('all')}
                     >
-                      All ({txData.items.length})
+                      All ({baseItems.length})
                     </Badge>
                     {nets.map((n) => (
                       <Badge
@@ -1064,9 +1334,27 @@ export default function WalletsPage() {
                         className={`cursor-pointer ${txNetwork === n ? 'bg-primary text-primary-foreground border-primary' : ''}`}
                         onClick={() => setTxNetwork(n)}
                       >
-                        {getNetwork(n)?.label || n} ({txData.items.filter((t) => t.network === n).length})
+                        {getNetwork(n)?.label || n} ({baseItems.filter((t) => t.network === n).length})
                       </Badge>
                     ))}
+                  </div>
+                )}
+
+                {spamItems.length > 0 && (
+                  <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 dark:bg-red-950/30 dark:border-red-900 p-3 text-xs text-red-900 dark:text-red-200">
+                    <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                    <div className="space-y-1">
+                      <p className="font-semibold">
+                        {spamItems.length} spam / fake transfer{spamItems.length === 1 ? '' : 's'} {showTxSpam ? 'shown' : 'hidden'}.
+                      </p>
+                      <p>
+                        Scammers mass-send worthless tokens named like websites (“www.bopx.club”) or fake USDC that mirrors your real payments to a look-alike address. They are harmless if ignored.
+                        <strong> Never visit those sites and never copy an address from these entries.</strong>
+                      </p>
+                      <button type="button" className="underline" onClick={() => setShowTxSpam((v) => !v)}>
+                        {showTxSpam ? 'Hide them' : 'Show them anyway'}
+                      </button>
+                    </div>
                   </div>
                 )}
 
@@ -1081,25 +1369,30 @@ export default function WalletsPage() {
                     {items.map((t) => {
                       const incoming = t.direction === 'in';
                       return (
-                        <div key={t.id} className="flex items-center gap-3 p-3">
-                          <div className={`h-8 w-8 rounded-full flex items-center justify-center shrink-0 ${incoming ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                            {incoming ? <ArrowDownLeft className="h-4 w-4" /> : <ArrowUpRight className="h-4 w-4" />}
+                        <div key={t.id} className={`flex items-center gap-3 p-3 ${t.spam ? 'opacity-60 bg-red-50/40 dark:bg-red-950/20' : ''}`}>
+                          <div className={`h-8 w-8 rounded-full flex items-center justify-center shrink-0 ${t.spam ? 'bg-red-100 text-red-700' : incoming ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                            {t.spam ? <AlertTriangle className="h-4 w-4" /> : incoming ? <ArrowDownLeft className="h-4 w-4" /> : <ArrowUpRight className="h-4 w-4" />}
                           </div>
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2 flex-wrap">
-                              <span className={`font-semibold ${incoming ? 'text-green-700' : 'text-red-700'}`}>
+                              <span className={`font-semibold ${t.spam ? 'line-through text-muted-foreground' : incoming ? 'text-green-700' : 'text-red-700'}`}>
                                 {incoming ? '+' : '-'}{fmtAmount(t.amount)} {t.symbol}
                               </span>
                               <Badge variant="outline" className="text-[10px]">{getNetwork(t.network)?.label || t.network}</Badge>
                               {t.status === 'failed' && <Badge className="bg-red-100 text-red-800 text-[10px]">failed</Badge>}
-                              {t.verified === false && (
-                                <Badge variant="outline" className="text-[10px] text-amber-700 border-amber-300" title="Token not in our list — could be spam/airdrop">
+                              {t.spam ? (
+                                <Badge className="bg-red-600 text-white text-[10px]" title="Airdrop spam or a fake token imitating a stablecoin — not a real transfer of value">
+                                  spam / fake
+                                </Badge>
+                              ) : t.verified === false && (
+                                <Badge variant="outline" className="text-[10px] text-amber-700 border-amber-300" title="Token not in our list — check before trusting it">
                                   unverified token
                                 </Badge>
                               )}
                             </div>
                             <p className="text-xs text-muted-foreground truncate">
                               {incoming ? 'from' : 'to'} {t.counterparty ? shortAddress(t.counterparty) : '—'}
+                              {t.spam ? ' (look-alike address — do not copy)' : ''}
                               {t.timestamp ? ` · ${format(new Date(t.timestamp), 'MMM d, yyyy HH:mm')}` : ''}
                             </p>
                           </div>
@@ -1147,16 +1440,7 @@ export default function WalletsPage() {
           </DialogHeader>
           <div className="grid gap-2 py-2">
             <Label>Account</Label>
-            <Select value={assignAccountId} onValueChange={setAssignAccountId}>
-              <SelectTrigger><SelectValue placeholder="Pick an account" /></SelectTrigger>
-              <SelectContent className="max-h-72">
-                {accounts.map((a) => (
-                  <SelectItem key={a.id} value={a.id}>
-                    {a.full_name}{a.user_name ? ` · ${a.user_name}` : ''}{a.wallet_address ? ' (has wallet)' : ''}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <AccountPicker accounts={accounts} value={assignAccountId} onChange={setAssignAccountId} />
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setAssignFor(null)} disabled={assigning}>Cancel</Button>

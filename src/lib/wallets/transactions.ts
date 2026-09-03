@@ -14,7 +14,7 @@
 import { formatUnits } from 'viem';
 import { Connection, PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { EVM_CHAINS, SOLANA_KNOWN_MINTS, solanaRpcUrl } from './chains';
-import { EVM_NETWORK_KEYS, type NetworkKey } from './networks';
+import { EVM_NETWORK_KEYS, isSpamToken, looksLikeStableSymbol, type NetworkKey } from './networks';
 
 export interface TxItem {
   id: string;
@@ -30,6 +30,12 @@ export interface TxItem {
   explorer_url: string | null;
   /** false = token contract/mint is not in our registry (could be spam) */
   verified: boolean;
+  /** airdrop spam or a FAKE stablecoin (unverified contract calling itself USDC…) */
+  spam: boolean;
+}
+
+function tokenSpam(verified: boolean, symbol: string, name?: string | null): boolean {
+  return !verified && (isSpamToken(symbol, name) || looksLikeStableSymbol(symbol));
 }
 
 export interface TxResult {
@@ -151,6 +157,7 @@ function parseBlockscoutV2Native(key: NetworkKey, address: string, json: unknown
       status: it.status === 'ok' || it.result === 'success' ? 'ok' : 'failed',
       explorer_url: `${TX_EXPLORER[key]}${hash}`,
       verified: true,
+      spam: false,
     });
   }
   return out;
@@ -172,6 +179,7 @@ function parseBlockscoutV2Tokens(key: NetworkKey, address: string, json: unknown
     const to = hashOf(it.to);
     const dir = direction(address, from, to);
     const symbol = str(token.symbol) || (contract ? `${contract.slice(0, 6)}…` : 'TOKEN');
+    const verified = tracked.has(contract);
     out.push({
       id: `${key}:${hash}:${str(it.log_index) ?? contract}`,
       network: key,
@@ -184,7 +192,8 @@ function parseBlockscoutV2Tokens(key: NetworkKey, address: string, json: unknown
       counterparty: dir === 'in' ? from : to,
       status: 'ok',
       explorer_url: `${TX_EXPLORER[key]}${hash}`,
-      verified: tracked.has(contract),
+      verified,
+      spam: tokenSpam(verified, symbol, str(token.name)),
     });
   }
   return out;
@@ -228,6 +237,7 @@ function parseEtherscanNative(key: NetworkKey, address: string, json: unknown): 
       status: failed ? 'failed' : 'ok',
       explorer_url: `${TX_EXPLORER[key]}${hash}`,
       verified: true,
+      spam: false,
     });
   }
   return out;
@@ -244,6 +254,8 @@ function parseEtherscanTokens(key: NetworkKey, address: string, json: unknown): 
     const from = str(it.from);
     const to = str(it.to);
     const dir = direction(address, from, to);
+    const symbol = str(it.tokenSymbol) || (contract ? `${contract.slice(0, 6)}…` : 'TOKEN');
+    const verified = tracked.has(contract);
     out.push({
       id: `${key}:${hash}:${str(it.logIndex) ?? contract}`,
       network: key,
@@ -251,12 +263,13 @@ function parseEtherscanTokens(key: NetworkKey, address: string, json: unknown): 
       timestamp: tsFromUnix(it.timeStamp),
       direction: dir,
       kind: 'token',
-      symbol: str(it.tokenSymbol) || (contract ? `${contract.slice(0, 6)}…` : 'TOKEN'),
+      symbol,
       amount: safeAmount(str(it.value), Number.isFinite(decimals) ? decimals : 18),
       counterparty: dir === 'in' ? from : to,
       status: 'ok',
       explorer_url: `${TX_EXPLORER[key]}${hash}`,
-      verified: tracked.has(contract),
+      verified,
+      spam: tokenSpam(verified, symbol, str(it.tokenName)),
     });
   }
   return out;
@@ -339,6 +352,7 @@ async function fetchSolana(address: string, limit: number): Promise<TxItem[]> {
           status,
           explorer_url: `${TX_EXPLORER.solana}${sig}`,
           verified: true,
+          spam: false,
         });
       }
     }
@@ -353,6 +367,8 @@ async function fetchSolana(address: string, limit: number): Promise<TxItem[]> {
       const delta = after - before;
       if (Math.abs(delta) < 1e-12) continue;
       const other = [...pre, ...post].find((b) => b.mint === mint && b.owner && b.owner !== address);
+      const known = mint in SOLANA_KNOWN_MINTS;
+      const symbol = SOLANA_KNOWN_MINTS[mint] || `${mint.slice(0, 4)}…${mint.slice(-4)}`;
       out.push({
         id: `solana:${sig}:${mint}`,
         network: 'solana',
@@ -360,12 +376,13 @@ async function fetchSolana(address: string, limit: number): Promise<TxItem[]> {
         timestamp: ts,
         direction: delta > 0 ? 'in' : 'out',
         kind: 'token',
-        symbol: SOLANA_KNOWN_MINTS[mint] || `${mint.slice(0, 4)}…${mint.slice(-4)}`,
+        symbol,
         amount: Math.abs(delta),
         counterparty: other?.owner || null,
         status,
         explorer_url: `${TX_EXPLORER.solana}${sig}`,
-        verified: mint in SOLANA_KNOWN_MINTS,
+        verified: known,
+        spam: false,
       });
     }
   });

@@ -181,6 +181,9 @@ export interface Wallet {
   derivation_path: string | null;
   // 'seed' = derived from the vault; 'watch' = address only (no keys)
   source: 'seed' | 'watch';
+  // Which seed phrase in the vault it comes from (null for watch-only)
+  seed_id: number | null;
+  seed_name?: string | null;
   address: string;
   network: string;
   name: string | null;

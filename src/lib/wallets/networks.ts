@@ -88,11 +88,30 @@ export function explorerAddressUrl(key: string, address: string): string | null 
 // Symbols treated as $1.00 for the unified USD total.
 export const STABLE_SYMBOLS = new Set(['USDC', 'USDBC', 'USDC.E', 'USDT', 'DAI', 'DAI.E', 'PYUSD', 'USDS']);
 
-// Airdrop spam is common on EVM: tokens whose symbol/name is a URL or a
-// "claim your reward" lure. They're still listed, just hidden by default.
-const SPAM_RE = /(https?:|www\.|\.(com|cfd|xyz|io|net|org|site|top|vip|pro|app|fun|lol|link|info|me)\b|claim|visit|airdrop|reward|bonus|voucher|giveaway)/i;
+// Airdrop spam is common on EVM: worthless tokens whose symbol/name is a
+// website ("www.bopx.club", "optibase.website 🎁") or a "claim your reward"
+// lure, mass-sent so people visit the site or copy a look-alike address.
+// They're still listed, just hidden by default and never counted.
+const SPAM_KEYWORDS = /(https?:\/\/|www\.|claim|visit|airdrop|reward|bonus|voucher|giveaway|free\s*mint)/i;
+// "something.tld" — legit symbols like USDC.e / DAI.e / BTC.b have a single
+// letter after the dot and do not match.
+const DOMAIN_RE = /\b[a-z0-9-]{2,}\.[a-z]{2,12}\b/i;
+const EMOJI_RE = /\p{Extended_Pictographic}/u;
 export function isSpamToken(symbol: string | null | undefined, name?: string | null): boolean {
-  return SPAM_RE.test(`${symbol || ''} ${name || ''}`);
+  const text = `${symbol || ''} ${name || ''}`;
+  return SPAM_KEYWORDS.test(text) || DOMAIN_RE.test(text) || EMOJI_RE.test(text);
+}
+
+// A token that CALLS itself USDC/USDT/DAI… but is not the real contract is a
+// fake — the classic "address poisoning" trick: the scammer emits a transfer
+// that mirrors one of your real payments to a look-alike address, hoping you
+// copy it from your history next time.
+const STABLE_NAMES = new Set(['usdc', 'usdt', 'dai', 'usdbc', 'busd', 'pyusd', 'usds', 'usde', 'tether', 'usdcoin']);
+export function looksLikeStableSymbol(symbol: string | null | undefined): boolean {
+  if (!symbol) return false;
+  // NFKD splits look-alike letters (e.g. "Ḍ") into base letter + combining mark; drop the marks.
+  const norm = symbol.normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/gi, '').toLowerCase();
+  return STABLE_NAMES.has(norm) || STABLE_NAMES.has(norm.replace(/e$/, ''));
 }
 
 export function shortAddress(address: string): string {

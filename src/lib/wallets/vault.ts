@@ -1,10 +1,11 @@
 // Server-only key vault for the Wallets module.
 //
-// The seed phrase is stored ONLY encrypted (scrypt-derived key + AES-256-GCM)
-// in wallet_vault. The password is never stored. When the admin unlocks, the
-// decrypted mnemonic is held in this process's memory for UNLOCK_TTL and a
+// Seed phrases are stored ONLY encrypted (scrypt-derived key + AES-256-GCM)
+// in wallet_vault, one row per seed, all encrypted with the same vault
+// password. The password is never stored. When the admin unlocks, the
+// decrypted mnemonics are held in this process's memory for UNLOCK_TTL and a
 // random session token is issued; every wallets API call must present that
-// token. Locking (explicit, expiry, or a server restart) wipes both.
+// token. Locking (explicit, expiry, or a server restart) wipes everything.
 //
 // Never log mnemonics, passwords or tokens from this module.
 
@@ -29,7 +30,7 @@ export class VaultError extends Error {
   }
 }
 
-interface VaultRecord {
+interface EncryptedBlob {
   ciphertext: string;
   iv: string;
   tag: string;
@@ -37,15 +38,35 @@ interface VaultRecord {
   kdf: { name: 'scrypt'; N: number; r: number; p: number; keyLen: number };
 }
 
-interface Session {
+interface VaultRecord extends EncryptedBlob {
+  id: number;
+  name: string;
+}
+
+export interface SeedInfo {
+  id: number;
+  name: string;
+}
+
+export interface UnlockedSeed extends SeedInfo {
+  mnemonic: string;
+}
+
+/** What an authorized request gets: every unlocked seed (primary = lowest id). */
+export interface Session {
+  seeds: UnlockedSeed[];
+  /** Primary seed's mnemonic (backwards compatible shortcut) */
+  mnemonic: string;
+}
+
+export interface IssuedToken {
   token: string;
   expiresAt: number;
-  mnemonic: string;
 }
 
 // Process-wide state (one Node process on Dokploy).
 const state = {
-  mnemonic: null as string | null,
+  seeds: [] as UnlockedSeed[],
   expiresAt: 0,
   // sha256(token) → expiry
   tokens: new Map<string, number>(),
@@ -57,7 +78,7 @@ const state = {
 // Crypto helpers
 // ---------------------------------------------------------------------------
 
-function deriveKey(password: string, salt: Buffer, kdf: VaultRecord['kdf']): Buffer {
+function deriveKey(password: string, salt: Buffer, kdf: EncryptedBlob['kdf']): Buffer {
   return crypto.scryptSync(password.normalize('NFKC'), salt, kdf.keyLen, {
     N: kdf.N,
     r: kdf.r,
@@ -66,9 +87,9 @@ function deriveKey(password: string, salt: Buffer, kdf: VaultRecord['kdf']): Buf
   });
 }
 
-export function encryptMnemonic(mnemonic: string, password: string): VaultRecord {
+export function encryptMnemonic(mnemonic: string, password: string): EncryptedBlob {
   const salt = crypto.randomBytes(16);
-  const kdf: VaultRecord['kdf'] = { name: 'scrypt', N: SCRYPT.N, r: SCRYPT.r, p: SCRYPT.p, keyLen: SCRYPT.keyLen };
+  const kdf: EncryptedBlob['kdf'] = { name: 'scrypt', N: SCRYPT.N, r: SCRYPT.r, p: SCRYPT.p, keyLen: SCRYPT.keyLen };
   const key = deriveKey(password, salt, kdf);
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
@@ -84,7 +105,7 @@ export function encryptMnemonic(mnemonic: string, password: string): VaultRecord
   };
 }
 
-export function decryptMnemonic(record: VaultRecord, password: string): string | null {
+export function decryptMnemonic(record: EncryptedBlob, password: string): string | null {
   const key = deriveKey(password, Buffer.from(record.salt, 'base64'), record.kdf);
   try {
     const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(record.iv, 'base64'));
@@ -103,13 +124,21 @@ function hashToken(token: string): string {
   return crypto.createHash('sha256').update(token).digest('hex');
 }
 
+function normalizeMnemonic(input: string): string {
+  const mnemonic = input.trim().toLowerCase().split(/\s+/).join(' ');
+  if (!validateMnemonic(mnemonic, wordlist)) {
+    throw new VaultError('That is not a valid recovery phrase (check the words and their order).', 'INVALID_MNEMONIC');
+  }
+  return mnemonic;
+}
+
 // ---------------------------------------------------------------------------
 // Persistence
 // ---------------------------------------------------------------------------
 
-async function loadRecord(): Promise<VaultRecord | null> {
+async function loadRecords(): Promise<VaultRecord[]> {
   const supabase = createAdminClient();
-  const { data, error } = await supabase.from('wallet_vault').select('*').eq('id', 1).maybeSingle();
+  const { data, error } = await supabase.from('wallet_vault').select('*').order('id', { ascending: true });
   if (error) {
     // Table missing = migration not run yet. Surface a clear message.
     if (/wallet_vault/i.test(error.message) || /schema cache/i.test(error.message)) {
@@ -117,23 +146,45 @@ async function loadRecord(): Promise<VaultRecord | null> {
     }
     throw new VaultError(error.message, 'DB_ERROR', 500);
   }
-  return (data as VaultRecord | null) || null;
+  return ((data || []) as (Partial<VaultRecord> & EncryptedBlob & { id: number })[]).map((r) => ({
+    ...r,
+    name: r.name || `Seed ${r.id}`,
+  }));
+}
+
+async function insertRecord(row: { id: number; name: string } & EncryptedBlob): Promise<void> {
+  const supabase = createAdminClient();
+  const { error } = await supabase.from('wallet_vault').insert(row);
+  if (!error) return;
+  // Before migration-add-wallets-multiseed.sql there is no `name` column.
+  if (/name/i.test(error.message) && /column|schema cache/i.test(error.message)) {
+    const { name: _name, ...withoutName } = row;
+    void _name;
+    const retry = await supabase.from('wallet_vault').insert(withoutName);
+    if (!retry.error) return;
+    throw new VaultError(retry.error.message, 'DB_ERROR', 500);
+  }
+  throw new VaultError(error.message, 'DB_ERROR', 500);
 }
 
 export async function isVaultConfigured(): Promise<boolean> {
-  return (await loadRecord()) !== null;
+  return (await loadRecords()).length > 0;
+}
+
+export async function listSeeds(): Promise<SeedInfo[]> {
+  return (await loadRecords()).map((r) => ({ id: r.id, name: r.name }));
 }
 
 // ---------------------------------------------------------------------------
 // Sessions
 // ---------------------------------------------------------------------------
 
-function issueToken(): Session {
+function issueToken(): IssuedToken {
   const token = crypto.randomBytes(32).toString('hex');
   const expiresAt = Date.now() + UNLOCK_TTL_MS;
   state.tokens.set(hashToken(token), expiresAt);
   state.expiresAt = Math.max(state.expiresAt, expiresAt);
-  return { token, expiresAt, mnemonic: state.mnemonic! };
+  return { token, expiresAt };
 }
 
 function pruneExpired() {
@@ -142,7 +193,7 @@ function pruneExpired() {
     if (exp <= now) state.tokens.delete(hash);
   }
   if (state.tokens.size === 0 || state.expiresAt <= now) {
-    state.mnemonic = null;
+    state.seeds = [];
     state.expiresAt = 0;
     state.tokens.clear();
   }
@@ -155,13 +206,21 @@ function tokenFromRequest(request: NextRequest): string | null {
 }
 
 /** Returns the unlocked session for this request's token, or null. */
-export function authorize(request: NextRequest): { mnemonic: string } | null {
+export function authorize(request: NextRequest): Session | null {
   pruneExpired();
   const token = tokenFromRequest(request);
-  if (!token || !state.mnemonic) return null;
+  if (!token || state.seeds.length === 0) return null;
   const exp = state.tokens.get(hashToken(token));
   if (!exp || exp <= Date.now()) return null;
-  return { mnemonic: state.mnemonic };
+  return { seeds: state.seeds, mnemonic: state.seeds[0].mnemonic };
+}
+
+/** Mnemonic of a given seed (defaults to the primary one). */
+export function seedMnemonic(session: Session, seedId?: number | null): { id: number; mnemonic: string } {
+  if (seedId === undefined || seedId === null) return { id: session.seeds[0].id, mnemonic: session.seeds[0].mnemonic };
+  const seed = session.seeds.find((s) => s.id === seedId);
+  if (!seed) throw new VaultError('Unknown seed', 'UNKNOWN_SEED', 400);
+  return { id: seed.id, mnemonic: seed.mnemonic };
 }
 
 export function tokenExpiry(request: NextRequest): number | null {
@@ -170,54 +229,96 @@ export function tokenExpiry(request: NextRequest): number | null {
   return state.tokens.get(hashToken(token)) ?? null;
 }
 
-export async function setupVault(mnemonicInput: string, password: string): Promise<Session> {
-  const mnemonic = mnemonicInput.trim().toLowerCase().split(/\s+/).join(' ');
-  if (!validateMnemonic(mnemonic, wordlist)) {
-    throw new VaultError('That is not a valid recovery phrase (check the words and their order).', 'INVALID_MNEMONIC');
+function registerFailure(): never {
+  state.failures += 1;
+  if (state.failures >= MAX_FAILED_ATTEMPTS) {
+    state.failures = 0;
+    state.lockedUntil = Date.now() + FAILURE_COOLDOWN_MS;
   }
-  if (password.length < 8) throw new VaultError('Password must be at least 8 characters', 'WEAK_PASSWORD');
-  if (await isVaultConfigured()) {
-    throw new VaultError('A vault already exists. To replace it, delete the wallet_vault row in Supabase first.', 'ALREADY_CONFIGURED', 409);
-  }
-
-  const record = encryptMnemonic(mnemonic, password);
-  const supabase = createAdminClient();
-  const { error } = await supabase.from('wallet_vault').insert({ id: 1, ...record });
-  if (error) throw new VaultError(error.message, 'DB_ERROR', 500);
-
-  state.mnemonic = mnemonic;
-  state.failures = 0;
-  return issueToken();
+  throw new VaultError('Wrong password', 'INVALID_PASSWORD', 401);
 }
 
-export async function unlockVault(password: string): Promise<Session> {
+function assertNotRateLimited() {
   const now = Date.now();
   if (state.lockedUntil > now) {
     const secs = Math.ceil((state.lockedUntil - now) / 1000);
     throw new VaultError(`Too many attempts. Try again in ${secs}s.`, 'RATE_LIMITED', 429);
   }
-  const record = await loadRecord();
-  if (!record) throw new VaultError('Vault is not set up yet', 'NOT_CONFIGURED', 404);
+}
 
-  const mnemonic = decryptMnemonic(record, password);
-  if (!mnemonic) {
-    state.failures += 1;
-    if (state.failures >= MAX_FAILED_ATTEMPTS) {
-      state.failures = 0;
-      state.lockedUntil = now + FAILURE_COOLDOWN_MS;
-    }
-    throw new VaultError('Wrong password', 'INVALID_PASSWORD', 401);
+export async function setupVault(
+  mnemonicInput: string,
+  password: string,
+  name = 'Seed 1'
+): Promise<IssuedToken & { seedId: number; mnemonic: string }> {
+  const mnemonic = normalizeMnemonic(mnemonicInput);
+  if (password.length < 8) throw new VaultError('Password must be at least 8 characters', 'WEAK_PASSWORD');
+  if (await isVaultConfigured()) {
+    throw new VaultError('A vault already exists. Use "Add seed" to add another phrase.', 'ALREADY_CONFIGURED', 409);
+  }
+
+  await insertRecord({ id: 1, name, ...encryptMnemonic(mnemonic, password) });
+
+  state.seeds = [{ id: 1, name, mnemonic }];
+  state.failures = 0;
+  return { ...issueToken(), seedId: 1, mnemonic };
+}
+
+export async function unlockVault(password: string): Promise<IssuedToken> {
+  assertNotRateLimited();
+  const records = await loadRecords();
+  if (records.length === 0) throw new VaultError('Vault is not set up yet', 'NOT_CONFIGURED', 404);
+
+  const seeds: UnlockedSeed[] = [];
+  for (const r of records) {
+    const mnemonic = decryptMnemonic(r, password);
+    if (!mnemonic) registerFailure();
+    seeds.push({ id: r.id, name: r.name, mnemonic: mnemonic as string });
   }
 
   state.failures = 0;
-  state.mnemonic = mnemonic;
+  state.seeds = seeds;
   return issueToken();
+}
+
+/**
+ * Add another recovery phrase to the vault. The vault password is required
+ * again (it is never kept server-side) and every seed shares it.
+ */
+export async function addSeed(
+  nameInput: string,
+  mnemonicInput: string,
+  password: string
+): Promise<UnlockedSeed> {
+  assertNotRateLimited();
+  const records = await loadRecords();
+  if (records.length === 0) throw new VaultError('Set up the vault first', 'NOT_CONFIGURED', 404);
+
+  const mnemonic = normalizeMnemonic(mnemonicInput);
+  const existing: string[] = [];
+  for (const r of records) {
+    const m = decryptMnemonic(r, password);
+    if (!m) registerFailure();
+    existing.push(m as string);
+  }
+  if (existing.includes(mnemonic)) {
+    throw new VaultError('That seed phrase is already in the vault', 'ALREADY_EXISTS', 409);
+  }
+
+  const id = Math.max(...records.map((r) => r.id)) + 1;
+  const name = nameInput.trim() || `Seed ${id}`;
+  await insertRecord({ id, name, ...encryptMnemonic(mnemonic, password) });
+
+  const seed: UnlockedSeed = { id, name, mnemonic };
+  state.failures = 0;
+  if (state.seeds.length > 0) state.seeds = [...state.seeds, seed];
+  return seed;
 }
 
 export function lockVault(request?: NextRequest): void {
   // Any holder of a valid token may lock the whole vault (safer default).
   void request;
-  state.mnemonic = null;
+  state.seeds = [];
   state.expiresAt = 0;
   state.tokens.clear();
 }
@@ -252,7 +353,7 @@ export function deriveSolanaAddress(mnemonic: string, index: number): string {
 // Wallet apps don't all derive the same way from one seed. MetaMask, Zerion,
 // Trust and Coinbase Wallet use the BIP-44 standard path; Ledger has two of
 // its own. "Locate address" checks all of them so an address that exists in
-// another app can be matched (or ruled out) against this seed.
+// another app can be matched (or ruled out) against a seed.
 
 export interface PathTemplate {
   id: string;
@@ -318,8 +419,8 @@ export interface LocateMatch {
 }
 
 /**
- * Is this address derived from the vault seed? Scans every known template
- * for the address's family. Pure computation, no network.
+ * Is this address derived from a seed? Scans every known template for the
+ * address's family. Pure computation, no network.
  */
 export function locateAddress(
   mnemonic: string,

@@ -14,6 +14,7 @@ export interface VaultStatus {
   configured: boolean;
   unlocked: boolean;
   expiresAt: string | null;
+  seeds?: { id: number; name: string }[];
 }
 
 function readToken(): string | null {
@@ -103,10 +104,32 @@ export function useWalletVault() {
       const json = await res.json();
       if (!json.success) return { ok: false, error: json.error || 'Setup failed' };
       writeToken(json.data.token);
-      setStatus({ configured: true, unlocked: true, expiresAt: json.data.expiresAt });
+      setStatus({ configured: true, unlocked: true, expiresAt: json.data.expiresAt, seeds: [{ id: 1, name: 'Seed 1' }] });
       return { ok: true, evm_address: json.data.evm_address, solana_address: json.data.solana_address };
     },
     []
+  );
+
+  // Another recovery phrase in the same vault (needs the vault password again).
+  const addSeed = useCallback(
+    async (input: {
+      name: string;
+      mnemonic: string;
+      password: string;
+      evm_count: number;
+      solana_count: number;
+    }): Promise<{ ok: boolean; error?: string; seed?: { id: number; name: string }; evm_address?: string; solana_address?: string }> => {
+      const res = await authFetch('/api/wallets/vault', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'add-seed', ...input }),
+      });
+      const json = await res.json();
+      if (!json.success) return { ok: false, error: json.error || 'Could not add the seed' };
+      await refreshStatus();
+      return { ok: true, seed: json.data.seed, evm_address: json.data.evm_address, solana_address: json.data.solana_address };
+    },
+    [authFetch, refreshStatus]
   );
 
   const lock = useCallback(async () => {
@@ -122,7 +145,7 @@ export function useWalletVault() {
     }
   }, [authFetch]);
 
-  return { status, loading, unlock, setup, lock, authFetch, refreshStatus };
+  return { status, loading, unlock, setup, addSeed, lock, authFetch, refreshStatus };
 }
 
 export type WalletVault = ReturnType<typeof useWalletVault>;

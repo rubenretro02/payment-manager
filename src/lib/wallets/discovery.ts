@@ -68,6 +68,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
  */
 export async function discoverFromSeed(
   mnemonic: string,
+  seedId: number,
   opts: { gap?: number; maxEvmIndex?: number; maxSolanaIndex?: number } = {}
 ): Promise<DiscoveryResult> {
   const gap = opts.gap ?? 20;
@@ -81,7 +82,7 @@ export async function discoverFromSeed(
 
   // ---- EVM (batches of 20 addresses, all chains in parallel per batch)
   {
-    const known = await knownPaths('evm');
+    const known = await knownPaths('evm', seedId);
     let maxKnown = -1;
     for (let i = 0; i <= maxEvm; i++) if (known.has(STANDARD_EVM_TEMPLATE.path(i))) maxKnown = i;
 
@@ -101,7 +102,7 @@ export async function discoverFromSeed(
         if (used[i]) {
           gapRun = 0;
           try {
-            result.evm.added.push(await createWallet(mnemonic, 'ethereum', null, batch[i].index));
+            result.evm.added.push(await createWallet(mnemonic, 'ethereum', null, batch[i].index, undefined, seedId));
           } catch (e) {
             result.evm.errors.push(`index ${batch[i].index}: ${e instanceof Error ? e.message : 'failed'}`);
           }
@@ -114,7 +115,7 @@ export async function discoverFromSeed(
 
   // ---- Solana (sequential, gentle on the public RPC)
   {
-    const known = await knownPaths('solana');
+    const known = await knownPaths('solana', seedId);
     let maxKnown = -1;
     for (let i = 0; i <= maxSol; i++) if (known.has(STANDARD_SOL_TEMPLATE.path(i))) maxKnown = i;
     const conn = new Connection(solanaRpcUrl(), { commitment: 'confirmed' });
@@ -129,7 +130,7 @@ export async function discoverFromSeed(
         result.solana.checked++;
         if (used) {
           gapRun = 0;
-          result.solana.added.push(await createWallet(mnemonic, 'solana', null, index));
+          result.solana.added.push(await createWallet(mnemonic, 'solana', null, index, undefined, seedId));
         } else if (index > maxKnown) {
           gapRun++;
         }

@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
   VaultError,
+  addSeed,
   authorize,
   isVaultConfigured,
+  listSeeds,
   lockVault,
   setupVault,
   tokenExpiry,
@@ -11,13 +13,14 @@ import {
 import { createWallet } from '@/lib/wallets/store';
 
 /**
- * GET  /api/wallets/vault → { configured, unlocked (for THIS token), expiresAt }
+ * GET  /api/wallets/vault → { configured, unlocked (for THIS token), expiresAt, seeds }
  * POST /api/wallets/vault
- *   { action: 'setup', mnemonic, password, evm_count?, solana_count? }
+ *   { action: 'setup', mnemonic, password, evm_count?, solana_count?, name? }
+ *   { action: 'add-seed', name?, mnemonic, password, evm_count?, solana_count? }
  *   { action: 'unlock', password }
  *   { action: 'lock' }
  *
- * Never log request bodies here: they carry the seed phrase / password.
+ * Never log request bodies here: they carry seed phrases / passwords.
  */
 export async function GET(request: NextRequest) {
   try {
@@ -29,9 +32,13 @@ export async function GET(request: NextRequest) {
         configured,
         unlocked: !!session,
         expiresAt: session ? new Date(tokenExpiry(request) || 0).toISOString() : null,
+        seeds: configured ? await listSeeds() : [],
       },
     });
   } catch (error) {
+    if (error instanceof VaultError) {
+      return NextResponse.json({ success: false, error: error.message, code: error.code }, { status: error.status });
+    }
     return NextResponse.json({ success: false, error: errMessage(error) }, { status: 500 });
   }
 }
@@ -42,14 +49,15 @@ export async function POST(request: NextRequest) {
       action?: string;
       mnemonic?: string;
       password?: string;
+      name?: string;
       evm_count?: number;
       solana_count?: number;
     };
 
     if (body.action === 'unlock') {
       if (!body.password) return bad('Password is required');
-      const session = await unlockVault(body.password);
-      return NextResponse.json({ success: true, data: { token: session.token, expiresAt: new Date(session.expiresAt).toISOString() } });
+      const issued = await unlockVault(body.password);
+      return NextResponse.json({ success: true, data: { token: issued.token, expiresAt: new Date(issued.expiresAt).toISOString() } });
     }
 
     if (body.action === 'lock') {
@@ -60,32 +68,19 @@ export async function POST(request: NextRequest) {
     if (body.action === 'setup') {
       if (!body.mnemonic || !body.password) return bad('Seed phrase and password are required');
       if (body.password.length < 8) return bad('Password must be at least 8 characters');
-      const session = await setupVault(body.mnemonic, body.password);
-
-      // Import the admin's existing MetaMask accounts (indices 0..n-1) so they
-      // show up right away. Extra ones can be added later from the page.
-      const evmCount = clamp(body.evm_count ?? 1, 0, 50);
-      const solCount = clamp(body.solana_count ?? 1, 0, 50);
-      let evmAddress: string | undefined;
-      let solAddress: string | undefined;
-      for (let i = 0; i < evmCount; i++) {
-        const w = await createWallet(session.mnemonic, 'ethereum', `MetaMask Account ${i + 1}`, i);
-        if (i === 0) evmAddress = w.address;
-      }
-      for (let i = 0; i < solCount; i++) {
-        const w = await createWallet(session.mnemonic, 'solana', `Solana Account ${i + 1}`, i);
-        if (i === 0) solAddress = w.address;
-      }
-
+      const setup = await setupVault(body.mnemonic, body.password, body.name?.trim() || 'Seed 1');
+      const imported = await importInitialAccounts(setup.mnemonic, setup.seedId, body.evm_count, body.solana_count);
       return NextResponse.json({
         success: true,
-        data: {
-          token: session.token,
-          expiresAt: new Date(session.expiresAt).toISOString(),
-          evm_address: evmAddress,
-          solana_address: solAddress,
-        },
+        data: { token: setup.token, expiresAt: new Date(setup.expiresAt).toISOString(), ...imported },
       });
+    }
+
+    if (body.action === 'add-seed') {
+      if (!body.mnemonic || !body.password) return bad('Seed phrase and vault password are required');
+      const seed = await addSeed(body.name || '', body.mnemonic, body.password);
+      const imported = await importInitialAccounts(seed.mnemonic, seed.id, body.evm_count, body.solana_count);
+      return NextResponse.json({ success: true, data: { seed: { id: seed.id, name: seed.name }, ...imported } });
     }
 
     return bad('Unknown action');
@@ -96,6 +91,24 @@ export async function POST(request: NextRequest) {
     console.error('[wallets/vault] error:', errMessage(error));
     return NextResponse.json({ success: false, error: errMessage(error) }, { status: 500 });
   }
+}
+
+// Import the first N accounts of a seed (indices 0..n-1) so they show up
+// right away. More can be found later with "Discover from seed".
+async function importInitialAccounts(mnemonic: string, seedId: number, evmCountRaw?: number, solCountRaw?: number) {
+  const evmCount = clamp(evmCountRaw ?? 1, 0, 50);
+  const solCount = clamp(solCountRaw ?? 1, 0, 50);
+  let evmAddress: string | undefined;
+  let solAddress: string | undefined;
+  for (let i = 0; i < evmCount; i++) {
+    const w = await createWallet(mnemonic, 'ethereum', null, i, undefined, seedId);
+    if (i === 0) evmAddress = w.address;
+  }
+  for (let i = 0; i < solCount; i++) {
+    const w = await createWallet(mnemonic, 'solana', null, i, undefined, seedId);
+    if (i === 0) solAddress = w.address;
+  }
+  return { evm_address: evmAddress, solana_address: solAddress };
 }
 
 function bad(message: string) {

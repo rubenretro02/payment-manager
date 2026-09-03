@@ -1,6 +1,6 @@
 // Server-side persistence for the wallets tables + account assignment.
-// Only public data lives here (addresses, names, network, derivation path).
-// Keys are derived on demand from the unlocked vault (see ./vault).
+// Only public data lives here (addresses, names, network, derivation path,
+// which seed). Keys are derived on demand from the unlocked vault (./vault).
 
 import { createAdminClient } from '@/lib/supabase/server';
 import { Deriver, detectFamily, templateFor, type PathTemplate } from './vault';
@@ -13,6 +13,7 @@ export interface WalletRow {
   derivation_index: number | null;
   derivation_path: string | null;
   source: 'seed' | 'watch';
+  seed_id: number | null;
   address: string;
   network: string;
   name: string | null;
@@ -39,14 +40,13 @@ interface AccountRef {
   user: { telegram_first_name: string | null } | { telegram_first_name: string | null }[] | null;
 }
 
-const MIGRATION_HINT = 'Wallets tables are out of date. Run migration-add-wallets-discovery.sql in Supabase.';
-
 function dbError(error: { message: string; code?: string }): Error {
-  if (
-    /(source|derivation_path|token_scan_at|wallet_tokens)/i.test(error.message) &&
-    /(column|relation|schema cache|does not exist)/i.test(error.message)
-  ) {
-    return new Error(MIGRATION_HINT);
+  const schemaProblem = /(column|relation|schema cache|does not exist)/i.test(error.message);
+  if (schemaProblem && /seed_id/i.test(error.message)) {
+    return new Error('Wallets tables are out of date. Run migration-add-wallets-multiseed.sql in Supabase.');
+  }
+  if (schemaProblem && /(source|derivation_path|token_scan_at|wallet_tokens)/i.test(error.message)) {
+    return new Error('Wallets tables are out of date. Run migration-add-wallets-discovery.sql in Supabase.');
   }
   return new Error(error.message);
 }
@@ -65,15 +65,30 @@ function defaultName(family: ChainFamily, index: number, template: PathTemplate)
 // Reads
 // ---------------------------------------------------------------------------
 
+async function seedNames(): Promise<Map<number, string>> {
+  const supabase = createAdminClient();
+  const map = new Map<number, string>();
+  const { data, error } = await supabase.from('wallet_vault').select('id, name');
+  if (error) {
+    // Pre-multiseed schema: no name column
+    const fallback = await supabase.from('wallet_vault').select('id');
+    for (const r of fallback.data || []) map.set(r.id as number, `Seed ${r.id}`);
+    return map;
+  }
+  for (const r of data || []) map.set(r.id as number, (r.name as string | null) || `Seed ${r.id}`);
+  return map;
+}
+
 // Wallets with the account(s) currently pointing at them (accounts.wallet_address).
 export async function listWallets(): Promise<Wallet[]> {
   const supabase = createAdminClient();
-  const [{ data: rows, error }, { data: accounts }] = await Promise.all([
+  const [{ data: rows, error }, { data: accounts }, names] = await Promise.all([
     supabase.from('wallets').select('*').order('created_at', { ascending: true }),
     supabase
       .from('accounts')
       .select('id, full_name, wallet_address, wallet_network, user:users!user_id(telegram_first_name)')
       .not('wallet_address', 'is', null),
+    seedNames(),
   ]);
   if (error) throw dbError(error);
 
@@ -87,9 +102,13 @@ export async function listWallets(): Promise<Wallet[]> {
 
   return ((rows || []) as WalletRow[]).map((w) => {
     const assigned = byAddress.get(addressKey(w.chain_family, w.address)) || [];
+    const source = w.source || 'seed';
+    const seedId = w.seed_id ?? (source === 'seed' ? 1 : null);
     return {
       ...w,
-      source: w.source || 'seed',
+      source,
+      seed_id: seedId,
+      seed_name: seedId !== null ? names.get(seedId) || `Seed ${seedId}` : null,
       derivation_path: w.derivation_path ?? null,
       token_scan_at: w.token_scan_at ?? null,
       assigned_accounts: assigned.map((a) => {
@@ -120,25 +139,27 @@ export async function findWalletByAddress(family: ChainFamily, address: string):
   return (data as WalletRow | null) || null;
 }
 
-/** Derivation paths already stored for a family (seed wallets only). */
-export async function knownPaths(family: ChainFamily): Promise<Set<string>> {
+/** Derivation paths already stored for a seed + family. */
+export async function knownPaths(family: ChainFamily, seedId: number): Promise<Set<string>> {
   const supabase = createAdminClient();
   const { data, error } = await supabase
     .from('wallets')
     .select('derivation_path')
     .eq('chain_family', family)
-    .eq('source', 'seed');
+    .eq('source', 'seed')
+    .eq('seed_id', seedId);
   if (error) throw dbError(error);
   return new Set((data || []).map((r) => r.derivation_path as string | null).filter((p): p is string => !!p));
 }
 
-async function nextIndex(family: ChainFamily, template: PathTemplate): Promise<number> {
+async function nextIndex(family: ChainFamily, template: PathTemplate, seedId: number): Promise<number> {
   const supabase = createAdminClient();
   const { data, error } = await supabase
     .from('wallets')
     .select('derivation_index, derivation_path')
     .eq('chain_family', family)
-    .eq('source', 'seed');
+    .eq('source', 'seed')
+    .eq('seed_id', seedId);
   if (error) throw dbError(error);
   let max = -1;
   for (const r of data || []) {
@@ -154,17 +175,18 @@ async function nextIndex(family: ChainFamily, template: PathTemplate): Promise<n
 // ---------------------------------------------------------------------------
 
 /**
- * Derive a key from the seed and store its public address. Without an
- * explicit index it takes the next unused index of the template — i.e. the
- * next account MetaMask itself would create. If the address already exists
- * (e.g. as watch-only) the existing row is upgraded/returned.
+ * Derive a key from a seed and store its public address. Without an explicit
+ * index it takes the next unused index of the template — i.e. the next
+ * account MetaMask itself would create. If the address already exists (e.g.
+ * as watch-only) the existing row is upgraded/returned.
  */
 export async function createWallet(
   mnemonic: string,
   network: NetworkKey,
   name?: string | null,
   explicitIndex?: number,
-  templateId?: string | null
+  templateId?: string | null,
+  seedId = 1
 ): Promise<WalletRow> {
   const supabase = createAdminClient();
   const family = familyOf(network);
@@ -172,7 +194,7 @@ export async function createWallet(
   const deriver = new Deriver(mnemonic);
 
   for (let attempt = 0; attempt < 2; attempt++) {
-    const index = explicitIndex ?? (await nextIndex(family, template));
+    const index = explicitIndex ?? (await nextIndex(family, template, seedId));
     const path = template.path(index);
     const address = deriver.address(family, path);
     const { data, error } = await supabase
@@ -182,6 +204,7 @@ export async function createWallet(
         derivation_index: index,
         derivation_path: path,
         source: 'seed',
+        seed_id: seedId,
         address,
         network,
         name: name?.trim() || defaultName(family, index, template),
@@ -197,7 +220,7 @@ export async function createWallet(
         if (existing.source === 'watch' || !existing.derivation_path) {
           const { data: upgraded } = await supabase
             .from('wallets')
-            .update({ source: 'seed', derivation_index: index, derivation_path: path })
+            .update({ source: 'seed', derivation_index: index, derivation_path: path, seed_id: seedId })
             .eq('id', existing.id)
             .select('*')
             .single();
@@ -227,6 +250,7 @@ export async function createWatchWallet(input: { address: string; network: Netwo
       derivation_index: null,
       derivation_path: null,
       source: 'watch',
+      seed_id: null,
       address,
       network: input.network,
       name: input.name?.trim() || `Watch ${address.slice(0, 6)}…${address.slice(-4)}`,

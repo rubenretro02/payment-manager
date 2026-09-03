@@ -12,7 +12,7 @@
 import { createPublicClient, erc20Abi, formatUnits, type Address, type ContractFunctionParameters } from 'viem';
 import { Connection, PublicKey, LAMPORTS_PER_SOL, type ParsedAccountData } from '@solana/web3.js';
 import { EVM_CHAINS, SOLANA_COINGECKO_ID, SOLANA_KNOWN_MINTS, evmTransport, solanaRpcUrl, type EvmChainDef } from './chains';
-import { STABLE_SYMBOLS, isSpamToken, type NetworkKey } from './networks';
+import { STABLE_SYMBOLS, isSpamToken, looksLikeStableSymbol, type NetworkKey } from './networks';
 import type { DiscoveredToken } from './store';
 
 const CANONICAL_MULTICALL3: Address = '0xcA11bde05977b3631167028862bE2a173976CA11';
@@ -196,8 +196,11 @@ async function fetchEvmChain(
       const decimals = t.decimals ?? 18;
       const amount = Number(formatUnits(raw, decimals));
       const symbol = t.symbol || `${t.contract.slice(0, 6)}…`;
-      const usd = t.exchange_rate && t.exchange_rate > 0 ? amount * t.exchange_rate : usdValue(symbol, amount, false, def.coingeckoId, prices);
-      list.push({ network: def.key, symbol, amount, usd, native: false, contract: t.contract, verified: false, spam: isSpamToken(symbol, t.name) });
+      // A non-curated token calling itself USDC/USDT is a fake: never price it as $1.
+      const fakeStable = looksLikeStableSymbol(symbol);
+      const spam = isSpamToken(symbol, t.name) || fakeStable;
+      const usd = spam ? null : t.exchange_rate && t.exchange_rate > 0 ? amount * t.exchange_rate : usdValue(symbol, amount, false, def.coingeckoId, prices);
+      list.push({ network: def.key, symbol, amount, usd, native: false, contract: t.contract, verified: false, spam });
     }
     byWallet.set(w.id, list);
   }
