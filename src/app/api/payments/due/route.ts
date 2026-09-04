@@ -135,7 +135,9 @@ export async function GET() {
       .select('id, status, amount_owed, created_at, for_cycle_date, account_id')
       .in('account_id', accounts.map((a) => a.id))
       .gte('created_at', globalCutoff.toISOString())
-      .in('status', ['submitted', 'confirmed', 'pending'])
+      // 'rejected' is loaded too, but ONLY as evidence that a cycle was
+      // expected to be paid (see the floor below) — it never satisfies one.
+      .in('status', ['submitted', 'confirmed', 'pending', 'rejected'])
       .order('created_at', { ascending: false });
     type ExistingPayment = NonNullable<typeof allPayments>[number];
     const paymentsByAccount = new Map<string, ExistingPayment[]>();
@@ -186,8 +188,12 @@ export async function GET() {
       const lookbackCutoff = new Date(today);
       lookbackCutoff.setDate(lookbackCutoff.getDate() - lookbackDays);
       const lookbackCutoffIso = lookbackCutoff.toISOString();
-      const existingPayments: ExistingPayment[] = (paymentsByAccount.get(account.id) || [])
+      const allRecords: ExistingPayment[] = (paymentsByAccount.get(account.id) || [])
         .filter((p) => p.created_at >= lookbackCutoffIso);
+      // Rejected reports don't pay a cycle; the admin sent them back and the
+      // user has to report again. Everything below that decides "is this
+      // cycle handled?" looks at live payments only.
+      const existingPayments: ExistingPayment[] = allRecords.filter((p) => p.status !== 'rejected');
 
       const legacyStartIso = legacyPeriodStart.toISOString();
       const currentPayment =
@@ -206,15 +212,19 @@ export async function GET() {
         noon.setUTCHours(12, 0, 0, 0);
         return noon.toISOString().split('T')[0];
       };
-      const isCyclePaid = (cycleDate: Date): boolean => {
+      const matchesCycle = (p: ExistingPayment, cycleDate: Date): boolean => {
         const str = cycleDateStr(cycleDate);
+        if (p.for_cycle_date) return p.for_cycle_date === str;
         const { start, end } = getCycleWindow(cycleDate, frequency);
-        return (existingPayments || []).some((p) => {
-          if (p.for_cycle_date) return p.for_cycle_date === str;
-          const created = new Date(p.created_at);
-          return created >= start && created <= end;
-        });
+        const created = new Date(p.created_at);
+        return created >= start && created <= end;
       };
+      const isCyclePaid = (cycleDate: Date): boolean =>
+        (existingPayments || []).some((p) => matchesCycle(p, cycleDate));
+      // Any report at all (rejected included) proves the cycle was expected
+      // to be paid, even if it predates the account's payment-active floor.
+      const cycleHasRecord = (cycleDate: Date): boolean =>
+        allRecords.some((p) => matchesCycle(p, cycleDate));
 
       // Walk backwards through scheduled cycles strictly before today and
       // collect EVERY unpaid one — each becomes its own Overdue row. This is
@@ -240,7 +250,11 @@ export async function GET() {
         );
         if (prev.getTime() >= today.getTime()) break;
         if (prev.getTime() < lookbackCutoff.getTime()) break;
-        if (floorDate && prev.getTime() < floorDate.getTime()) break;
+        // Below the payment-active floor the walk stops — UNLESS someone
+        // already reported that cycle (e.g. a rejected report filed the day
+        // the account moved to nesting): then it was clearly owed, and a
+        // rejection must put it back on the board instead of hiding it.
+        if (floorDate && prev.getTime() < floorDate.getTime() && !cycleHasRecord(prev)) break;
         if (!isCyclePaid(prev)) missedCycles.push(new Date(prev));
         cursor = prev;
       }

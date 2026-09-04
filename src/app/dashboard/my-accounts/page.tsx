@@ -297,6 +297,21 @@ export default function MyAccountsPage() {
     );
   };
 
+  // Any report at all for a cycle — rejected included. A rejected report
+  // doesn't satisfy the cycle, but it proves the cycle was owed, so the
+  // payment-active floor must not hide it (the admin sent it back; the user
+  // has to report again).
+  const cycleHasAnyRecord = (account: Account, cycleDate: Date, cycleStr: string): boolean => {
+    const frequency = account.payment_frequency || 'weekly';
+    const { start, end } = getCycleWindow(cycleDate, frequency);
+    return payments.some(p =>
+      p.account_id === account.id &&
+      (p.for_cycle_date
+        ? p.for_cycle_date === cycleStr
+        : (new Date(p.created_at) >= start && new Date(p.created_at) <= end))
+    );
+  };
+
   // Every cycle the user still OWES a report for: the current due cycle plus
   // any earlier unpaid ones, oldest first. Walks back frequency-aware (same as
   // the admin Due Payments board) so an account that skipped several cycles
@@ -326,9 +341,9 @@ export default function MyAccountsPage() {
     const owed: { date: Date; str: string; daysOverdue: number }[] = [];
     let cursor = new Date(dueCycle);
     for (let i = 0; i < 12; i++) {
-      if (floor && cursor.getTime() < floor.getTime()) break;
-      if (cursor.getTime() < lookbackCutoff.getTime()) break;
       const str = format(cursor, 'yyyy-MM-dd');
+      if (floor && cursor.getTime() < floor.getTime() && !cycleHasAnyRecord(account, cursor, str)) break;
+      if (cursor.getTime() < lookbackCutoff.getTime()) break;
       if (!cycleHasReport(account, cursor, str)) {
         const daysOverdue = Math.round((today.getTime() - cursor.getTime()) / (1000 * 60 * 60 * 24));
         owed.push({ date: new Date(cursor), str, daysOverdue });
@@ -398,7 +413,7 @@ export default function MyAccountsPage() {
     const dates: Date[] = [];
     let cursor = new Date(dueCycle);
     for (let i = 0; i < 4; i++) {
-      if (floor && cursor.getTime() < floor.getTime()) break;
+      if (floor && cursor.getTime() < floor.getTime() && !cycleHasAnyRecord(account, cursor, format(cursor, 'yyyy-MM-dd'))) break;
       dates.unshift(new Date(cursor));
       const prev = calculatePreviousPaymentDate(frequency, account.payment_day, cursor, account.biweekly_first_day, account.biweekly_second_day);
       if (prev.getTime() >= cursor.getTime()) break;
@@ -567,7 +582,9 @@ export default function MyAccountsPage() {
     if (floorIso) {
       const floor = new Date(floorIso);
       floor.setHours(0, 0, 0, 0);
-      if (previousPaymentDate < floor) {
+      // …unless that cycle was already reported (even if rejected): then it
+      // was owed regardless of when the account became payment-active.
+      if (previousPaymentDate < floor && !cycleHasAnyRecord(account, previousPaymentDate, format(previousPaymentDate, 'yyyy-MM-dd'))) {
         return { isOverdue: false, missedDate: null, daysOverdue: 0 };
       }
     }

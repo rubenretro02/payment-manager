@@ -400,7 +400,9 @@ export async function sendPaymentReminders(mode: ReminderMode = 'all'): Promise<
       .select('account_id, user_id, created_at, for_cycle_date, status')
       .in('account_id', accountIds)
       .gte('created_at', windowStart.toISOString())
-      .in('status', ['submitted', 'confirmed', 'pending']);
+      // 'rejected' is loaded only as proof a cycle was owed (floor exception
+      // below); it never counts as reported.
+      .in('status', ['submitted', 'confirmed', 'pending', 'rejected']);
     const paymentsByAccount = new Map<
       string,
       Array<{ user_id: string; created_at: string; for_cycle_date: string | null; status: string }>
@@ -445,16 +447,19 @@ export async function sendPaymentReminders(mode: ReminderMode = 'all'): Promise<
       // for_cycle_date tag; legacy untagged rows fall back to the ±half-cycle
       // window. A payment counts regardless of who filed it (the account may
       // have been reassigned mid-cycle).
-      const accountPayments = paymentsByAccount.get(account.id) || [];
-      const cycleReported = (cycleDate: Date): boolean => {
+      const accountRecords = paymentsByAccount.get(account.id) || [];
+      const accountPayments = accountRecords.filter((p) => p.status !== 'rejected');
+      const matchesCycle = (p: { created_at: string; for_cycle_date: string | null }, cycleDate: Date): boolean => {
         const cycleStr = cycleDate.toISOString().split('T')[0];
+        if (p.for_cycle_date) return p.for_cycle_date === cycleStr;
         const { start, end } = getCycleWindow(cycleDate, frequency);
-        return accountPayments.some((p) => {
-          if (p.for_cycle_date) return p.for_cycle_date === cycleStr;
-          const c = new Date(p.created_at);
-          return c >= start && c <= end;
-        });
+        const c = new Date(p.created_at);
+        return c >= start && c <= end;
       };
+      const cycleReported = (cycleDate: Date): boolean => accountPayments.some((p) => matchesCycle(p, cycleDate));
+      // Any record, rejected included: the cycle was owed even if it predates
+      // the payment-active floor (a rejection must put it back on the list).
+      const cycleHasRecord = (cycleDate: Date): boolean => accountRecords.some((p) => matchesCycle(p, cycleDate));
 
       // An OPEN No Payment / Issue (a pending payment) means the user already
       // flagged a problem for that period — stop nagging that cycle AND every
@@ -486,7 +491,7 @@ export async function sendPaymentReminders(mode: ReminderMode = 'all'): Promise<
           );
           if (prev.getTime() >= today.getTime()) break;
           if (prev.getTime() < lookbackCutoff.getTime()) break;
-          if (floor && prev.getTime() < floor.getTime()) break;
+          if (floor && prev.getTime() < floor.getTime() && !cycleHasRecord(prev)) break;
           // Once we reach (or pass) an open issue's cycle, every older cycle is
           // covered by that issue too — stop.
           if (issueCutoffStr && cycleStr(prev) <= issueCutoffStr) break;
