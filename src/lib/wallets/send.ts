@@ -628,7 +628,7 @@ export interface TransferRow {
   tx_hash: string | null;
   status: 'sent' | 'confirmed' | 'failed';
   error: string | null;
-  purpose: 'send' | 'gas' | 'auto';
+  purpose: 'send' | 'gas' | 'auto' | 'refuel';
   created_at: string;
   confirmed_at: string | null;
   wallet?: { name: string | null; address: string } | { name: string | null; address: string }[] | null;

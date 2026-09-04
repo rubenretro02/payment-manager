@@ -44,6 +44,26 @@ export interface WalletSettings {
   auto_min_usd: number;
   auto_max_fee_pct: number;
   keep_unlocked: boolean;
+  /** Gas account: move gas across networks automatically (via Relay) */
+  refuel_enabled: boolean;
+  refuel_target_usd: number;
+  refuel_max_fee_usd: number;
+}
+export interface FuelEntry {
+  network: string;
+  label: string;
+  symbol: string;
+  amount: number;
+  usd: number | null;
+  tank_address: string | null;
+  refuelable: boolean;
+}
+export interface FuelStatus {
+  evm_tank: { id: string; name: string | null; address: string } | null;
+  solana_tank: { id: string; name: string | null; address: string } | null;
+  per_network: FuelEntry[];
+  reserves: { network: string; symbol: string; amount: number; usd: number }[];
+  errors: string[];
 }
 export interface TxItem {
   id: string;
@@ -103,7 +123,7 @@ export interface TransferRow {
   tx_hash: string | null;
   status: 'sent' | 'confirmed' | 'failed';
   error: string | null;
-  purpose: 'send' | 'gas' | 'auto';
+  purpose: 'send' | 'gas' | 'auto' | 'refuel';
   created_at: string;
   wallet?: { name: string | null; address: string } | { name: string | null; address: string }[] | null;
 }

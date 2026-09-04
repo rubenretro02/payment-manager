@@ -12,6 +12,7 @@ import { STABLE_SYMBOLS, familyOf, getNetwork, type NetworkKey } from './network
 import { fetchBalances, getPrices } from './balances';
 import { listBook, type BookEntry } from './book';
 import { getGasSettings, previewSend, executeSend, gaslessCapable, previewGasless, executeGasless, fmtNative } from './send';
+import { ensureFuel } from './refuel';
 import { getWallet, listWalletTokens, type WalletRow } from './store';
 import { setKeepUnlocked, type Session } from './vault';
 
@@ -318,17 +319,28 @@ export async function runAutoTransfers(
         // the exact fee. No ETH in the wallet, no top-up, no dust.
         const gasWalletId = family === 'solana' ? gas.gas_wallet_solana : gas.gas_wallet_evm;
         if (family === 'evm' && gasWalletId && gasWalletId !== wallet.id && (await gaslessCapable(raw.network as NetworkKey, raw.token_contract))) {
-          const gp = await previewGasless(session, req, gasWalletId);
+          let gp = await previewGasless(session, req, gasWalletId);
           if (gp.supported) {
             const tooHigh = feeTooHigh(gp.fee_native);
             if (tooHigh !== null) { await skip(`fee ≈ $${tooHigh.toFixed(2)} exceeds ${settings.auto_max_fee_pct}% of $${amountUsd?.toFixed(2)}`); continue; }
+            let refuelNote = '';
+            if (!gp.relayer_ok) {
+              // Gas account: bring gas onto this network from wherever the tank has money.
+              const fuel = await ensureFuel(session, raw.network as NetworkKey, gp.fee_native * 3, gp.relayer_native_balance);
+              if (fuel.refueled) {
+                gp = await previewGasless(session, req, gasWalletId);
+                refuelNote = ` (refueled ${fuel.delivered?.toFixed(6)} ${fuel.symbol} from ${fuel.source})`;
+              } else if (fuel.reason) {
+                refuelNote = ` Auto-refuel: ${fuel.reason}.`;
+              }
+            }
             if (!gp.relayer_ok) {
               const feeUsd = nativePrice !== null ? ` (≈ $${(gp.fee_native * nativePrice).toFixed(3)})` : '';
-              await skip(`gas-tank wallet has ${fmtNative(gp.relayer_native_balance)} ${gp.native_symbol} on ${getNetwork(raw.network as NetworkKey)?.label || raw.network} — the fee needs about ${fmtNative(gp.fee_native)}${feeUsd}. Send it some ${gp.native_symbol} via the ${getNetwork(raw.network as NetworkKey)?.label || raw.network} network.`);
+              await skip(`gas-tank wallet has ${fmtNative(gp.relayer_native_balance)} ${gp.native_symbol} on ${getNetwork(raw.network as NetworkKey)?.label || raw.network} — the fee needs about ${fmtNative(gp.fee_native)}${feeUsd}.${refuelNote}`);
               continue;
             }
             const sent = await executeGasless(session, req, gasWalletId);
-            await setJob(raw.id, { status: 'done', tx_hash: sent.hash, amount: gp.amount, book_id: target.id, reason: `gasless — fee paid by the gas tank` });
+            await setJob(raw.id, { status: 'done', tx_hash: sent.hash, amount: gp.amount, book_id: target.id, reason: `gasless — fee paid by the gas tank${refuelNote}` });
             result.done++;
             console.log(`[auto-transfer] gasless ${gp.amount} ${gp.token_symbol} on ${raw.network} from ${wallet.name || wallet.address} → ${target.name} (${sent.hash})`);
             continue;
@@ -354,10 +366,17 @@ export async function runAutoTransfers(
           };
           // Can the gas tank actually pay on THIS network? Say so plainly if not.
           const gasWallet = await getWallet(gasWalletId);
-          const gasPreview = await previewSend(session, gasReq);
+          let gasPreview = await previewSend(session, gasReq);
+          let refuelNote = '';
+          if (gasPreview.insufficient_token || gasPreview.needs_gas) {
+            // Gas account: bring gas onto this network from wherever the tank has money.
+            const fuel = await ensureFuel(session, raw.network as NetworkKey, preview.suggested_topup + gasPreview.fee_native * 2, gasPreview.native_balance);
+            if (fuel.refueled) gasPreview = await previewSend(session, gasReq);
+            else if (fuel.reason) refuelNote = ` Auto-refuel: ${fuel.reason}.`;
+          }
           if (gasPreview.insufficient_token || gasPreview.needs_gas) {
             await skip(
-              `gas-tank wallet "${gasWallet?.name || gasWalletId.slice(0, 8)}" has ${fmtNative(gasPreview.native_balance)} ${gasPreview.native_symbol} on ${getNetwork(raw.network as NetworkKey)?.label || raw.network} — needs about ${fmtNative(preview.suggested_topup + gasPreview.fee_native)}. Send it some ${gasPreview.native_symbol} via that network.`
+              `gas-tank wallet "${gasWallet?.name || gasWalletId.slice(0, 8)}" has ${fmtNative(gasPreview.native_balance)} ${gasPreview.native_symbol} on ${getNetwork(raw.network as NetworkKey)?.label || raw.network} — needs about ${fmtNative(preview.suggested_topup + gasPreview.fee_native)}.${refuelNote}`
             );
             continue;
           }

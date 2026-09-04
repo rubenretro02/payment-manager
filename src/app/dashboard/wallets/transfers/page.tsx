@@ -162,6 +162,7 @@ export default function TransfersPage() {
                         <Badge variant="outline" className="text-[10px]">{getNetwork(t.network)?.label || t.network}</Badge>
                         {t.purpose === 'gas' && <Badge variant="outline" className="text-[10px] border-orange-300 text-orange-800">gas top-up</Badge>}
                         {t.purpose === 'auto' && <Badge variant="outline" className="text-[10px] border-emerald-300 text-emerald-800">automatic</Badge>}
+                        {t.purpose === 'refuel' && <Badge variant="outline" className="text-[10px] border-sky-300 text-sky-800">gas refuel</Badge>}
                         <Badge className={`text-[10px] ${statusColor(t.status)}`}>{t.status}</Badge>
                       </div>
                       <p className="text-xs text-muted-foreground truncate">

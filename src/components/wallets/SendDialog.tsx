@@ -245,6 +245,35 @@ export function SendDialog({ wallet, onClose, myWallets, book, balances, gasWall
     }
   };
 
+  // Gas account: bring gas onto this network for the tank, from wherever it has money.
+  const refuelTank = async () => {
+    if (!password) {
+      setError('Enter the vault password to refuel the gas tank');
+      return;
+    }
+    setToppingUp(true);
+    setError('');
+    try {
+      const res = await vault.authFetch('/api/wallets/refuel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ network, password }),
+      });
+      const json = await res.json();
+      if (!json.success) {
+        setError(json.error || 'Refuel failed');
+        return;
+      }
+      const r = json.data as { delivered?: number; symbol?: string; source?: string };
+      toast.success(`${r.delivered?.toFixed(6)} ${r.symbol} moved onto ${getNetwork(network)?.label} for the gas tank (paid with ${r.source}). Previewing again…`);
+      setTimeout(() => runPreview(), 3000);
+    } catch {
+      setError('Refuel failed');
+    } finally {
+      setToppingUp(false);
+    }
+  };
+
   const canPreview = !!network && !!token && to.trim().length > 10 && (useMax || Number(amount) > 0) && !previewing && bookAcceptsNetwork;
   const canSend = !!preview && !preview.needs_gas && !preview.insufficient_token && preview.amount > 0 && !!password && !sending && bookAcceptsNetwork;
 
@@ -387,15 +416,28 @@ export function SendDialog({ wallet, onClose, myWallets, book, balances, gasWall
                   <div className="pt-2 space-y-2">
                     <p className="text-xs font-semibold text-amber-900 flex items-center gap-1"><Fuel className="h-3.5 w-3.5" /> Not enough {preview.native_symbol} for the fee (short by {fmt(preview.gas_shortfall, 8)}).</p>
                     {preview.gasless && preview.gasless.supported && !preview.gasless.relayer_ok && (
-                      <p className="text-xs text-amber-900">Gasless would work, but the gas tank has only {fmt(preview.gasless.relayer_native_balance, 8)} {preview.gasless.native_symbol} on this network. Fund it and preview again.</p>
+                      <div className="space-y-2">
+                        <p className="text-xs text-amber-900">Gasless would work, but the gas tank has only {fmt(preview.gasless.relayer_native_balance, 8)} {preview.gasless.native_symbol} on this network.</p>
+                        <Button type="button" size="sm" variant="secondary" className="gap-2" onClick={refuelTank} disabled={toppingUp || !password} title="Move ~$1 of gas onto this network from what the tank holds elsewhere (via Relay)">
+                          {toppingUp ? <Loader2 className="h-4 w-4 animate-spin" /> : <Fuel className="h-4 w-4" />}
+                          Refuel the gas tank on {getNetwork(network)?.label} now
+                        </Button>
+                      </div>
                     )}
                     {preview.insufficient_token ? (
                       <p className="text-xs text-muted-foreground">Fix the amount first — this wallet holds {fmt(preview.token_balance, 6)} {preview.token_symbol}.</p>
                     ) : gasWallet ? (
-                      <Button type="button" size="sm" variant="secondary" className="gap-2" onClick={topUpGas} disabled={toppingUp || !password}>
-                        {toppingUp ? <Loader2 className="h-4 w-4 animate-spin" /> : <Fuel className="h-4 w-4" />}
-                        Top up {fmt(preview.suggested_topup, 6)} {preview.native_symbol} from {gasWallet.name || shortAddress(gasWallet.address)}
-                      </Button>
+                      <div className="flex flex-wrap gap-2">
+                        <Button type="button" size="sm" variant="secondary" className="gap-2" onClick={topUpGas} disabled={toppingUp || !password}>
+                          {toppingUp ? <Loader2 className="h-4 w-4 animate-spin" /> : <Fuel className="h-4 w-4" />}
+                          Top up {fmt(preview.suggested_topup, 6)} {preview.native_symbol} from {gasWallet.name || shortAddress(gasWallet.address)}
+                        </Button>
+                        {!(preview.gasless && preview.gasless.supported && !preview.gasless.relayer_ok) && (
+                          <Button type="button" size="sm" variant="ghost" className="gap-2" onClick={refuelTank} disabled={toppingUp || !password} title="If the tank is empty on this network: move ~$1 of gas here from what it holds elsewhere (via Relay)">
+                            <Fuel className="h-4 w-4" /> Refuel the tank on {getNetwork(network)?.label} first
+                          </Button>
+                        )}
+                      </div>
                     ) : (
                       <p className="text-xs text-muted-foreground">Set a gas-tank wallet in Wallets → Settings to top up with one click, or send some {preview.native_symbol} to this wallet manually.</p>
                     )}

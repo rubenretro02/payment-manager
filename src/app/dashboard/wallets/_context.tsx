@@ -35,7 +35,7 @@ interface WalletsCtx {
 
 const Ctx = createContext<WalletsCtx | null>(null);
 
-const DEFAULT_SETTINGS: WalletSettings = { gas_wallet_evm: null, gas_wallet_solana: null, auto_min_usd: 10, auto_max_fee_pct: 2, keep_unlocked: false };
+const DEFAULT_SETTINGS: WalletSettings = { gas_wallet_evm: null, gas_wallet_solana: null, auto_min_usd: 10, auto_max_fee_pct: 2, keep_unlocked: false, refuel_enabled: true, refuel_target_usd: 1, refuel_max_fee_usd: 0.25 };
 
 export function WalletsProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();

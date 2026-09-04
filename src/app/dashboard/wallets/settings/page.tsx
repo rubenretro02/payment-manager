@@ -23,12 +23,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Fuel, Zap, KeyRound, Sparkles, Crosshair, Eye, ScanSearch, Loader2, Plus, AlertTriangle, ShieldAlert } from 'lucide-react';
+import { Fuel, Zap, KeyRound, Sparkles, Crosshair, Eye, ScanSearch, Loader2, Plus, AlertTriangle, ShieldAlert, Droplets, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { WalletPicker } from '@/components/wallets/WalletPicker';
 import { NETWORKS, getNetwork, shortAddress } from '@/lib/wallets/networks';
 import { useWallets } from '../_context';
-import { fmtAmount, type DiscoverResult, type LocateResult, type TokenScanStatus } from '../_types';
+import { fmtAmount, type DiscoverResult, type FuelStatus, type LocateResult, type TokenScanStatus } from '../_types';
 
 const jsonHeaders = { 'Content-Type': 'application/json' };
 
@@ -69,8 +69,54 @@ export default function WalletSettingsPage() {
       }
       toast.success('Settings saved');
       await loadSettings();
+      loadFuel();
     } finally {
       setSaving(false);
+    }
+  };
+
+  // Gas account: fuel per network + manual refuel
+  const [fuel, setFuel] = useState<FuelStatus | null>(null);
+  const [fuelLoading, setFuelLoading] = useState(false);
+  const [refueling, setRefueling] = useState<string | null>(null);
+  const [refuelPassword, setRefuelPassword] = useState('');
+  const loadFuel = async () => {
+    setFuelLoading(true);
+    try {
+      const res = await vault.authFetch('/api/wallets/refuel');
+      const json = await res.json();
+      if (json.success) setFuel(json.data as FuelStatus);
+    } catch {
+      /* shown as empty */
+    } finally {
+      setFuelLoading(false);
+    }
+  };
+  useEffect(() => {
+    if (unlocked) loadFuel();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [unlocked, settings.gas_wallet_evm, settings.gas_wallet_solana]);
+
+  const refuelNow = async (network: string) => {
+    setRefueling(network);
+    try {
+      const res = await vault.authFetch('/api/wallets/refuel', {
+        method: 'POST',
+        headers: jsonHeaders,
+        body: JSON.stringify({ network, amount_usd: draft.refuel_target_usd, password: refuelPassword }),
+      });
+      const json = await res.json();
+      if (!json.success) {
+        if (res.status !== 401) toast.error(json.error || 'Refuel failed');
+        return;
+      }
+      const r = json.data as { delivered?: number; symbol?: string; source?: string; fee_usd?: number };
+      toast.success(`${r.delivered?.toFixed(6)} ${r.symbol} now on ${getNetwork(network)?.label} — paid with ${r.source} (bridge cost $${(r.fee_usd ?? 0).toFixed(3)})`);
+      setTimeout(() => { loadFuel(); loadBalances(); }, 4000);
+    } catch {
+      toast.error('Refuel failed');
+    } finally {
+      setRefueling(null);
     }
   };
 
@@ -223,7 +269,7 @@ export default function WalletSettingsPage() {
     // The coin has to be on the SAME network as the sweep: ETH on Ethereum
     // cannot pay a fee on Base, even though the address is identical.
     if (w.chain_family === 'evm' && !native.some((b) => b.network === 'base')) {
-      return `${line} — nothing on Base: fees for Base sweeps are paid only with ETH held on Base (send ETH via the Base network to this address)`;
+      return `${line} — nothing on Base yet; the gas account below moves gas there when a sweep needs it`;
     }
     return line;
   };
@@ -235,7 +281,7 @@ export default function WalletSettingsPage() {
         <CardHeader className="pb-3">
           <CardTitle className="text-lg flex items-center gap-2"><Fuel className="h-5 w-5 text-orange-600" /> Gas tank</CardTitle>
           <CardDescription>
-            Receiving wallets hold only USDC and cannot pay network fees. Pick one wallet per family that keeps a little native coin; sends and automatic transfers top up from it when needed. On Base a transfer costs about a cent, so a few dollars of ETH last a long time.
+            Receiving wallets hold only USDC and cannot pay network fees. Pick one wallet per family as the tank: it pays the fee for gasless USDC sweeps and tops up wallets when a classic transfer needs it. Deposit ETH or USDC into it on any network (Base is the cheapest) — the gas account below spreads it to whatever network needs gas.
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4 md:grid-cols-2">
@@ -249,6 +295,93 @@ export default function WalletSettingsPage() {
               </div>
             );
           })}
+        </CardContent>
+      </Card>
+
+      {/* Gas account (cross-network refuel) */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-lg flex items-center gap-2"><Droplets className="h-5 w-5 text-sky-600" /> Gas account</CardTitle>
+          <CardDescription>
+            Like Rabby&apos;s gas account: fill the tank on <strong>any</strong> network and stop thinking about it. When a sweep or a send needs gas on a network where the tank is empty, the app moves about ${draft.refuel_target_usd} of that network&apos;s coin there by itself — from ETH or USDC the tank holds anywhere else — through Relay (a few seconds, typically 2–6¢), then continues. Sei is the one network Relay doesn&apos;t cover.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-4">
+          <div className="flex items-start justify-between gap-3 rounded-lg border p-3">
+            <div>
+              <Label>Auto-refuel across networks</Label>
+              <p className="text-xs text-muted-foreground mt-1">Off: a sweep on a network where the tank is empty is skipped and tells you why.</p>
+            </div>
+            <Switch checked={draft.refuel_enabled} onCheckedChange={(v) => setDraft({ ...draft, refuel_enabled: v })} />
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid gap-2">
+              <Label>Amount per refuel (USD)</Label>
+              <Input type="number" min={0.2} step="0.5" value={draft.refuel_target_usd} onChange={(e) => setDraft({ ...draft, refuel_target_usd: Number(e.target.value) })} />
+              <p className="text-xs text-muted-foreground">$1 on Base pays hundreds of sweeps; refuels repeat when it runs out.</p>
+            </div>
+            <div className="grid gap-2">
+              <Label>Maximum bridge cost per refuel (USD)</Label>
+              <Input type="number" min={0.01} step="0.05" value={draft.refuel_max_fee_usd} onChange={(e) => setDraft({ ...draft, refuel_max_fee_usd: Number(e.target.value) })} />
+              <p className="text-xs text-muted-foreground">Skips the refuel when Relay&apos;s fee plus origin gas would exceed this.</p>
+            </div>
+          </div>
+          <div className="flex justify-end">
+            <Button onClick={saveSettings} disabled={saving} className="gap-2">
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null} Save settings
+            </Button>
+          </div>
+
+          <div className="rounded-lg border">
+            <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 border-b">
+              <p className="text-sm font-medium">Fuel by network</p>
+              <div className="flex items-center gap-2">
+                <Input type="password" autoComplete="off" placeholder="Vault password (to refuel now)" value={refuelPassword} onChange={(e) => setRefuelPassword(e.target.value)} className="h-8 w-60" />
+                <Button size="sm" variant="ghost" className="h-8" onClick={loadFuel} disabled={fuelLoading} title="Re-read the tank">
+                  {fuelLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                </Button>
+              </div>
+            </div>
+            {fuel ? (
+              <>
+                {fuel.reserves.length > 0 ? (
+                  <p className="px-3 py-2 text-xs text-muted-foreground border-b">
+                    Reserves the bridge can draw from: {fuel.reserves.map((r) => `${fmtAmount(r.amount)} ${r.symbol} on ${getNetwork(r.network)?.label || r.network} ($${r.usd.toFixed(2)})`).join(' · ')}
+                  </p>
+                ) : (
+                  <p className="px-3 py-2 text-xs text-amber-800 border-b">
+                    The tank has no reserves on any network. Send a few dollars of ETH or USDC (Base is the cheapest) to {fuel.evm_tank ? `${fuel.evm_tank.name || 'the EVM tank'} · ${fuel.evm_tank.address}` : 'the EVM gas tank (pick one above)'}.
+                  </p>
+                )}
+                {fuel.errors.length > 0 && <p className="px-3 py-1 text-[11px] text-amber-700">Some networks did not answer: {fuel.errors.join(' · ')}</p>}
+                <div className="divide-y">
+                  {fuel.per_network.map((f) => (
+                    <div key={f.network} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">{f.label}</span>
+                        <span className="text-xs text-muted-foreground font-mono">{f.tank_address ? shortAddress(f.tank_address) : 'no tank wallet'}</span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className={f.amount > 0 ? '' : 'text-muted-foreground'}>
+                          {fmtAmount(f.amount)} {f.symbol}{f.usd ? ` · $${f.usd.toFixed(2)}` : ''}
+                        </span>
+                        {(f.usd ?? 0) < 0.05 && <Badge variant="outline" className="text-[10px] border-amber-300 text-amber-800">empty</Badge>}
+                        {f.refuelable ? (
+                          <Button size="sm" variant="outline" className="h-7 gap-1" disabled={refueling !== null || !refuelPassword} title={refuelPassword ? `Move ~$${draft.refuel_target_usd} of ${f.symbol} here now` : 'Enter the vault password first'} onClick={() => refuelNow(f.network)}>
+                            {refueling === f.network ? <Loader2 className="h-3 w-3 animate-spin" /> : <Fuel className="h-3 w-3" />} Refuel ${draft.refuel_target_usd}
+                          </Button>
+                        ) : (
+                          <span className="text-[11px] text-muted-foreground">{f.tank_address ? 'manual only' : ''}</span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <p className="px-3 py-3 text-xs text-muted-foreground">{fuelLoading ? 'Reading the tank…' : 'Pick a gas-tank wallet above to see fuel per network.'}</p>
+            )}
+          </div>
         </CardContent>
       </Card>
 
