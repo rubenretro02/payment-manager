@@ -246,7 +246,7 @@ export default function WalletSettingsPage() {
         <CardHeader className="pb-3">
           <CardTitle className="text-lg flex items-center gap-2"><Zap className="h-5 w-5 text-emerald-600" /> Automatic transfers</CardTitle>
           <CardDescription>
-            Rules for the per-wallet “Auto-transfer to my exchange” toggle. Destinations come from the Address book; sweeps run after every deposit scan and when you unlock the vault.
+            Rules for the per-wallet “Auto-transfer to my exchange” toggle. Destinations come from the Address book; sweeps run after every deposit scan and when you unlock the vault. Only USDC and USDT are swept, always on the network they arrived on (no swaps or bridges); fees come out of the gas tank in that network&apos;s coin.
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4">

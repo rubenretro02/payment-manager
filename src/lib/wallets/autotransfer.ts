@@ -26,6 +26,11 @@ export interface AutoSettings {
 
 const DEFAULTS: AutoSettings = { auto_min_usd: 10, auto_max_fee_pct: 2, keep_unlocked: false };
 
+// Only the stablecoins every exchange credits on deposit. Bridged variants
+// (USDbC, USDC.e, DAI.e) sent to an exchange's USDC address are NOT credited
+// and end up stuck, so those stay manual.
+const AUTO_TOKENS = new Set(['USDC', 'USDT']);
+
 export interface AutoJob {
   id: string;
   wallet_id: string | null;
@@ -197,6 +202,10 @@ export async function runAutoTransfers(session: Session | null): Promise<{ proce
         if (!wallet) { await skip('wallet no longer exists'); continue; }
         if (!wallet.auto_transfer) { await skip('auto-transfer turned off'); continue; }
         if (wallet.source !== 'seed') { await skip('watch-only wallet'); continue; }
+        if (!AUTO_TOKENS.has(raw.token_symbol.toUpperCase())) {
+          await skip(`only USDC and USDT are swept automatically — ${raw.token_symbol} is a bridged/other token that exchanges may not credit; send it manually if you know the destination accepts it`);
+          continue;
+        }
         const family = familyOf(raw.network);
         const target: BookEntry | undefined =
           book.find((b) => b.id === (raw.book_id || wallet.auto_transfer_book_id)) ||

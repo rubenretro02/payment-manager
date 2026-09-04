@@ -137,9 +137,14 @@ export default function AddressBookPage() {
         <CardContent className="p-0">
           <div className="mx-4 mb-3 flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 p-3 text-xs text-amber-900 dark:text-amber-200">
             <ShieldAlert className="h-4 w-4 shrink-0 mt-0.5" />
-            <p>
-              Copy the address from the exchange&apos;s deposit screen and tick <strong>only</strong> the networks that screen offers. A transfer on a network the exchange does not support is lost — the automation refuses to send on unticked networks for exactly that reason.
-            </p>
+            <div className="space-y-1">
+              <p>
+                Copy the address from the exchange&apos;s deposit screen and tick <strong>only</strong> the networks that screen offers for that coin. A transfer on a network the exchange does not support is lost — the automation refuses to send on unticked networks for exactly that reason.
+              </p>
+              <p>
+                Binance, Coinbase and Kraken show the <strong>same 0x address on every EVM network</strong> they support, so one entry covers all of them. Automatic transfers move <strong>USDC and USDT only</strong>, on the same network they arrived on — no swap, no bridge, no conversion.
+              </p>
+            </div>
           </div>
           {book.length === 0 ? (
             <div className="text-center py-10 text-muted-foreground text-sm">No destinations yet.</div>
