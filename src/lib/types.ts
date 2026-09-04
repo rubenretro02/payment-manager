@@ -191,6 +191,8 @@ export interface Wallet {
   // Automation: sweep incoming stablecoins to the address book (entry or family default)
   auto_transfer?: boolean;
   auto_transfer_book_id?: string | null;
+  // Latest automatic-transfer attempt (status + why it was skipped/failed)
+  last_auto?: { status: string; reason: string | null; tx_hash: string | null; created_at: string } | null;
   created_at: string;
   updated_at: string;
   // Accounts whose wallet_address currently points at this wallet.

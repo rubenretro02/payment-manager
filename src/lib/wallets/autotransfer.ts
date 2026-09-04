@@ -9,10 +9,10 @@
 import { createAdminClient } from '@/lib/supabase/server';
 import { EVM_CHAINS, SOLANA_COINGECKO_ID } from './chains';
 import { STABLE_SYMBOLS, familyOf, getNetwork, type NetworkKey } from './networks';
-import { getPrices } from './balances';
+import { fetchBalances, getPrices } from './balances';
 import { listBook, type BookEntry } from './book';
 import { getGasSettings, previewSend, executeSend } from './send';
-import { getWallet, type WalletRow } from './store';
+import { getWallet, listWalletTokens, type WalletRow } from './store';
 import { setKeepUnlocked, type Session } from './vault';
 
 export interface AutoSettings {
@@ -153,6 +153,69 @@ export async function enqueueFromDeposits(deposits: DepositLike[]): Promise<numb
   return queued;
 }
 
+/**
+ * Balance-driven queueing: every wallet with auto-transfer on that currently
+ * holds USDC/USDT on a network its destination accepts gets a job, whether
+ * the money arrived a minute ago or before the toggle existed. Deposit-driven
+ * queueing (above) just makes fresh deposits immediate.
+ */
+export async function enqueueFromBalances(walletIds?: string[]): Promise<number> {
+  const supabase = createAdminClient();
+  let q = supabase
+    .from('wallets')
+    .select('id, address, chain_family, auto_transfer_book_id')
+    .eq('auto_transfer', true)
+    .eq('source', 'seed');
+  if (walletIds && walletIds.length > 0) q = q.in('id', walletIds);
+  const { data: wallets, error } = await q;
+  if (error) throw dbError(error);
+  if (!wallets || wallets.length === 0) return 0;
+
+  const [book, settings, tokens] = await Promise.all([listBook(), getAutoSettings(), listWalletTokens().catch(() => new Map())]);
+  const refs = wallets.map((w) => ({ id: w.id as string, address: w.address as string, chain_family: w.chain_family as 'evm' | 'solana' }));
+  const balances = await fetchBalances(refs, tokens);
+
+  // Don't re-queue what was just swept (RPC balances can lag a few seconds)
+  const recent = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+  const { data: recentJobs } = await supabase
+    .from('wallet_auto_transfers')
+    .select('wallet_id, network, token_contract, status')
+    .or(`status.in.(pending,gas),and(status.eq.done,processed_at.gte.${recent})`);
+  const blocked = new Set((recentJobs || []).map((j) => `${j.wallet_id}|${j.network}|${j.token_contract || 'native'}`));
+
+  let queued = 0;
+  for (const w of wallets) {
+    const family = w.chain_family as 'evm' | 'solana';
+    const target =
+      book.find((b) => b.id === (w.auto_transfer_book_id as string | null)) ||
+      book.find((b) => b.family === family && b.is_default);
+    if (!target || target.family !== family) continue;
+    const held = balances.wallets.find((b) => b.wallet_id === w.id)?.balances || [];
+    for (const b of held) {
+      if (b.native || !b.contract || b.spam || b.verified === false) continue;
+      if (!AUTO_TOKENS.has(b.symbol.toUpperCase())) continue;
+      if (!target.networks.includes(b.network)) continue;
+      if ((b.usd ?? b.amount) < settings.auto_min_usd) continue;
+      const key = `${w.id}|${b.network}|${b.contract}`;
+      if (blocked.has(key)) continue;
+      const { error: insErr } = await supabase.from('wallet_auto_transfers').insert({
+        wallet_id: w.id,
+        deposit_id: null,
+        network: b.network,
+        token_symbol: b.symbol,
+        token_contract: b.contract,
+        book_id: (w.auto_transfer_book_id as string | null) ?? null,
+        status: 'pending',
+      });
+      if (!insErr) {
+        blocked.add(key);
+        queued++;
+      }
+    }
+  }
+  return queued;
+}
+
 async function setJob(id: string, patch: Partial<Pick<AutoJob, 'status' | 'reason' | 'tx_hash' | 'amount' | 'book_id'>>): Promise<void> {
   const supabase = createAdminClient();
   const done = patch.status && patch.status !== 'pending' && patch.status !== 'gas';
@@ -168,9 +231,20 @@ function nativePriceFor(network: string, prices: Record<string, number>): number
 let running = false;
 
 /** Process the queue. Needs an unlocked session (seeds in memory); otherwise jobs wait. */
-export async function runAutoTransfers(session: Session | null): Promise<{ processed: number; done: number; skipped: number; failed: number; waiting: number }> {
-  const result = { processed: 0, done: 0, skipped: 0, failed: 0, waiting: 0 };
+export async function runAutoTransfers(
+  session: Session | null,
+  opts: { walletIds?: string[] } = {}
+): Promise<{ processed: number; done: number; skipped: number; failed: number; waiting: number; queued: number }> {
+  const result = { processed: 0, done: 0, skipped: 0, failed: 0, waiting: 0, queued: 0 };
   const supabase = createAdminClient();
+
+  // Pick up balances that are already sitting in auto-transfer wallets.
+  try {
+    result.queued = await enqueueFromBalances(opts.walletIds);
+  } catch (e) {
+    console.error('[auto-transfer] balance queueing failed:', e instanceof Error ? e.message : e);
+  }
+
   const { data: jobs, error } = await supabase
     .from('wallet_auto_transfers')
     .select('*')

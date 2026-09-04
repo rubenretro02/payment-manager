@@ -189,10 +189,45 @@ export default function WalletsOverviewPage() {
     }
     setAutoBusy(w.id);
     try {
-      if (await patchWallet(w.id, { auto_transfer: on })) {
-        toast.success(on ? `Auto-transfer on → ${(own || familyDefault)?.name}` : 'Auto-transfer off');
+      if (!(await patchWallet(w.id, { auto_transfer: on }))) return;
+      if (!on) {
+        toast.success('Auto-transfer off');
         loadWallets();
+        return;
       }
+      // Sweep whatever the wallet already holds, right now, and say what happened.
+      toast.info(`Auto-transfer on → ${(own || familyDefault)?.name}. Checking this wallet's balance…`);
+      const res = await vault.authFetch('/api/wallets/auto-transfers', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ wallet_id: w.id }) });
+      const json = await res.json();
+      if (json.success) {
+        const r = json.data as { queued: number; done: number; skipped: number; failed: number; waiting: number };
+        if (r.done > 0) toast.success(`${r.done} transfer${r.done === 1 ? '' : 's'} sent to ${(own || familyDefault)?.name}`);
+        else if (r.skipped > 0 || r.failed > 0) toast.warning('Nothing sent — see the reason under the toggle (and in Transfers).');
+        else if (r.waiting > 0) toast.warning('Queued — it will run when the vault is unlocked.');
+        else toast.info('Nothing to sweep yet (no USDC/USDT above the minimum on an accepted network).');
+      } else if (res.status !== 401) {
+        toast.error(json.error || 'Could not run the sweep');
+      }
+      await loadWallets();
+      loadBalances();
+    } finally {
+      setAutoBusy(null);
+    }
+  };
+
+  const runAutoNow = async (w: Wallet) => {
+    setAutoBusy(w.id);
+    try {
+      const res = await vault.authFetch('/api/wallets/auto-transfers', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ wallet_id: w.id }) });
+      const json = await res.json();
+      if (!json.success) {
+        if (res.status !== 401) toast.error(json.error || 'Could not run');
+        return;
+      }
+      const r = json.data as { done: number; skipped: number; failed: number; waiting: number };
+      toast[r.done > 0 ? 'success' : 'info'](`${r.done} sent · ${r.skipped} skipped · ${r.failed} failed${r.waiting ? ` · ${r.waiting} waiting` : ''}`);
+      await loadWallets();
+      loadBalances();
     } finally {
       setAutoBusy(null);
     }
@@ -529,6 +564,20 @@ export default function WalletsOverviewPage() {
                           {w.auto_transfer && autoTarget && (
                             <span className="text-[11px] text-muted-foreground">
                               only on {autoTarget.networks.map((n) => getNetwork(n)?.label || n).join(', ')}
+                            </span>
+                          )}
+                          {w.auto_transfer && (
+                            <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" disabled={autoBusy === w.id} onClick={() => runAutoNow(w)} title="Check the balance and sweep now">
+                              {autoBusy === w.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Zap className="h-3 w-3 mr-1" />} Run now
+                            </Button>
+                          )}
+                          {w.auto_transfer && w.last_auto && (
+                            <span
+                              className={`basis-full text-[11px] ${w.last_auto.status === 'done' ? 'text-emerald-700' : w.last_auto.status === 'failed' ? 'text-red-700' : w.last_auto.status === 'skipped' ? 'text-amber-700' : 'text-muted-foreground'}`}
+                              title={w.last_auto.reason || ''}
+                            >
+                              Last attempt {format(new Date(w.last_auto.created_at), 'MMM d, HH:mm')}: {w.last_auto.status === 'done' ? 'sent' : w.last_auto.status === 'gas' ? 'waiting for gas' : w.last_auto.status}
+                              {w.last_auto.reason ? ` — ${w.last_auto.reason}` : ''}
                             </span>
                           )}
                         </div>

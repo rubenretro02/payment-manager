@@ -81,16 +81,34 @@ async function seedNames(): Promise<Map<number, string>> {
   return map;
 }
 
+// Latest automatic-transfer attempt per wallet (for the row status line).
+async function lastAutoJobs(): Promise<Map<string, { status: string; reason: string | null; tx_hash: string | null; created_at: string }>> {
+  const supabase = createAdminClient();
+  const map = new Map<string, { status: string; reason: string | null; tx_hash: string | null; created_at: string }>();
+  const { data, error } = await supabase
+    .from('wallet_auto_transfers')
+    .select('wallet_id, status, reason, tx_hash, created_at')
+    .order('created_at', { ascending: false })
+    .limit(400);
+  if (error) return map; // table not migrated yet
+  for (const j of data || []) {
+    const id = j.wallet_id as string | null;
+    if (id && !map.has(id)) map.set(id, { status: j.status as string, reason: (j.reason as string | null) ?? null, tx_hash: (j.tx_hash as string | null) ?? null, created_at: j.created_at as string });
+  }
+  return map;
+}
+
 // Wallets with the account(s) currently pointing at them (accounts.wallet_address).
 export async function listWallets(): Promise<Wallet[]> {
   const supabase = createAdminClient();
-  const [{ data: rows, error }, { data: accounts }, names] = await Promise.all([
+  const [{ data: rows, error }, { data: accounts }, names, lastAuto] = await Promise.all([
     supabase.from('wallets').select('*').order('created_at', { ascending: true }),
     supabase
       .from('accounts')
       .select('id, full_name, wallet_address, wallet_network, user:users!user_id(telegram_first_name)')
       .not('wallet_address', 'is', null),
     seedNames(),
+    lastAutoJobs(),
   ]);
   if (error) throw dbError(error);
 
@@ -115,6 +133,7 @@ export async function listWallets(): Promise<Wallet[]> {
       token_scan_at: w.token_scan_at ?? null,
       auto_transfer: !!w.auto_transfer,
       auto_transfer_book_id: w.auto_transfer_book_id ?? null,
+      last_auto: lastAuto.get(w.id) ?? null,
       assigned_accounts: assigned.map((a) => {
         const u = Array.isArray(a.user) ? a.user[0] : a.user;
         return { id: a.id, full_name: a.full_name, user_name: u?.telegram_first_name ?? null };

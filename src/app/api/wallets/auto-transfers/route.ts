@@ -26,9 +26,9 @@ export async function POST(request: NextRequest) {
   const session = authorize(request);
   if (!session) return locked();
   try {
-    const body = (await request.json().catch(() => ({}))) as { retry_id?: string };
+    const body = (await request.json().catch(() => ({}))) as { retry_id?: string; wallet_id?: string };
     if (body.retry_id) await retryAutoJob(body.retry_id);
-    const result = await runAutoTransfers(session);
+    const result = await runAutoTransfers(session, body.wallet_id ? { walletIds: [body.wallet_id] } : {});
     return NextResponse.json({ success: true, data: result });
   } catch (error) {
     return NextResponse.json({ success: false, error: error instanceof Error ? error.message : 'Failed' }, { status: 500 });
