@@ -111,6 +111,15 @@ async function resolveWallet(req: SendRequest): Promise<{ wallet: WalletRow; fam
   return { wallet, family };
 }
 
+/** Native amounts on L2s are tiny — six decimals rounds "has 0.0000008,
+ * needs 0.0000012" into "has 0.000001, needs 0.000001", which reads as a
+ * contradiction. Show up to eight. */
+export function fmtNative(n: number): string {
+  if (n === 0) return '0';
+  const s = n.toFixed(8).replace(/0+$/, '').replace(/\.$/, '');
+  return s === '0' ? '<0.00000001' : s;
+}
+
 function num(raw: bigint, decimals: number): number {
   return Number(formatUnits(raw, decimals));
 }
@@ -337,7 +346,7 @@ export async function executeSend(session: Session, req: SendRequest): Promise<S
   if (preview.amount <= 0) throw new SendError('Amount is zero', 400);
   if (preview.insufficient_token) throw new SendError(`Not enough ${preview.token_symbol} (balance ${preview.token_balance})`, 400);
   if (preview.needs_gas) {
-    throw new SendError(`Not enough ${preview.native_symbol} for the network fee: needs about ${preview.fee_native.toFixed(6)}, has ${preview.native_balance.toFixed(6)}. Top up gas first.`, 400);
+    throw new SendError(`Not enough ${preview.native_symbol} for the network fee: needs about ${fmtNative(preview.fee_native)}, has ${fmtNative(preview.native_balance)}. Top up gas first.`, 400);
   }
 
   const supabase = createAdminClient();
@@ -540,7 +549,7 @@ export async function executeGasless(session: Session, req: SendRequest, relayer
   const preview = await previewGasless(session, req, relayerWalletId);
   if (!preview.supported) throw new SendError(preview.reason || 'Gasless transfer not possible', 400);
   if (!preview.relayer_ok) {
-    throw new SendError(`Gas-tank wallet has ${preview.relayer_native_balance.toFixed(6)} ${preview.native_symbol} on ${getNetwork(req.network)?.label}; the fee needs about ${preview.fee_native.toFixed(6)}. Send it some ${preview.native_symbol} there.`, 400);
+    throw new SendError(`Gas-tank wallet has ${fmtNative(preview.relayer_native_balance)} ${preview.native_symbol} on ${getNetwork(req.network)?.label}; the fee needs about ${fmtNative(preview.fee_native)}. Send it some ${preview.native_symbol} there.`, 400);
   }
   // Fresh context = fresh nonce/signature for the real submission.
   const ctx = await gaslessContext(session, req, relayerWalletId);

@@ -219,7 +219,13 @@ export default function WalletSettingsPage() {
         ? 'no SOL yet — send ~0.05 SOL to this address'
         : 'no fuel yet — send a few dollars of ETH on Base (and on any other network you sweep from) to this address';
     }
-    return native.map((b) => `${fmtAmount(b.amount)} ${b.symbol} on ${getNetwork(b.network)?.label}`).join(' · ');
+    const line = native.map((b) => `${fmtAmount(b.amount)} ${b.symbol} on ${getNetwork(b.network)?.label}`).join(' · ');
+    // The coin has to be on the SAME network as the sweep: ETH on Ethereum
+    // cannot pay a fee on Base, even though the address is identical.
+    if (w.chain_family === 'evm' && !native.some((b) => b.network === 'base')) {
+      return `${line} — nothing on Base: fees for Base sweeps are paid only with ETH held on Base (send ETH via the Base network to this address)`;
+    }
+    return line;
   };
 
   return (

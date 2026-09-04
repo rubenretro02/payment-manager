@@ -11,7 +11,7 @@ import { EVM_CHAINS, SOLANA_COINGECKO_ID } from './chains';
 import { STABLE_SYMBOLS, familyOf, getNetwork, type NetworkKey } from './networks';
 import { fetchBalances, getPrices } from './balances';
 import { listBook, type BookEntry } from './book';
-import { getGasSettings, previewSend, executeSend, gaslessCapable, previewGasless, executeGasless } from './send';
+import { getGasSettings, previewSend, executeSend, gaslessCapable, previewGasless, executeGasless, fmtNative } from './send';
 import { getWallet, listWalletTokens, type WalletRow } from './store';
 import { setKeepUnlocked, type Session } from './vault';
 
@@ -323,7 +323,8 @@ export async function runAutoTransfers(
             const tooHigh = feeTooHigh(gp.fee_native);
             if (tooHigh !== null) { await skip(`fee ≈ $${tooHigh.toFixed(2)} exceeds ${settings.auto_max_fee_pct}% of $${amountUsd?.toFixed(2)}`); continue; }
             if (!gp.relayer_ok) {
-              await skip(`gas-tank wallet has ${gp.relayer_native_balance.toFixed(6)} ${gp.native_symbol} on ${getNetwork(raw.network as NetworkKey)?.label || raw.network} — the fee needs about ${gp.fee_native.toFixed(6)}. Send it some ${gp.native_symbol} there.`);
+              const feeUsd = nativePrice !== null ? ` (≈ $${(gp.fee_native * nativePrice).toFixed(3)})` : '';
+              await skip(`gas-tank wallet has ${fmtNative(gp.relayer_native_balance)} ${gp.native_symbol} on ${getNetwork(raw.network as NetworkKey)?.label || raw.network} — the fee needs about ${fmtNative(gp.fee_native)}${feeUsd}. Send it some ${gp.native_symbol} via the ${getNetwork(raw.network as NetworkKey)?.label || raw.network} network.`);
               continue;
             }
             const sent = await executeGasless(session, req, gasWalletId);
@@ -356,7 +357,7 @@ export async function runAutoTransfers(
           const gasPreview = await previewSend(session, gasReq);
           if (gasPreview.insufficient_token || gasPreview.needs_gas) {
             await skip(
-              `gas-tank wallet "${gasWallet?.name || gasWalletId.slice(0, 8)}" has ${gasPreview.native_balance.toFixed(6)} ${gasPreview.native_symbol} on ${getNetwork(raw.network as NetworkKey)?.label || raw.network} — needs about ${(preview.suggested_topup + gasPreview.fee_native).toFixed(6)}. Send it some ${gasPreview.native_symbol} on that network.`
+              `gas-tank wallet "${gasWallet?.name || gasWalletId.slice(0, 8)}" has ${fmtNative(gasPreview.native_balance)} ${gasPreview.native_symbol} on ${getNetwork(raw.network as NetworkKey)?.label || raw.network} — needs about ${fmtNative(preview.suggested_topup + gasPreview.fee_native)}. Send it some ${gasPreview.native_symbol} via that network.`
             );
             continue;
           }
