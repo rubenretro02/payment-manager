@@ -78,7 +78,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 
 let priceCache: { at: number; prices: Record<string, number> } = { at: 0, prices: {} };
 
-async function getPrices(ids: string[]): Promise<Record<string, number>> {
+export async function getPrices(ids: string[]): Promise<Record<string, number>> {
   if (Date.now() - priceCache.at < 60_000 && ids.every((id) => id in priceCache.prices)) {
     return priceCache.prices;
   }

@@ -1,8 +1,9 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
 import {
   VaultError,
   addSeed,
   authorize,
+  backgroundSession,
   isVaultConfigured,
   listSeeds,
   lockVault,
@@ -11,6 +12,7 @@ import {
   unlockVault,
 } from '@/lib/wallets/vault';
 import { createWallet } from '@/lib/wallets/store';
+import { runAutoTransfers } from '@/lib/wallets/autotransfer';
 
 /**
  * GET  /api/wallets/vault → { configured, unlocked (for THIS token), expiresAt, seeds }
@@ -57,6 +59,8 @@ export async function POST(request: NextRequest) {
     if (body.action === 'unlock') {
       if (!body.password) return bad('Password is required');
       const issued = await unlockVault(body.password);
+      // Sweeps that queued while the vault was locked can run now.
+      after(() => runAutoTransfers(backgroundSession()).catch(() => undefined));
       return NextResponse.json({ success: true, data: { token: issued.token, expiresAt: new Date(issued.expiresAt).toISOString() } });
     }
 

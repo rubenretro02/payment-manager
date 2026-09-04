@@ -188,6 +188,9 @@ export interface Wallet {
   network: string;
   name: string | null;
   token_scan_at?: string | null;
+  // Automation: sweep incoming stablecoins to the address book (entry or family default)
+  auto_transfer?: boolean;
+  auto_transfer_book_id?: string | null;
   created_at: string;
   updated_at: string;
   // Accounts whose wallet_address currently points at this wallet.

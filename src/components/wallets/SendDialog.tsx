@@ -20,11 +20,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Loader2, Send, Fuel, ExternalLink, AlertTriangle, CheckCircle2, ShieldAlert } from 'lucide-react';
+import { Loader2, Send, Fuel, ExternalLink, AlertTriangle, CheckCircle2, ShieldAlert, BookUser, Wallet as WalletIcon, Star } from 'lucide-react';
 import { toast } from 'sonner';
 import type { Wallet } from '@/lib/types';
 import type { WalletVault } from '@/hooks/useWalletVault';
 import { acceptedNetworks, getNetwork, shortAddress } from '@/lib/wallets/networks';
+import { WalletPicker } from './WalletPicker';
 
 export interface BalanceLike {
   network: string;
@@ -33,6 +34,14 @@ export interface BalanceLike {
   native: boolean;
   contract?: string | null;
   spam?: boolean;
+}
+export interface BookLike {
+  id: string;
+  name: string;
+  family: 'evm' | 'solana';
+  address: string;
+  networks: string[];
+  is_default: boolean;
 }
 
 interface SendPreview {
@@ -53,7 +62,6 @@ interface SendPreview {
   insufficient_token: boolean;
   warnings: string[];
 }
-
 interface SendResult {
   hash: string;
   status: 'sent' | 'confirmed' | 'failed';
@@ -64,6 +72,7 @@ interface Props {
   wallet: Wallet | null;
   onClose: () => void;
   myWallets: Wallet[];
+  book: BookLike[];
   balances: BalanceLike[];
   gasWallet: Wallet | null;
   vault: WalletVault;
@@ -73,17 +82,19 @@ interface Props {
 
 const fmt = (n: number, max = 6) => n.toLocaleString('en-US', { maximumFractionDigits: max });
 
-// Send native coin or a token from a seed wallet. Flow: pick network + token
-// + amount + destination → Preview (fee, gas check) → vault password → Send.
-// If the wallet lacks gas and a gas-tank wallet is configured, one click tops
-// it up from there first.
-export function SendDialog({ wallet, onClose, myWallets, balances, gasWallet, vault, adminId, onSent }: Props) {
+// Send native coin or a token from a seed wallet. Destination comes from the
+// address book (default pre-selected), one of your own wallets, or a pasted
+// address. Flow: Preview (fee, gas check) → vault password → Send. If the
+// wallet lacks gas and a gas-tank wallet exists, one click tops it up first.
+export function SendDialog({ wallet, onClose, myWallets, book, balances, gasWallet, vault, adminId, onSent }: Props) {
   const open = wallet !== null;
   const [network, setNetwork] = useState('');
   const [token, setToken] = useState('native');
   const [amount, setAmount] = useState('');
   const [useMax, setUseMax] = useState(false);
   const [to, setTo] = useState('');
+  const [toLabel, setToLabel] = useState('');
+  const [destMode, setDestMode] = useState<'book' | 'mine' | 'manual'>('book');
   const [password, setPassword] = useState('');
   const [preview, setPreview] = useState<SendPreview | null>(null);
   const [previewing, setPreviewing] = useState(false);
@@ -92,18 +103,29 @@ export function SendDialog({ wallet, onClose, myWallets, balances, gasWallet, va
   const [result, setResult] = useState<SendResult | null>(null);
   const [error, setError] = useState('');
 
-  // Reset whenever a different wallet is opened
+  const familyBook = wallet ? book.filter((b) => b.family === wallet.chain_family) : [];
+
+  // Reset whenever a different wallet is opened; pre-select the default destination.
   useEffect(() => {
     if (!wallet) return;
+    const def = book.find((b) => b.family === wallet.chain_family && b.is_default);
     setNetwork(wallet.network);
     setToken('native');
     setAmount('');
     setUseMax(false);
-    setTo('');
     setPassword('');
     setPreview(null);
     setResult(null);
     setError('');
+    if (def) {
+      setDestMode('book');
+      setTo(def.address);
+      setToLabel(def.name);
+    } else {
+      setDestMode(book.some((b) => b.family === wallet.chain_family) ? 'book' : 'manual');
+      setTo('');
+      setToLabel('');
+    }
   }, [wallet?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!wallet) return null;
@@ -116,6 +138,8 @@ export function SendDialog({ wallet, onClose, myWallets, balances, gasWallet, va
   ];
   if (!tokenOptions.some((o) => o.value === 'native')) tokenOptions.unshift({ value: 'native', label: `${getNetwork(network)?.nativeSymbol || 'native'} · 0` });
   const destinations = myWallets.filter((w) => w.id !== wallet.id && w.chain_family === wallet.chain_family);
+  const chosenBook = familyBook.find((b) => b.address === to);
+  const bookAcceptsNetwork = chosenBook ? chosenBook.networks.includes(network) : true;
 
   const invalidate = () => {
     setPreview(null);
@@ -123,24 +147,14 @@ export function SendDialog({ wallet, onClose, myWallets, balances, gasWallet, va
     setError('');
   };
 
-  const body = () => ({
-    network,
-    to: to.trim(),
-    token,
-    amount: useMax ? 'max' : Number(amount),
-    admin_id: adminId,
-  });
+  const body = () => ({ network, to: to.trim(), token, amount: useMax ? 'max' : Number(amount), admin_id: adminId });
 
   const runPreview = async () => {
     setPreviewing(true);
     setError('');
     setResult(null);
     try {
-      const res = await vault.authFetch(`/api/wallets/${wallet.id}/send`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'preview', ...body() }),
-      });
+      const res = await vault.authFetch(`/api/wallets/${wallet.id}/send`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'preview', ...body() }) });
       const json = await res.json();
       if (!json.success) {
         setError(json.error || 'Preview failed');
@@ -160,11 +174,7 @@ export function SendDialog({ wallet, onClose, myWallets, balances, gasWallet, va
     setSending(true);
     setError('');
     try {
-      const res = await vault.authFetch(`/api/wallets/${wallet.id}/send`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'send', ...body(), amount: preview.amount, password }),
-      });
+      const res = await vault.authFetch(`/api/wallets/${wallet.id}/send`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'send', ...body(), amount: preview.amount, password }) });
       const json = await res.json();
       if (!json.success) {
         setError(json.error || 'Send failed');
@@ -193,16 +203,7 @@ export function SendDialog({ wallet, onClose, myWallets, balances, gasWallet, va
       const res = await vault.authFetch(`/api/wallets/${gasWallet.id}/send`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'send',
-          network,
-          to: wallet.address,
-          token: 'native',
-          amount: preview.suggested_topup,
-          password,
-          purpose: 'gas',
-          admin_id: adminId,
-        }),
+        body: JSON.stringify({ action: 'send', network, to: wallet.address, token: 'native', amount: preview.suggested_topup, password, purpose: 'gas', admin_id: adminId }),
       });
       const json = await res.json();
       if (!json.success) {
@@ -219,17 +220,24 @@ export function SendDialog({ wallet, onClose, myWallets, balances, gasWallet, va
     }
   };
 
-  const canPreview = !!network && !!token && to.trim().length > 10 && (useMax || Number(amount) > 0) && !previewing;
-  const canSend = !!preview && !preview.needs_gas && !preview.insufficient_token && preview.amount > 0 && !!password && !sending;
+  const canPreview = !!network && !!token && to.trim().length > 10 && (useMax || Number(amount) > 0) && !previewing && bookAcceptsNetwork;
+  const canSend = !!preview && !preview.needs_gas && !preview.insufficient_token && preview.amount > 0 && !!password && !sending && bookAcceptsNetwork;
+
+  const destTab = (mode: 'book' | 'mine' | 'manual', label: string, icon: React.ReactNode) => (
+    <button
+      type="button"
+      onClick={() => { setDestMode(mode); if (mode === 'manual') { setTo(''); setToLabel(''); } invalidate(); }}
+      className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs border ${destMode === mode ? 'bg-primary text-primary-foreground border-primary' : 'hover:bg-muted'}`}
+    >
+      {icon} {label}
+    </button>
+  );
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && !sending && !toppingUp && onClose()}>
       <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Send className="h-5 w-5 text-primary" />
-            Send from {wallet.name || shortAddress(wallet.address)}
-          </DialogTitle>
+          <DialogTitle className="flex items-center gap-2"><Send className="h-5 w-5 text-primary" /> Send from {wallet.name || shortAddress(wallet.address)}</DialogTitle>
           <DialogDescription className="font-mono text-xs break-all">{wallet.address}</DialogDescription>
         </DialogHeader>
 
@@ -240,12 +248,8 @@ export function SendDialog({ wallet, onClose, myWallets, balances, gasWallet, va
                 {result.status === 'failed' ? <AlertTriangle className="h-5 w-5 text-red-600" /> : <CheckCircle2 className="h-5 w-5 text-green-600" />}
                 {result.status === 'confirmed' ? 'Transfer confirmed' : result.status === 'sent' ? 'Transfer broadcast (still confirming)' : 'Transfer failed on-chain'}
               </p>
-              <p className="text-sm mt-1">
-                {preview ? `${fmt(preview.amount)} ${preview.token_symbol} on ${getNetwork(network)?.label} → ${shortAddress(preview.to)}` : ''}
-              </p>
-              <a href={result.explorer_url} target="_blank" rel="noreferrer" className="text-xs underline inline-flex items-center gap-1 mt-2">
-                View on explorer <ExternalLink className="h-3 w-3" />
-              </a>
+              <p className="text-sm mt-1">{preview ? `${fmt(preview.amount)} ${preview.token_symbol} on ${getNetwork(network)?.label} → ${toLabel || shortAddress(preview.to)}` : ''}</p>
+              <a href={result.explorer_url} target="_blank" rel="noreferrer" className="text-xs underline inline-flex items-center gap-1 mt-2">View on explorer <ExternalLink className="h-3 w-3" /></a>
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => { setResult(null); setPreview(null); setAmount(''); setUseMax(false); }}>Send another</Button>
@@ -259,18 +263,14 @@ export function SendDialog({ wallet, onClose, myWallets, balances, gasWallet, va
                 <Label>Network</Label>
                 <Select value={network} onValueChange={(v) => { setNetwork(v); setToken('native'); invalidate(); }}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {networks.map((n) => <SelectItem key={n.key} value={n.key}>{n.label}</SelectItem>)}
-                  </SelectContent>
+                  <SelectContent>{networks.map((n) => <SelectItem key={n.key} value={n.key}>{n.label}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
               <div className="grid gap-2">
                 <Label>Token</Label>
                 <Select value={token} onValueChange={(v) => { setToken(v); invalidate(); }}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {tokenOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
-                  </SelectContent>
+                  <SelectContent>{tokenOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
             </div>
@@ -278,44 +278,68 @@ export function SendDialog({ wallet, onClose, myWallets, balances, gasWallet, va
             <div className="grid gap-2">
               <Label>Amount</Label>
               <div className="flex gap-2">
-                <Input
-                  type="number"
-                  step="any"
-                  min={0}
-                  value={useMax ? '' : amount}
-                  placeholder={useMax ? 'max (computed at preview)' : '0.00'}
-                  disabled={useMax}
-                  onChange={(e) => { setAmount(e.target.value); invalidate(); }}
-                />
-                <Button type="button" variant={useMax ? 'default' : 'outline'} onClick={() => { setUseMax((v) => !v); invalidate(); }}>
-                  Max
-                </Button>
+                <Input type="number" step="any" min={0} value={useMax ? '' : amount} placeholder={useMax ? 'max (computed at preview)' : '0.00'} disabled={useMax} onChange={(e) => { setAmount(e.target.value); invalidate(); }} />
+                <Button type="button" variant={useMax ? 'default' : 'outline'} onClick={() => { setUseMax((v) => !v); invalidate(); }}>Max</Button>
               </div>
             </div>
 
             <div className="grid gap-2">
               <Label>Destination</Label>
-              <Input
-                value={to}
-                onChange={(e) => { setTo(e.target.value); invalidate(); }}
-                placeholder={wallet.chain_family === 'solana' ? 'Solana address' : '0x…'}
-                className="font-mono"
-                autoComplete="off"
-                spellCheck={false}
-              />
-              {destinations.length > 0 && (
-                <Select value="" onValueChange={(id) => { const w = destinations.find((x) => x.id === id); if (w) { setTo(w.address); invalidate(); } }}>
-                  <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="…or pick one of my wallets" /></SelectTrigger>
-                  <SelectContent className="max-h-64">
-                    {destinations.map((w) => (
-                      <SelectItem key={w.id} value={w.id}>{w.name || shortAddress(w.address)} · {shortAddress(w.address)}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+              <div className="flex flex-wrap gap-1">
+                {destTab('book', 'Address book', <BookUser className="h-3.5 w-3.5" />)}
+                {destTab('mine', 'My wallets', <WalletIcon className="h-3.5 w-3.5" />)}
+                {destTab('manual', 'Paste address', <ShieldAlert className="h-3.5 w-3.5" />)}
+              </div>
+
+              {destMode === 'book' && (
+                familyBook.length === 0 ? (
+                  <p className="text-xs text-muted-foreground rounded-md border p-2">No destinations yet. Add your Binance / Coinbase address in Wallets → Address book.</p>
+                ) : (
+                  <div className="rounded-lg border divide-y">
+                    {familyBook.map((b) => {
+                      const ok = b.networks.includes(network);
+                      const selected = to === b.address;
+                      return (
+                        <button
+                          key={b.id}
+                          type="button"
+                          onClick={() => { setTo(b.address); setToLabel(b.name); invalidate(); }}
+                          className={`w-full text-left px-3 py-2 text-sm flex items-center justify-between gap-2 hover:bg-muted ${selected ? 'bg-primary/10 font-medium' : ''}`}
+                        >
+                          <span className="min-w-0">
+                            <span className="flex items-center gap-1">{b.name}{b.is_default && <Star className="h-3 w-3 text-yellow-500 fill-yellow-500" />}</span>
+                            <span className="text-[11px] text-muted-foreground font-mono">{shortAddress(b.address)} · {b.networks.map((n) => getNetwork(n)?.label || n).join(', ')}</span>
+                          </span>
+                          {!ok && <Badge variant="outline" className="text-[10px] text-red-700 border-red-300 shrink-0">not on {getNetwork(network)?.label}</Badge>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )
+              )}
+
+              {destMode === 'mine' && (
+                <WalletPicker
+                  wallets={destinations}
+                  value={destinations.find((w) => w.address === to)?.id || ''}
+                  onChange={(id) => { const w = destinations.find((x) => x.id === id); if (w) { setTo(w.address); setToLabel(w.name || shortAddress(w.address)); invalidate(); } }}
+                  maxHeight="max-h-44"
+                />
+              )}
+
+              {destMode === 'manual' && (
+                <Input value={to} onChange={(e) => { setTo(e.target.value); setToLabel(''); invalidate(); }} placeholder={wallet.chain_family === 'solana' ? 'Solana address' : '0x…'} className="font-mono" autoComplete="off" spellCheck={false} />
+              )}
+
+              {to && (
+                <p className="text-xs text-muted-foreground font-mono break-all">→ {toLabel ? `${toLabel} · ` : ''}{to}</p>
+              )}
+              {chosenBook && !bookAcceptsNetwork && (
+                <p className="text-xs text-red-700 flex items-center gap-1"><AlertTriangle className="h-3 w-3" /> “{chosenBook.name}” does not accept deposits on {getNetwork(network)?.label}. Pick one of: {chosenBook.networks.map((n) => getNetwork(n)?.label || n).join(', ')}.</p>
               )}
               <p className="text-[11px] text-muted-foreground flex items-start gap-1">
                 <ShieldAlert className="h-3 w-3 mt-0.5 shrink-0" />
-                Type or paste the address from the real source. Never copy it from a transaction-history entry — fake transfers use look-alike addresses.
+                Never copy an address from a transaction-history entry — fake transfers use look-alike addresses.
               </p>
             </div>
 
@@ -323,24 +347,20 @@ export function SendDialog({ wallet, onClose, myWallets, balances, gasWallet, va
               <div className={`rounded-lg border p-3 text-sm space-y-1 ${preview.needs_gas || preview.insufficient_token ? 'border-amber-300 bg-amber-50 dark:bg-amber-950/30' : 'bg-muted/40'}`}>
                 <div className="flex justify-between"><span className="text-muted-foreground">Sending</span><span className="font-semibold">{fmt(preview.amount, 8)} {preview.token_symbol}</span></div>
                 <div className="flex justify-between"><span className="text-muted-foreground">On</span><span>{getNetwork(preview.network)?.label}</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">To</span><span className="font-mono text-xs">{shortAddress(preview.to)}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">To</span><span className="font-mono text-xs">{toLabel ? `${toLabel} · ` : ''}{shortAddress(preview.to)}</span></div>
                 <div className="flex justify-between"><span className="text-muted-foreground">Network fee</span><span>≈ {fmt(preview.fee_native, 8)} {preview.native_symbol}</span></div>
                 <div className="flex justify-between"><span className="text-muted-foreground">{preview.native_symbol} available for fees</span><span>{fmt(preview.native_balance, 8)}</span></div>
-                {preview.warnings.map((w) => (
-                  <p key={w} className="text-xs text-amber-800 flex items-center gap-1"><AlertTriangle className="h-3 w-3" /> {w}</p>
-                ))}
+                {preview.warnings.map((w) => <p key={w} className="text-xs text-amber-800 flex items-center gap-1"><AlertTriangle className="h-3 w-3" /> {w}</p>)}
                 {preview.needs_gas && (
                   <div className="pt-2 space-y-2">
-                    <p className="text-xs font-semibold text-amber-900 flex items-center gap-1">
-                      <Fuel className="h-3.5 w-3.5" /> Not enough {preview.native_symbol} for the fee (short by {fmt(preview.gas_shortfall, 8)}).
-                    </p>
+                    <p className="text-xs font-semibold text-amber-900 flex items-center gap-1"><Fuel className="h-3.5 w-3.5" /> Not enough {preview.native_symbol} for the fee (short by {fmt(preview.gas_shortfall, 8)}).</p>
                     {gasWallet ? (
                       <Button type="button" size="sm" variant="secondary" className="gap-2" onClick={topUpGas} disabled={toppingUp || !password}>
                         {toppingUp ? <Loader2 className="h-4 w-4 animate-spin" /> : <Fuel className="h-4 w-4" />}
                         Top up {fmt(preview.suggested_topup, 6)} {preview.native_symbol} from {gasWallet.name || shortAddress(gasWallet.address)}
                       </Button>
                     ) : (
-                      <p className="text-xs text-muted-foreground">Set a gas-tank wallet (button “Gas tank” on the Wallets page) to top up with one click, or send some {preview.native_symbol} to this wallet manually.</p>
+                      <p className="text-xs text-muted-foreground">Set a gas-tank wallet in Wallets → Settings to top up with one click, or send some {preview.native_symbol} to this wallet manually.</p>
                     )}
                     {gasWallet && !password && <p className="text-[11px] text-muted-foreground">Enter the vault password below first.</p>}
                   </div>
@@ -373,9 +393,7 @@ export function SendDialog({ wallet, onClose, myWallets, balances, gasWallet, va
               )}
             </DialogFooter>
             {preview && !preview.needs_gas && !preview.insufficient_token && (
-              <Badge variant="outline" className="justify-center text-[11px] text-muted-foreground">
-                Transfers are irreversible. Double-check the destination.
-              </Badge>
+              <Badge variant="outline" className="justify-center text-[11px] text-muted-foreground">Transfers are irreversible. Double-check the destination.</Badge>
             )}
           </div>
         )}

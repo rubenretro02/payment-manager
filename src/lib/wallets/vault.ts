@@ -72,7 +72,22 @@ const state = {
   tokens: new Map<string, number>(),
   failures: 0,
   lockedUntil: 0,
+  // Opt-in (Settings → automatic transfers): keep the seeds in memory after
+  // the session expires so unattended sweeps can sign. API calls still need
+  // a fresh token; an explicit Lock always wipes everything.
+  keepUnlocked: false,
 };
+
+export function setKeepUnlocked(value: boolean): void {
+  state.keepUnlocked = value;
+}
+
+/** Seeds available to background jobs (deposit watcher → auto-transfers), or null when locked. */
+export function backgroundSession(): Session | null {
+  pruneExpired();
+  if (state.seeds.length === 0) return null;
+  return { seeds: state.seeds, mnemonic: state.seeds[0].mnemonic };
+}
 
 // ---------------------------------------------------------------------------
 // Crypto helpers
@@ -193,7 +208,7 @@ function pruneExpired() {
     if (exp <= now) state.tokens.delete(hash);
   }
   if (state.tokens.size === 0 || state.expiresAt <= now) {
-    state.seeds = [];
+    if (!state.keepUnlocked) state.seeds = [];
     state.expiresAt = 0;
     state.tokens.clear();
   }

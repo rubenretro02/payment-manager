@@ -18,6 +18,8 @@ export interface WalletRow {
   network: string;
   name: string | null;
   token_scan_at: string | null;
+  auto_transfer: boolean;
+  auto_transfer_book_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -111,6 +113,8 @@ export async function listWallets(): Promise<Wallet[]> {
       seed_name: seedId !== null ? names.get(seedId) || `Seed ${seedId}` : null,
       derivation_path: w.derivation_path ?? null,
       token_scan_at: w.token_scan_at ?? null,
+      auto_transfer: !!w.auto_transfer,
+      auto_transfer_book_id: w.auto_transfer_book_id ?? null,
       assigned_accounts: assigned.map((a) => {
         const u = Array.isArray(a.user) ? a.user[0] : a.user;
         return { id: a.id, full_name: a.full_name, user_name: u?.telegram_first_name ?? null };
@@ -263,6 +267,21 @@ export async function createWatchWallet(input: { address: string; network: Netwo
     if (existing) return existing;
   }
   throw dbError(error || { message: 'Failed to add wallet' });
+}
+
+/** Per-wallet automation: sweep incoming stablecoins to an address-book entry. */
+export async function updateWalletAuto(id: string, patch: { auto_transfer?: boolean; auto_transfer_book_id?: string | null }): Promise<void> {
+  const supabase = createAdminClient();
+  const update: Record<string, unknown> = {};
+  if (patch.auto_transfer !== undefined) update.auto_transfer = patch.auto_transfer;
+  if (patch.auto_transfer_book_id !== undefined) update.auto_transfer_book_id = patch.auto_transfer_book_id || null;
+  if (Object.keys(update).length === 0) return;
+  const { error } = await supabase.from('wallets').update(update).eq('id', id);
+  if (error) {
+    throw /auto_transfer/i.test(error.message)
+      ? new Error('Automation columns are missing. Run migration-add-wallet-book-auto.sql in Supabase.')
+      : dbError(error);
+  }
 }
 
 export async function renameWallet(id: string, name: string): Promise<void> {

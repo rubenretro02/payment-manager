@@ -3,6 +3,8 @@
 // external cron needed. Started once from src/instrumentation.ts.
 
 import { runDepositScan } from './deposits';
+import { getAutoSettings } from './autotransfer';
+import { setKeepUnlocked } from './vault';
 
 const INTERVAL_MS = Number(process.env.DEPOSIT_SCAN_INTERVAL_MS) || 3 * 60_000;
 const FIRST_RUN_DELAY_MS = 20_000;
@@ -34,5 +36,9 @@ export function startDepositWatcher(): void {
 
   globalThis.__depositWatcher = setInterval(tick, INTERVAL_MS);
   setTimeout(tick, FIRST_RUN_DELAY_MS);
+  // Restore the "keep unlocked for automatic transfers" preference.
+  getAutoSettings()
+    .then((s) => setKeepUnlocked(s.keep_unlocked))
+    .catch(() => undefined);
   console.log(`[deposits] watcher started (every ${Math.round(INTERVAL_MS / 1000)}s)`);
 }

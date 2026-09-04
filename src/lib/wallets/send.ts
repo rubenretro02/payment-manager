@@ -47,7 +47,7 @@ export interface SendRequest {
   /** 'native' or a token contract / mint */
   token: string;
   amount: number | 'max';
-  purpose?: 'send' | 'gas';
+  purpose?: 'send' | 'gas' | 'auto';
   createdBy?: string | null;
 }
 
@@ -417,7 +417,7 @@ export interface TransferRow {
   tx_hash: string | null;
   status: 'sent' | 'confirmed' | 'failed';
   error: string | null;
-  purpose: 'send' | 'gas';
+  purpose: 'send' | 'gas' | 'auto';
   created_at: string;
   confirmed_at: string | null;
   wallet?: { name: string | null; address: string } | { name: string | null; address: string }[] | null;

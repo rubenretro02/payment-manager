@@ -21,6 +21,8 @@ import { createAdminClient } from '@/lib/supabase/server';
 import { sendUserNotification } from '@/lib/notifications';
 import { EVM_CHAINS, SOLANA_KNOWN_MINTS, evmTransport, solanaRpcUrl, type EvmChainDef } from './chains';
 import { STABLE_SYMBOLS, familyOf, getNetwork, type NetworkKey } from './networks';
+import { enqueueFromDeposits, runAutoTransfers } from './autotransfer';
+import { backgroundSession } from './vault';
 
 const TRANSFER_EVENT = parseAbiItem('event Transfer(address indexed from, address indexed to, uint256 value)');
 const MAX_RANGE = BigInt(10_000);        // blocks per eth_getLogs (public RPC limit)
@@ -64,6 +66,7 @@ export interface ScanSummary {
   watched: { evm: number; solana: number };
   started_at: string;
   finished_at: string;
+  auto?: { queued: number; done: number; skipped: number; failed: number; waiting: number };
 }
 
 let running = false;
@@ -402,13 +405,17 @@ export async function runDepositScan(): Promise<ScanSummary> {
     const rows = [...evmRows, ...solRows];
 
     let inserted = 0;
+    let insertedRows: DepositRow[] = [];
     if (rows.length > 0) {
       const { data, error } = await supabase
         .from('wallet_deposits')
         .upsert(rows, { onConflict: 'network,tx_hash,log_index', ignoreDuplicates: true })
-        .select('id');
+        .select('*');
       if (error) errors.push(`store: ${migrationHint(error.message)}`);
-      else inserted = data?.length || 0;
+      else {
+        insertedRows = (data || []) as DepositRow[];
+        inserted = insertedRows.length;
+      }
     }
 
     let matched = 0;
@@ -420,6 +427,22 @@ export async function runDepositScan(): Promise<ScanSummary> {
       errors.push(`match: ${e instanceof Error ? e.message : 'failed'}`);
     }
 
+    // Automatic transfers: queue sweeps for the new deposits, then process the
+    // queue if the seeds are available (unlocked, or "keep unlocked" is on).
+    const auto = { queued: 0, done: 0, skipped: 0, failed: 0, waiting: 0 };
+    try {
+      if (insertedRows.length > 0) auto.queued = await enqueueFromDeposits(insertedRows.map((d) => ({ ...d, usd_value: d.usd_value === null ? null : Number(d.usd_value) })));
+      const r = await runAutoTransfers(backgroundSession());
+      auto.done = r.done;
+      auto.skipped = r.skipped;
+      auto.failed = r.failed;
+      auto.waiting = r.waiting;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'failed';
+      // Missing automation tables just means the feature isn't set up yet.
+      if (!/migration-add-wallet-book-auto/.test(msg)) errors.push(`auto-transfer: ${msg}`);
+    }
+
     const summary: ScanSummary = {
       new_deposits: inserted,
       matched,
@@ -427,6 +450,7 @@ export async function runDepositScan(): Promise<ScanSummary> {
       watched: { evm: evmAddrs.length, solana: watched.solana.length },
       started_at,
       finished_at: new Date().toISOString(),
+      auto,
     };
     lastRun = summary;
     return summary;
