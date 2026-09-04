@@ -11,7 +11,7 @@ import { EVM_CHAINS, SOLANA_COINGECKO_ID } from './chains';
 import { STABLE_SYMBOLS, familyOf, getNetwork, type NetworkKey } from './networks';
 import { fetchBalances, getPrices } from './balances';
 import { listBook, type BookEntry } from './book';
-import { getGasSettings, previewSend, executeSend } from './send';
+import { getGasSettings, previewSend, executeSend, gaslessCapable, previewGasless, executeGasless } from './send';
 import { getWallet, listWalletTokens, type WalletRow } from './store';
 import { setKeepUnlocked, type Session } from './vault';
 
@@ -309,23 +309,58 @@ export async function runAutoTransfers(
           continue;
         }
         const nativePrice = nativePriceFor(raw.network, prices);
-        const feeUsd = nativePrice !== null ? preview.fee_native * nativePrice : null;
-        if (amountUsd !== null && feeUsd !== null && feeUsd > Math.max(0.25, (amountUsd * settings.auto_max_fee_pct) / 100)) {
-          await skip(`fee ≈ $${feeUsd.toFixed(2)} exceeds ${settings.auto_max_fee_pct}% of $${amountUsd.toFixed(2)}`);
+        const feeTooHigh = (feeNative: number) => {
+          const feeUsd = nativePrice !== null ? feeNative * nativePrice : null;
+          return amountUsd !== null && feeUsd !== null && feeUsd > Math.max(0.25, (amountUsd * settings.auto_max_fee_pct) / 100) ? feeUsd : null;
+        };
+
+        // Preferred path for native USDC: the wallet signs, the gas tank pays
+        // the exact fee. No ETH in the wallet, no top-up, no dust.
+        const gasWalletId = family === 'solana' ? gas.gas_wallet_solana : gas.gas_wallet_evm;
+        if (family === 'evm' && gasWalletId && gasWalletId !== wallet.id && (await gaslessCapable(raw.network as NetworkKey, raw.token_contract))) {
+          const gp = await previewGasless(session, req, gasWalletId);
+          if (gp.supported) {
+            const tooHigh = feeTooHigh(gp.fee_native);
+            if (tooHigh !== null) { await skip(`fee ≈ $${tooHigh.toFixed(2)} exceeds ${settings.auto_max_fee_pct}% of $${amountUsd?.toFixed(2)}`); continue; }
+            if (!gp.relayer_ok) {
+              await skip(`gas-tank wallet has ${gp.relayer_native_balance.toFixed(6)} ${gp.native_symbol} on ${getNetwork(raw.network as NetworkKey)?.label || raw.network} — the fee needs about ${gp.fee_native.toFixed(6)}. Send it some ${gp.native_symbol} there.`);
+              continue;
+            }
+            const sent = await executeGasless(session, req, gasWalletId);
+            await setJob(raw.id, { status: 'done', tx_hash: sent.hash, amount: gp.amount, book_id: target.id, reason: `gasless — fee paid by the gas tank` });
+            result.done++;
+            console.log(`[auto-transfer] gasless ${gp.amount} ${gp.token_symbol} on ${raw.network} from ${wallet.name || wallet.address} → ${target.name} (${sent.hash})`);
+            continue;
+          }
+          // not supported after all → fall through to the classic path
+        }
+
+        const tooHigh = feeTooHigh(preview.fee_native);
+        if (tooHigh !== null) {
+          await skip(`fee ≈ $${tooHigh.toFixed(2)} exceeds ${settings.auto_max_fee_pct}% of $${amountUsd?.toFixed(2)}`);
           continue;
         }
 
         if (preview.needs_gas) {
-          const gasWalletId = family === 'solana' ? gas.gas_wallet_solana : gas.gas_wallet_evm;
-          if (!gasWalletId || gasWalletId === wallet.id) { await skip(`no ${preview.native_symbol} for the fee and no gas-tank wallet set`); continue; }
-          const topup = await executeSend(session, {
+          if (!gasWalletId || gasWalletId === wallet.id) { await skip(`no ${preview.native_symbol} for the fee and no gas-tank wallet set (Wallets → Settings)`); continue; }
+          const gasReq = {
             walletId: gasWalletId,
             network: raw.network as NetworkKey,
             to: wallet.address,
             token: 'native',
             amount: preview.suggested_topup,
-            purpose: 'gas',
-          });
+            purpose: 'gas' as const,
+          };
+          // Can the gas tank actually pay on THIS network? Say so plainly if not.
+          const gasWallet = await getWallet(gasWalletId);
+          const gasPreview = await previewSend(session, gasReq);
+          if (gasPreview.insufficient_token || gasPreview.needs_gas) {
+            await skip(
+              `gas-tank wallet "${gasWallet?.name || gasWalletId.slice(0, 8)}" has ${gasPreview.native_balance.toFixed(6)} ${gasPreview.native_symbol} on ${getNetwork(raw.network as NetworkKey)?.label || raw.network} — needs about ${(preview.suggested_topup + gasPreview.fee_native).toFixed(6)}. Send it some ${gasPreview.native_symbol} on that network.`
+            );
+            continue;
+          }
+          const topup = await executeSend(session, gasReq);
           if (topup.status !== 'confirmed') {
             await setJob(raw.id, { status: 'gas', reason: `gas top-up sent (${topup.hash.slice(0, 10)}…), waiting for confirmation` });
             continue; // next run sweeps

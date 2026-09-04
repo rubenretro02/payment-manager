@@ -214,7 +214,12 @@ export default function WalletSettingsPage() {
     const w = wallets.find((x) => x.id === id);
     if (!w) return null;
     const native = (balanceFor(w.id)?.balances || []).filter((b) => b.native && b.amount > 0);
-    return native.length === 0 ? 'no fuel yet — send some native coin to it' : native.map((b) => `${fmtAmount(b.amount)} ${b.symbol} (${getNetwork(b.network)?.label})`).join(' · ');
+    if (native.length === 0) {
+      return w.chain_family === 'solana'
+        ? 'no SOL yet — send ~0.05 SOL to this address'
+        : 'no fuel yet — send a few dollars of ETH on Base (and on any other network you sweep from) to this address';
+    }
+    return native.map((b) => `${fmtAmount(b.amount)} ${b.symbol} on ${getNetwork(b.network)?.label}`).join(' · ');
   };
 
   return (

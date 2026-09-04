@@ -11,8 +11,12 @@ import {
   parseUnits,
   isAddress,
   getAddress,
+  parseSignature,
+  toHex,
   type Address,
+  type Hex,
 } from 'viem';
+import { randomBytes } from 'crypto';
 import {
   Connection,
   Keypair,
@@ -375,6 +379,204 @@ export async function executeSend(session: Session, req: SendRequest): Promise<S
     status: outcome.status,
     explorer_url: `${TX_EXPLORER[req.network]}${outcome.hash}`,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Gasless USDC (EIP-3009 transferWithAuthorization, relayed by the gas tank)
+// ---------------------------------------------------------------------------
+// The holder signs an EIP-712 authorization off-chain (no gas); the gas-tank
+// wallet submits it and pays the exact network fee. One transaction, the
+// holder never needs ETH, nothing is left behind. Only Circle's native USDC
+// implements it (USDT and bridged USDC.e/USDbC don't) — those use the
+// top-up path.
+
+const EIP3009_ABI = [
+  { name: 'name', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'string' }] },
+  { name: 'version', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'string' }] },
+  {
+    name: 'transferWithAuthorization',
+    type: 'function',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'from', type: 'address' },
+      { name: 'to', type: 'address' },
+      { name: 'value', type: 'uint256' },
+      { name: 'validAfter', type: 'uint256' },
+      { name: 'validBefore', type: 'uint256' },
+      { name: 'nonce', type: 'bytes32' },
+      { name: 'v', type: 'uint8' },
+      { name: 'r', type: 'bytes32' },
+      { name: 's', type: 'bytes32' },
+    ],
+    outputs: [],
+  },
+] as const;
+
+const EIP3009_TYPES = {
+  TransferWithAuthorization: [
+    { name: 'from', type: 'address' },
+    { name: 'to', type: 'address' },
+    { name: 'value', type: 'uint256' },
+    { name: 'validAfter', type: 'uint256' },
+    { name: 'validBefore', type: 'uint256' },
+    { name: 'nonce', type: 'bytes32' },
+  ],
+} as const;
+
+export interface GaslessPreview {
+  supported: boolean;
+  reason?: string;
+  network: NetworkKey;
+  from: string;
+  to: string;
+  relayer: string;
+  token_symbol: string;
+  amount: number;
+  token_balance: number;
+  fee_native: number;
+  native_symbol: string;
+  relayer_native_balance: number;
+  relayer_ok: boolean;
+}
+
+/** Is this token Circle native USDC with EIP-3009 (checked on-chain)? */
+export async function gaslessCapable(network: NetworkKey, contract: string | null): Promise<boolean> {
+  const def = evmChainDef(network);
+  if (!def || !contract) return false;
+  const token = def.tokens.find((t) => t.address.toLowerCase() === contract.toLowerCase());
+  if (!token?.eip3009) return false;
+  try {
+    const client = createPublicClient({ chain: def.chain, transport: evmTransport(def) });
+    const version = await client.readContract({ address: token.address, abi: EIP3009_ABI, functionName: 'version' });
+    return /^2/.test(String(version));
+  } catch {
+    return false;
+  }
+}
+
+async function gaslessContext(session: Session, req: SendRequest, relayerWalletId: string) {
+  const { wallet, family } = await resolveWallet(req);
+  if (family !== 'evm') throw new SendError('Gasless transfers are EVM-only', 400);
+  const relayer = await getWallet(relayerWalletId);
+  if (!relayer || relayer.source !== 'seed' || !relayer.derivation_path || relayer.chain_family !== 'evm') {
+    throw new SendError('Gas-tank wallet is not a seed EVM wallet', 400);
+  }
+  if (relayer.id === wallet.id) throw new SendError('The gas-tank wallet cannot relay for itself', 400);
+  const def = evmChainDef(req.network)!;
+  const token = def.tokens.find((t) => t.address.toLowerCase() === req.token.toLowerCase());
+  if (!token?.eip3009) throw new SendError(`${token?.symbol || 'This token'} does not support gasless transfers on ${getNetwork(req.network)?.label}`, 400);
+
+  const transport = evmTransport(def);
+  const publicClient = createPublicClient({ chain: def.chain, transport });
+  const holder = deriveEvmAccountAtPath(seedMnemonic(session, wallet.seed_id).mnemonic, wallet.derivation_path!);
+  const relayerAccount = deriveEvmAccountAtPath(seedMnemonic(session, relayer.seed_id).mnemonic, relayer.derivation_path!);
+  const relayerClient = createWalletClient({ account: relayerAccount, chain: def.chain, transport });
+  const to = getAddress(req.to);
+
+  const [name, version, balance] = await Promise.all([
+    publicClient.readContract({ address: token.address, abi: EIP3009_ABI, functionName: 'name' }),
+    publicClient.readContract({ address: token.address, abi: EIP3009_ABI, functionName: 'version' }),
+    publicClient.readContract({ address: token.address, abi: erc20Abi, functionName: 'balanceOf', args: [holder.address] }) as Promise<bigint>,
+  ]);
+  const amountRaw = req.amount === 'max' ? balance : parseUnits(String(req.amount), token.decimals);
+
+  // Sign the authorization (free, off-chain). Random nonce, valid for 1 hour.
+  const nonce = toHex(randomBytes(32)) as Hex;
+  const validAfter = ZERO;
+  const validBefore = BigInt(Math.floor(Date.now() / 1000) + 3600);
+  const signature = await holder.signTypedData({
+    domain: { name: String(name), version: String(version), chainId: def.chain.id, verifyingContract: token.address },
+    types: EIP3009_TYPES,
+    primaryType: 'TransferWithAuthorization',
+    message: { from: holder.address, to, value: amountRaw, validAfter, validBefore, nonce },
+  });
+  const sig = parseSignature(signature);
+  const v = Number(sig.v ?? BigInt(27 + (sig.yParity ?? 0)));
+  const args = [holder.address, to, amountRaw, validAfter, validBefore, nonce, v, sig.r, sig.s] as const;
+
+  return { wallet, relayer, def, token, publicClient, relayerClient, relayerAccount, holder, to, amountRaw, balance, args };
+}
+
+export async function previewGasless(session: Session, req: SendRequest, relayerWalletId: string): Promise<GaslessPreview> {
+  const ctx = await gaslessContext(session, req, relayerWalletId);
+  const { def, token, publicClient, relayerAccount, holder, to, amountRaw, balance, args } = ctx;
+  let feePerGas: bigint;
+  try {
+    const f = await publicClient.estimateFeesPerGas();
+    feePerGas = f.maxFeePerGas ?? f.gasPrice ?? ZERO;
+  } catch {
+    feePerGas = await publicClient.getGasPrice();
+  }
+  let gas: bigint;
+  let reason: string | undefined;
+  try {
+    gas = await publicClient.estimateContractGas({ address: token.address, abi: EIP3009_ABI, functionName: 'transferWithAuthorization', args, account: relayerAccount.address });
+  } catch (e) {
+    gas = BigInt(95_000);
+    if (amountRaw > balance) reason = `Not enough ${token.symbol}: balance is ${num(balance, token.decimals)}`;
+    else if (amountRaw <= ZERO) reason = 'Amount is zero';
+    else reason = `Authorization rejected by the token contract: ${e instanceof Error ? e.message.split('\n')[0] : 'unknown'}`;
+  }
+  const cost = (gas * feePerGas * BigInt(13)) / BigInt(10);
+  const relayerBalance = await publicClient.getBalance({ address: relayerAccount.address });
+  return {
+    supported: !reason,
+    reason,
+    network: req.network,
+    from: holder.address,
+    to,
+    relayer: relayerAccount.address,
+    token_symbol: token.symbol,
+    amount: num(amountRaw, token.decimals),
+    token_balance: num(balance, token.decimals),
+    fee_native: num(cost, 18),
+    native_symbol: def.chain.nativeCurrency.symbol,
+    relayer_native_balance: num(relayerBalance, 18),
+    relayer_ok: relayerBalance >= cost,
+  };
+}
+
+export async function executeGasless(session: Session, req: SendRequest, relayerWalletId: string): Promise<SendResult> {
+  const preview = await previewGasless(session, req, relayerWalletId);
+  if (!preview.supported) throw new SendError(preview.reason || 'Gasless transfer not possible', 400);
+  if (!preview.relayer_ok) {
+    throw new SendError(`Gas-tank wallet has ${preview.relayer_native_balance.toFixed(6)} ${preview.native_symbol} on ${getNetwork(req.network)?.label}; the fee needs about ${preview.fee_native.toFixed(6)}. Send it some ${preview.native_symbol} there.`, 400);
+  }
+  // Fresh context = fresh nonce/signature for the real submission.
+  const ctx = await gaslessContext(session, req, relayerWalletId);
+  const supabase = createAdminClient();
+  const base = {
+    wallet_id: ctx.wallet.id,
+    network: req.network,
+    from_address: ctx.holder.address,
+    to_address: ctx.to,
+    token_symbol: ctx.token.symbol,
+    token_contract: ctx.token.address,
+    amount: num(ctx.amountRaw, ctx.token.decimals),
+    purpose: req.purpose || 'send',
+    created_by: req.createdBy || null,
+  };
+  let hash: Hex;
+  try {
+    hash = await ctx.relayerClient.writeContract({ address: ctx.token.address, abi: EIP3009_ABI, functionName: 'transferWithAuthorization', args: ctx.args });
+  } catch (error) {
+    const message = error instanceof Error ? error.message.split('\n')[0] : 'send failed';
+    await supabase.from('wallet_transfers').insert({ ...base, status: 'failed', error: `gasless via ${ctx.relayer.name || ctx.relayerAccount.address}: ${message}` });
+    throw new SendError(`Gasless send failed: ${message}`, 500);
+  }
+  let status: SendResult['status'] = 'sent';
+  try {
+    const receipt = await ctx.publicClient.waitForTransactionReceipt({ hash, timeout: RECEIPT_TIMEOUT_MS });
+    status = receipt.status === 'success' ? 'confirmed' : 'failed';
+  } catch {
+    /* still pending */
+  }
+  const { data } = await supabase
+    .from('wallet_transfers')
+    .insert({ ...base, tx_hash: hash, status, confirmed_at: status === 'confirmed' ? new Date().toISOString() : null, error: `fee paid by gas tank ${ctx.relayer.name || ctx.relayerAccount.address}` })
+    .select('id')
+    .single();
+  return { transfer_id: (data?.id as string | undefined) || null, hash, status, explorer_url: `${TX_EXPLORER[req.network]}${hash}` };
 }
 
 // ---------------------------------------------------------------------------

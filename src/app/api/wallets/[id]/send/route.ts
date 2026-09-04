@@ -1,12 +1,27 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { VaultError, authorize, verifyVaultPassword } from '@/lib/wallets/vault';
-import { SendError, executeSend, previewSend, type SendRequest } from '@/lib/wallets/send';
+import {
+  SendError,
+  executeGasless,
+  executeSend,
+  gaslessCapable,
+  getGasSettings,
+  previewGasless,
+  previewSend,
+  type SendRequest,
+} from '@/lib/wallets/send';
 import { isNetworkKey } from '@/lib/wallets/networks';
 
 /**
  * POST /api/wallets/[id]/send
- *   { action: 'preview', network, to, token, amount }              → fee / gas / balance check
- *   { action: 'send', network, to, token, amount, password, ... }  → signs and broadcasts
+ *   { action: 'preview', network, to, token, amount }
+ *       → fee / gas / balance check (+ gasless option when the wallet has no
+ *         ETH, the token is native USDC and a gas-tank wallet is set)
+ *   { action: 'send', network, to, token, amount, password, ... }
+ *       → signs and broadcasts from this wallet
+ *   { action: 'send-gasless', network, to, token, amount, password, ... }
+ *       → this wallet signs an EIP-3009 authorization, the gas tank submits
+ *         and pays the fee
  * `token` is 'native' or a contract/mint; `amount` is a number or 'max'.
  * Sending requires the vault token AND the vault password again.
  */
@@ -45,13 +60,38 @@ export async function POST(
       createdBy: body.admin_id || null,
     };
 
+    const relayerFor = async (): Promise<string | null> => {
+      const gas = await getGasSettings();
+      const rid = req.network === 'solana' ? gas.gas_wallet_solana : gas.gas_wallet_evm;
+      return rid && rid !== id ? rid : null;
+    };
+
     if (body.action === 'preview') {
-      return NextResponse.json({ success: true, data: await previewSend(session, req) });
+      const preview = await previewSend(session, req);
+      let gasless: Awaited<ReturnType<typeof previewGasless>> | null = null;
+      if (req.network !== 'solana' && (await gaslessCapable(req.network, req.token))) {
+        const rid = await relayerFor();
+        if (rid) {
+          try {
+            gasless = await previewGasless(session, req, rid);
+          } catch {
+            gasless = null;
+          }
+        }
+      }
+      return NextResponse.json({ success: true, data: { ...preview, gasless } });
     }
     if (body.action === 'send') {
       if (!body.password) return bad('Vault password is required to send');
       await verifyVaultPassword(body.password);
       return NextResponse.json({ success: true, data: await executeSend(session, req) });
+    }
+    if (body.action === 'send-gasless') {
+      if (!body.password) return bad('Vault password is required to send');
+      await verifyVaultPassword(body.password);
+      const rid = await relayerFor();
+      if (!rid) return bad('Set a gas-tank wallet first (Wallets → Settings)');
+      return NextResponse.json({ success: true, data: await executeGasless(session, req, rid) });
     }
     return bad('Unknown action');
   } catch (error) {

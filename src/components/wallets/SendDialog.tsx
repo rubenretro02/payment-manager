@@ -61,6 +61,16 @@ interface SendPreview {
   suggested_topup: number;
   insufficient_token: boolean;
   warnings: string[];
+  gasless?: {
+    supported: boolean;
+    reason?: string;
+    relayer: string;
+    fee_native: number;
+    native_symbol: string;
+    relayer_native_balance: number;
+    relayer_ok: boolean;
+    amount: number;
+  } | null;
 }
 interface SendResult {
   hash: string;
@@ -169,12 +179,16 @@ export function SendDialog({ wallet, onClose, myWallets, book, balances, gasWall
     }
   };
 
-  const doSend = async () => {
+  const doSend = async (gasless = false) => {
     if (!preview) return;
     setSending(true);
     setError('');
     try {
-      const res = await vault.authFetch(`/api/wallets/${wallet.id}/send`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'send', ...body(), amount: preview.amount, password }) });
+      const res = await vault.authFetch(`/api/wallets/${wallet.id}/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: gasless ? 'send-gasless' : 'send', ...body(), amount: gasless ? preview.gasless?.amount ?? preview.amount : preview.amount, password }),
+      });
       const json = await res.json();
       if (!json.success) {
         setError(json.error || 'Send failed');
@@ -351,9 +365,19 @@ export function SendDialog({ wallet, onClose, myWallets, book, balances, gasWall
                 <div className="flex justify-between"><span className="text-muted-foreground">Network fee</span><span>≈ {fmt(preview.fee_native, 8)} {preview.native_symbol}</span></div>
                 <div className="flex justify-between"><span className="text-muted-foreground">{preview.native_symbol} available for fees</span><span>{fmt(preview.native_balance, 8)}</span></div>
                 {preview.warnings.map((w) => <p key={w} className="text-xs text-amber-800 flex items-center gap-1"><AlertTriangle className="h-3 w-3" /> {w}</p>)}
-                {preview.needs_gas && (
+                {preview.gasless?.supported && preview.gasless.relayer_ok && (
+                  <div className="pt-2 space-y-1 rounded-md border border-emerald-300 bg-emerald-50 dark:bg-emerald-950/30 p-2">
+                    <p className="text-xs font-semibold text-emerald-900 dark:text-emerald-200 flex items-center gap-1">
+                      <CheckCircle2 className="h-3.5 w-3.5" /> Gasless available: this wallet signs, {gasWallet?.name || 'the gas tank'} pays the fee (≈ {fmt(preview.gasless.fee_native, 8)} {preview.gasless.native_symbol}). No ETH needed here.
+                    </p>
+                  </div>
+                )}
+                {preview.needs_gas && !(preview.gasless?.supported && preview.gasless.relayer_ok) && (
                   <div className="pt-2 space-y-2">
                     <p className="text-xs font-semibold text-amber-900 flex items-center gap-1"><Fuel className="h-3.5 w-3.5" /> Not enough {preview.native_symbol} for the fee (short by {fmt(preview.gas_shortfall, 8)}).</p>
+                    {preview.gasless && preview.gasless.supported && !preview.gasless.relayer_ok && (
+                      <p className="text-xs text-amber-900">Gasless would work, but the gas tank has only {fmt(preview.gasless.relayer_native_balance, 8)} {preview.gasless.native_symbol} on this network. Fund it and preview again.</p>
+                    )}
                     {gasWallet ? (
                       <Button type="button" size="sm" variant="secondary" className="gap-2" onClick={topUpGas} disabled={toppingUp || !password}>
                         {toppingUp ? <Loader2 className="h-4 w-4 animate-spin" /> : <Fuel className="h-4 w-4" />}
@@ -377,7 +401,15 @@ export function SendDialog({ wallet, onClose, myWallets, book, balances, gasWall
 
             <DialogFooter className="flex-col sm:flex-row gap-2">
               <Button variant="outline" onClick={onClose} disabled={sending || toppingUp}>Cancel</Button>
-              {!preview || preview.needs_gas || preview.insufficient_token ? (
+              {preview?.gasless?.supported && preview.gasless.relayer_ok && !preview.insufficient_token && bookAcceptsNetwork ? (
+                <>
+                  <Button variant="ghost" onClick={runPreview} disabled={previewing}>Re-check</Button>
+                  <Button onClick={() => doSend(true)} disabled={!password || sending} className="bg-emerald-600 hover:bg-emerald-700">
+                    {sending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
+                    Send {fmt(preview.gasless.amount, 6)} {preview.token_symbol} gasless
+                  </Button>
+                </>
+              ) : !preview || preview.needs_gas || preview.insufficient_token ? (
                 <Button onClick={runPreview} disabled={!canPreview}>
                   {previewing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
                   {preview ? 'Preview again' : 'Preview'}
@@ -385,7 +417,7 @@ export function SendDialog({ wallet, onClose, myWallets, book, balances, gasWall
               ) : (
                 <>
                   <Button variant="ghost" onClick={runPreview} disabled={previewing}>Re-check</Button>
-                  <Button onClick={doSend} disabled={!canSend} className="bg-green-600 hover:bg-green-700">
+                  <Button onClick={() => doSend(false)} disabled={!canSend} className="bg-green-600 hover:bg-green-700">
                     {sending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
                     Send {fmt(preview.amount, 6)} {preview.token_symbol}
                   </Button>

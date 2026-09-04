@@ -152,9 +152,12 @@ async function fetchEvmChain(
     }
   }
 
+  // ~150 calls per aggregate3 request (batchSize is calldata bytes): with
+  // 120+ wallets that is a handful of requests per chain instead of dozens of
+  // tiny ones, which is what made Ethereum's public RPCs time out.
   const results = await withTimeout(
-    client.multicall({ contracts, allowFailure: true, multicallAddress, batchSize: 4096 }),
-    20_000,
+    client.multicall({ contracts, allowFailure: true, multicallAddress, batchSize: 32_768 }),
+    45_000,
     def.key
   );
 
