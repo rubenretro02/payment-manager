@@ -115,12 +115,23 @@ export function SendDialog({ wallet, onClose, myWallets, book, balances, gasWall
 
   const familyBook = wallet ? book.filter((b) => b.family === wallet.chain_family) : [];
 
+  // The token this wallet actually holds most of on a network (stablecoins
+  // count at $1, the native coin at its rough price), so the dialog opens on
+  // "USDC · 50" instead of "ETH · 0".
+  const bestToken = (net: string): string => {
+    const held = balances.filter((b) => b.network === net && !b.spam && b.amount > 0);
+    if (held.length === 0) return 'native';
+    const worth = (b: BalanceLike) => (b.native ? b.amount * 2000 : b.amount);
+    const top = [...held].sort((a, b) => worth(b) - worth(a))[0];
+    return top.native || !top.contract ? 'native' : top.contract;
+  };
+
   // Reset whenever a different wallet is opened; pre-select the default destination.
   useEffect(() => {
     if (!wallet) return;
     const def = book.find((b) => b.family === wallet.chain_family && b.is_default);
     setNetwork(wallet.network);
-    setToken('native');
+    setToken(bestToken(wallet.network));
     setAmount('');
     setUseMax(false);
     setPassword('');
@@ -275,7 +286,7 @@ export function SendDialog({ wallet, onClose, myWallets, book, balances, gasWall
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="grid gap-2">
                 <Label>Network</Label>
-                <Select value={network} onValueChange={(v) => { setNetwork(v); setToken('native'); invalidate(); }}>
+                <Select value={network} onValueChange={(v) => { setNetwork(v); setToken(bestToken(v)); invalidate(); }}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>{networks.map((n) => <SelectItem key={n.key} value={n.key}>{n.label}</SelectItem>)}</SelectContent>
                 </Select>
@@ -378,7 +389,9 @@ export function SendDialog({ wallet, onClose, myWallets, book, balances, gasWall
                     {preview.gasless && preview.gasless.supported && !preview.gasless.relayer_ok && (
                       <p className="text-xs text-amber-900">Gasless would work, but the gas tank has only {fmt(preview.gasless.relayer_native_balance, 8)} {preview.gasless.native_symbol} on this network. Fund it and preview again.</p>
                     )}
-                    {gasWallet ? (
+                    {preview.insufficient_token ? (
+                      <p className="text-xs text-muted-foreground">Fix the amount first — this wallet holds {fmt(preview.token_balance, 6)} {preview.token_symbol}.</p>
+                    ) : gasWallet ? (
                       <Button type="button" size="sm" variant="secondary" className="gap-2" onClick={topUpGas} disabled={toppingUp || !password}>
                         {toppingUp ? <Loader2 className="h-4 w-4 animate-spin" /> : <Fuel className="h-4 w-4" />}
                         Top up {fmt(preview.suggested_topup, 6)} {preview.native_symbol} from {gasWallet.name || shortAddress(gasWallet.address)}

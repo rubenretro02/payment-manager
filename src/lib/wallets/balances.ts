@@ -9,13 +9,28 @@
 // stablecoins count as $1; discovered tokens use the explorer's exchange rate
 // when it has one. Any chain that fails is reported in `errors` and skipped.
 
-import { createPublicClient, erc20Abi, formatUnits, type Address, type ContractFunctionParameters } from 'viem';
+import { createPublicClient, erc20Abi, formatUnits, http, type Address, type ContractFunctionParameters } from 'viem';
 import { Connection, PublicKey, LAMPORTS_PER_SOL, type ParsedAccountData } from '@solana/web3.js';
-import { EVM_CHAINS, SOLANA_COINGECKO_ID, SOLANA_KNOWN_MINTS, evmTransport, solanaRpcUrl, type EvmChainDef } from './chains';
+import { EVM_CHAINS, SOLANA_COINGECKO_ID, SOLANA_KNOWN_MINTS, evmRpcUrl, solanaRpcUrl, type EvmChainDef } from './chains';
 import { STABLE_SYMBOLS, isSpamToken, looksLikeStableSymbol, type NetworkKey } from './networks';
 import type { DiscoveredToken } from './store';
 
 const CANONICAL_MULTICALL3: Address = '0xcA11bde05977b3631167028862bE2a173976CA11';
+
+/** First promise to fulfil wins; rejects only when every one has failed. */
+function firstGood<T>(promises: Promise<T>[]): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    let pending = promises.length;
+    const errors: string[] = [];
+    if (pending === 0) reject(new Error('no RPC configured'));
+    for (const p of promises) {
+      p.then(resolve, (e) => {
+        errors.push(e instanceof Error ? e.message.split('\n')[0] : String(e));
+        if (--pending === 0) reject(new Error(errors.join(' | ')));
+      });
+    }
+  });
+}
 const ETH_BALANCE_ABI = [
   {
     name: 'getEthBalance',
@@ -129,7 +144,6 @@ async function fetchEvmChain(
   const byWallet = new Map<string, TokenBalance[]>();
   if (wallets.length === 0) return byWallet;
 
-  const client = createPublicClient({ chain: def.chain, transport: evmTransport(def) });
   const multicallAddress = (def.chain.contracts?.multicall3?.address as Address | undefined) ?? CANONICAL_MULTICALL3;
   const curated = new Set(def.tokens.map((t) => t.address.toLowerCase()));
 
@@ -152,14 +166,21 @@ async function fetchEvmChain(
     }
   }
 
-  // ~150 calls per aggregate3 request (batchSize is calldata bytes): with
-  // 120+ wallets that is a handful of requests per chain instead of dozens of
-  // tiny ones, which is what made Ethereum's public RPCs time out.
-  const results = await withTimeout(
-    client.multicall({ contracts, allowFailure: true, multicallAddress, batchSize: 32_768 }),
-    45_000,
-    def.key
-  );
+  // Read-only, so race every RPC we know for this chain and take the first
+  // GOOD answer: a hung endpoint (which is what made Ethereum wait 45 s on the
+  // server) simply loses the race instead of blocking. ~150 calls per
+  // aggregate3 request (batchSize is calldata bytes). An answer where more
+  // than 10% of calls failed means a chunk was rejected by that RPC — not
+  // good enough, let another endpoint win.
+  const urls = [evmRpcUrl(def), ...def.rpcUrls].filter((u): u is string => !!u);
+  const attempt = async (url: string) => {
+    const client = createPublicClient({ chain: def.chain, transport: http(url, { timeout: 20_000, retryCount: 0 }) });
+    const res = await client.multicall({ contracts, allowFailure: true, multicallAddress, batchSize: 32_768 });
+    const failed = res.filter((r) => r.status === 'failure').length;
+    if (failed > Math.max(3, res.length * 0.1)) throw new Error(`${new URL(url).host}: ${failed}/${res.length} calls failed`);
+    return res;
+  };
+  const results = await withTimeout(firstGood(urls.map(attempt)), 25_000, def.key);
 
   let i = 0;
   const value = (): unknown => {
