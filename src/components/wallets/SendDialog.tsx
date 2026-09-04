@@ -428,10 +428,13 @@ export function SendDialog({ wallet, onClose, myWallets, book, balances, gasWall
                       <p className="text-xs text-muted-foreground">Fix the amount first — this wallet holds {fmt(preview.token_balance, 6)} {preview.token_symbol}.</p>
                     ) : gasWallet ? (
                       <div className="flex flex-wrap gap-2">
-                        <Button type="button" size="sm" variant="secondary" className="gap-2" onClick={topUpGas} disabled={toppingUp || !password}>
-                          {toppingUp ? <Loader2 className="h-4 w-4 animate-spin" /> : <Fuel className="h-4 w-4" />}
-                          Top up {fmt(preview.suggested_topup, 6)} {preview.native_symbol} from {gasWallet.name || shortAddress(gasWallet.address)}
-                        </Button>
+                        {/* A top-up is pointless when the tank itself is empty on this network */}
+                        {!(preview.gasless && preview.gasless.relayer_native_balance < preview.suggested_topup + preview.gasless.fee_native) && (
+                          <Button type="button" size="sm" variant="secondary" className="gap-2" onClick={topUpGas} disabled={toppingUp || !password}>
+                            {toppingUp ? <Loader2 className="h-4 w-4 animate-spin" /> : <Fuel className="h-4 w-4" />}
+                            Top up {fmt(preview.suggested_topup, 6)} {preview.native_symbol} from {gasWallet.name || shortAddress(gasWallet.address)}
+                          </Button>
+                        )}
                         {!(preview.gasless && preview.gasless.supported && !preview.gasless.relayer_ok) && (
                           <Button type="button" size="sm" variant="ghost" className="gap-2" onClick={refuelTank} disabled={toppingUp || !password} title="If the tank is empty on this network: move ~$1 of gas here from what it holds elsewhere (via Relay)">
                             <Fuel className="h-4 w-4" /> Refuel the tank on {getNetwork(network)?.label} first

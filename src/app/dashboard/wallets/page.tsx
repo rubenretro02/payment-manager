@@ -200,8 +200,9 @@ export default function WalletsOverviewPage() {
       const res = await vault.authFetch('/api/wallets/auto-transfers', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ wallet_id: w.id }) });
       const json = await res.json();
       if (json.success) {
-        const r = json.data as { queued: number; done: number; skipped: number; failed: number; waiting: number };
-        if (r.done > 0) toast.success(`${r.done} transfer${r.done === 1 ? '' : 's'} sent to ${(own || familyDefault)?.name}`);
+        const r = json.data as { queued: number; done: number; skipped: number; failed: number; waiting: number; busy?: boolean };
+        if (r.busy) toast.info('A run is already in progress — the row updates when it finishes.');
+        else if (r.done > 0) toast.success(`${r.done} transfer${r.done === 1 ? '' : 's'} sent to ${(own || familyDefault)?.name}`);
         else if (r.skipped > 0 || r.failed > 0) toast.warning('Nothing sent — see the reason under the toggle (and in Transfers).');
         else if (r.waiting > 0) toast.warning('Queued — it will run when the vault is unlocked.');
         else toast.info('Nothing to sweep yet (no USDC/USDT above the minimum on an accepted network).');
@@ -224,8 +225,12 @@ export default function WalletsOverviewPage() {
         if (res.status !== 401) toast.error(json.error || 'Could not run');
         return;
       }
-      const r = json.data as { done: number; skipped: number; failed: number; waiting: number };
-      toast[r.done > 0 ? 'success' : 'info'](`${r.done} sent · ${r.skipped} skipped · ${r.failed} failed${r.waiting ? ` · ${r.waiting} waiting` : ''}`);
+      const r = json.data as { done: number; skipped: number; failed: number; waiting: number; busy?: boolean; busy_for_s?: number };
+      if (r.busy) {
+        toast.info(`A run is already in progress (${r.busy_for_s ?? 0}s so far) — probably refueling the gas tank or waiting for a confirmation. The row updates when it finishes.`);
+      } else {
+        toast[r.done > 0 ? 'success' : 'info'](`${r.done} sent · ${r.skipped} skipped · ${r.failed} failed${r.waiting ? ` · ${r.waiting} waiting` : ''}`);
+      }
       await loadWallets();
       loadBalances();
     } finally {

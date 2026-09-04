@@ -230,13 +230,30 @@ function nativePriceFor(network: string, prices: Record<string, number>): number
 }
 
 let running = false;
+let runningSince = 0;
+// A run can legitimately take a few minutes (a cross-network refuel waits
+// for a mainnet confirmation and for Relay). Past this, assume the previous
+// run died with the flag up and let a new one start.
+const STALE_RUN_MS = 6 * 60 * 1000;
+
+export interface RunResult {
+  processed: number;
+  done: number;
+  skipped: number;
+  failed: number;
+  waiting: number;
+  queued: number;
+  /** Another run was already in progress (likely refueling); nothing was done by this call. */
+  busy: boolean;
+  busy_for_s?: number;
+}
 
 /** Process the queue. Needs an unlocked session (seeds in memory); otherwise jobs wait. */
 export async function runAutoTransfers(
   session: Session | null,
   opts: { walletIds?: string[] } = {}
-): Promise<{ processed: number; done: number; skipped: number; failed: number; waiting: number; queued: number }> {
-  const result = { processed: 0, done: 0, skipped: 0, failed: 0, waiting: 0, queued: 0 };
+): Promise<RunResult> {
+  const result: RunResult = { processed: 0, done: 0, skipped: 0, failed: 0, waiting: 0, queued: 0, busy: false };
   const supabase = createAdminClient();
 
   // Pick up balances that are already sitting in auto-transfer wallets.
@@ -258,8 +275,14 @@ export async function runAutoTransfers(
     result.waiting = jobs.length;
     return result;
   }
-  if (running) return result;
+  if (running && Date.now() - runningSince < STALE_RUN_MS) {
+    result.busy = true;
+    result.busy_for_s = Math.round((Date.now() - runningSince) / 1000);
+    result.waiting = jobs.length;
+    return result;
+  }
   running = true;
+  runningSince = Date.now();
 
   try {
     const [settings, gas, book] = await Promise.all([getAutoSettings(), getGasSettings(), listBook()]);
@@ -326,6 +349,8 @@ export async function runAutoTransfers(
             let refuelNote = '';
             if (!gp.relayer_ok) {
               // Gas account: bring gas onto this network from wherever the tank has money.
+              // Show it while it happens — a mainnet origin takes a minute or two.
+              await setJob(raw.id, { status: 'gas', reason: `refueling the gas tank on ${getNetwork(raw.network as NetworkKey)?.label || raw.network} via Relay…` });
               const fuel = await ensureFuel(session, raw.network as NetworkKey, gp.fee_native * 3, gp.relayer_native_balance);
               if (fuel.refueled) {
                 gp = await previewGasless(session, req, gasWalletId);
@@ -370,6 +395,7 @@ export async function runAutoTransfers(
           let refuelNote = '';
           if (gasPreview.insufficient_token || gasPreview.needs_gas) {
             // Gas account: bring gas onto this network from wherever the tank has money.
+            await setJob(raw.id, { status: 'gas', reason: `refueling the gas tank on ${getNetwork(raw.network as NetworkKey)?.label || raw.network} via Relay…` });
             const fuel = await ensureFuel(session, raw.network as NetworkKey, preview.suggested_topup + gasPreview.fee_native * 2, gasPreview.native_balance);
             if (fuel.refueled) gasPreview = await previewSend(session, gasReq);
             else if (fuel.reason) refuelNote = ` Auto-refuel: ${fuel.reason}.`;

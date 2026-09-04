@@ -210,7 +210,7 @@ async function relayWait(requestId: string, timeoutMs: number): Promise<'success
   const until = Date.now() + timeoutMs;
   while (Date.now() < until) {
     try {
-      const res = await fetch(`${RELAY_API}/intents/status/v2?requestId=${requestId}`, { cache: 'no-store' });
+      const res = await fetch(`${RELAY_API}/intents/status/v2?requestId=${requestId}`, { cache: 'no-store', signal: AbortSignal.timeout(10_000) });
       const json = (await res.json()) as { status?: string };
       if (json.status === 'success') return 'success';
       if (json.status === 'failure') return 'failure';
