@@ -12,12 +12,14 @@
 import {
   createPublicClient,
   createWalletClient,
+  formatEther,
   parseUnits,
   type Address,
   type Hex,
 } from 'viem';
+import { Connection, PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { createAdminClient } from '@/lib/supabase/server';
-import { EVM_CHAINS, evmChainDef, evmTransport, SOLANA_COINGECKO_ID } from './chains';
+import { EVM_CHAINS, evmChainDef, evmTransport, solanaRpcUrl, SOLANA_COINGECKO_ID } from './chains';
 import { getNetwork, type NetworkKey } from './networks';
 import { fetchBalances, type TokenBalance } from './balances';
 import { SendError, fmtNative, getGasSettings } from './send';
@@ -293,6 +295,21 @@ function pickSources(held: TokenBalance[], dest: NetworkKey, prices: Record<stri
   return out.sort((a, b) => (ORIGIN_RANK[a.network] ?? 9) - (ORIGIN_RANK[b.network] ?? 9) || Number(!a.native) - Number(!b.native) || b.usd - a.usd);
 }
 
+/** Native balance of the destination tank, read fresh (not from the cache). */
+async function destNativeBalance(dest: NetworkKey, address: string): Promise<number> {
+  try {
+    if (dest === 'solana') {
+      const conn = new Connection(solanaRpcUrl(), 'confirmed');
+      return (await conn.getBalance(new PublicKey(address))) / LAMPORTS_PER_SOL;
+    }
+    const def = evmChainDef(dest)!;
+    const client = createPublicClient({ chain: def.chain, transport: evmTransport(def) });
+    return Number(formatEther(await client.getBalance({ address: address as Address })));
+  } catch {
+    return -1;
+  }
+}
+
 async function logRefuel(row: Record<string, unknown>): Promise<void> {
   const supabase = createAdminClient();
   const { error } = await supabase.from('wallet_transfers').insert({ ...row, purpose: 'refuel' });
@@ -349,9 +366,12 @@ export async function refuelNetwork(
   const account = deriveEvmAccountAtPath(mnemonic, source.derivation_path);
 
   let lastReason = '';
+  const destBefore = await destNativeBalance(dest, target.address);
   for (const src of sources.slice(0, 3)) {
     const def = evmChainDef(src.network)!;
     const originLabel = getNetwork(src.network)?.label || src.network;
+    let lastHash: Hex | null = null;
+    let requestId: string | null = null;
     try {
       const amountUnits = parseUnits((wantUsd / src.price).toFixed(src.decimals), src.decimals);
       const quote = await relayQuote({
@@ -373,8 +393,6 @@ export async function refuelNetwork(
       const transport = evmTransport(def);
       const publicClient = createPublicClient({ chain: def.chain, transport });
       const walletClient = createWalletClient({ account, chain: def.chain, transport });
-      let requestId: string | null = null;
-      let lastHash: Hex | null = null;
       for (const step of quote.steps) {
         if (step.kind !== 'transaction') continue;
         for (const item of step.items) {
@@ -386,8 +404,17 @@ export async function refuelNetwork(
             gas: item.data.gas ? BigInt(item.data.gas) : undefined,
           });
           lastHash = hash;
-          const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: 90_000 });
-          if (receipt.status !== 'success') throw new SendError(`origin transaction reverted on ${originLabel} (${hash})`, 500);
+          // Mainnet can take a few minutes to include a cheap transaction and
+          // public RPCs sometimes lag; a receipt timeout is NOT a failure —
+          // Relay tracks the deposit itself and we verify the destination
+          // balance below. Only an actual revert aborts.
+          try {
+            const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: 150_000 });
+            if (receipt.status !== 'success') throw new SendError(`origin transaction reverted on ${originLabel} (${hash})`, 500);
+          } catch (e) {
+            if (e instanceof SendError) throw e;
+            console.warn(`[refuel] no receipt for ${hash} on ${src.network} yet — continuing on Relay's status`);
+          }
           const m = item.check?.endpoint.match(/requestId=(0x[0-9a-fA-F]+)/);
           if (m) requestId = m[1];
         }
@@ -396,7 +423,12 @@ export async function refuelNetwork(
 
       const delivered = Number(quote.details.currencyOut.amountFormatted);
       const outSymbol = quote.details.currencyOut.currency.symbol;
-      const status = requestId ? await relayWait(requestId, 120_000) : 'timeout';
+      let status = requestId ? await relayWait(requestId, 180_000) : 'timeout';
+      if (status !== 'success' && status !== 'failure' && status !== 'refund') {
+        // Status endpoint silent: did the money land anyway?
+        const destAfter = await destNativeBalance(dest, target.address);
+        if (destBefore >= 0 && destAfter >= 0 && destAfter - destBefore >= delivered * 0.5) status = 'success';
+      }
       await logRefuel({
         wallet_id: source.id,
         network: src.network,
@@ -430,6 +462,24 @@ export async function refuelNetwork(
     } catch (e) {
       lastReason = `${originLabel}: ${e instanceof Error ? e.message.split('\n')[0] : 'failed'}`;
       console.error(`[refuel] from ${src.network} failed: ${lastReason}`);
+      if (lastHash) {
+        // Money left the tank — keep a record with the hash even though the
+        // refuel didn't complete as far as we could tell.
+        await logRefuel({
+          wallet_id: source.id,
+          network: src.network,
+          from_address: account.address,
+          to_address: target.address,
+          token_symbol: src.symbol,
+          token_contract: src.contract,
+          amount: Number((wantUsd / src.price).toFixed(src.decimals)),
+          status: 'failed',
+          tx_hash: lastHash,
+          confirmed_at: null,
+          created_by: null,
+          error: `refuel → ${label} via Relay${requestId ? ` (${requestId.slice(0, 12)}…)` : ''}: ${lastReason}`,
+        }).catch(() => undefined);
+      }
     }
   }
   return { ok: false, refueled: false, reason: `could not refuel ${label} — ${lastReason}` };
