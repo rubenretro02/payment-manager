@@ -64,6 +64,7 @@ import {
   Send,
 } from 'lucide-react';
 import { UserPicker } from '@/components/UserPicker';
+import { applyDeal, describeTiers, type Deal } from '@/lib/deals';
 import { Textarea } from '@/components/ui/textarea';
 import { format } from 'date-fns';
 import { enUS } from 'date-fns/locale';
@@ -127,6 +128,14 @@ export default function AccountsPage() {
   const [users, setUsers] = useState<User[]>([]);
   const [platforms, setPlatforms] = useState<Platform[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
+  // null = deals not available (table not migrated yet) → the form doesn't send deal_id
+  const [deals, setDeals] = useState<Deal[] | null>(null);
+  useEffect(() => {
+    fetch('/api/deals')
+      .then((r) => r.json())
+      .then((j) => setDeals(j.success ? (j.data as Deal[]) : null))
+      .catch(() => setDeals(null));
+  }, []);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterPlatform, setFilterPlatform] = useState('all');
@@ -167,6 +176,7 @@ export default function AccountsPage() {
     biweekly_second_day: 16, // Second payment day for biweekly
     wallet_address: '',
     wallet_network: 'base',
+    deal_id: '',
   });
 
   const [assignUserId, setAssignUserId] = useState('');
@@ -300,6 +310,8 @@ export default function AccountsPage() {
         project_id: newAccount.project_id && newAccount.project_id !== "none" ? newAccount.project_id : null,
         // Accounts a partner creates belong to them automatically.
         ...(isPartner ? { owner_id: user!.id } : {}),
+        // Don't send deal_id until the deals table exists (undefined is dropped by JSON)
+        ...(deals ? {} : { deal_id: undefined }),
       };
 
       const response = await fetch('/api/accounts', {
@@ -325,6 +337,7 @@ export default function AccountsPage() {
           biweekly_second_day: 16,
           wallet_address: '',
           wallet_network: 'base',
+          deal_id: '',
         });
       } else {
         console.error('Error from API:', data.error);
@@ -483,6 +496,8 @@ export default function AccountsPage() {
       const accountData = {
         ...newAccount,
         project_id: newAccount.project_id && newAccount.project_id !== "none" ? newAccount.project_id : null,
+        // Don't send deal_id until the deals table exists (undefined is dropped by JSON)
+        ...(deals ? {} : { deal_id: undefined }),
       };
 
       const response = await fetch(`/api/accounts/${selectedAccount.id}`, {
@@ -508,6 +523,7 @@ export default function AccountsPage() {
           biweekly_second_day: 16,
           wallet_address: '',
           wallet_network: 'base',
+          deal_id: '',
         });
       } else {
         alert('Error: ' + (data.error || 'Failed to update account'));
@@ -550,7 +566,8 @@ export default function AccountsPage() {
       return;
     }
     const platformAmount = parseFloat(reportForm.platform_amount) || 0;
-    const amountOwed = (platformAmount * (selectedAccount.percentage || 0)) / 100;
+    const pctApplied = applyDeal(selectedAccount.percentage || 0, selectedAccount.deal, platformAmount).percentage;
+    const amountOwed = (platformAmount * pctApplied) / 100;
 
     setReportSubmitting(true);
     try {
@@ -562,7 +579,7 @@ export default function AccountsPage() {
           // Commission accounts may have no assigned user.
           user_id: selectedAccount.user_id || null,
           platform_amount: platformAmount,
-          percentage_applied: selectedAccount.percentage || 0,
+          percentage_applied: pctApplied,
           amount_owed: amountOwed,
           amount_paid: amountPaid,
           payment_method: reportForm.payment_method || 'other',
@@ -602,6 +619,7 @@ export default function AccountsPage() {
       biweekly_second_day: account.biweekly_second_day ?? 16,
       wallet_address: account.wallet_address || '',
       wallet_network: account.wallet_network || 'base',
+      deal_id: account.deal_id || '',
     });
     setIsEditDialogOpen(true);
   };
@@ -895,6 +913,25 @@ export default function AccountsPage() {
                     The assigned IBO/user will pay you this percentage of their earnings
                   </p>
                 </div>
+                {deals && (
+                  <div className="grid gap-2 mt-3">
+                    <Label>Deal (optional)</Label>
+                    <Select value={newAccount.deal_id || 'none'} onValueChange={(v) => setNewAccount({ ...newAccount, deal_id: v === 'none' ? '' : v })}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">No deal — fixed percentage</SelectItem>
+                        {deals.filter((d) => d.is_active).map((d) => (
+                          <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      {newAccount.deal_id
+                        ? `${describeTiers(deals.find((d) => d.id === newAccount.deal_id))} · below the first tier the fixed percentage applies`
+                        : 'A deal changes the percentage by how much the company paid (manage them in Deals).'}
+                    </p>
+                  </div>
+                )}
               </div>
 
               {/* Crypto Wallet */}
@@ -1405,6 +1442,9 @@ export default function AccountsPage() {
                       </TableCell>
                       <TableCell className="text-center">
                         <span className="font-semibold text-primary">{account.percentage}%</span>
+                        {account.deal && (
+                          <p className="text-[10px] text-muted-foreground leading-tight" title={describeTiers(account.deal)}>deal · {account.deal.name}</p>
+                        )}
                       </TableCell>
                       <TableCell>
                         <div className="flex flex-wrap items-center gap-1">
@@ -1907,6 +1947,25 @@ export default function AccountsPage() {
                 />
               </div>
             </div>
+            {deals && (
+              <div className="grid gap-2">
+                <Label>Deal (optional)</Label>
+                <Select value={newAccount.deal_id || 'none'} onValueChange={(v) => setNewAccount({ ...newAccount, deal_id: v === 'none' ? '' : v })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No deal — fixed percentage</SelectItem>
+                    {deals.filter((d) => d.is_active || d.id === newAccount.deal_id).map((d) => (
+                      <SelectItem key={d.id} value={d.id}>{d.name}{d.is_active ? '' : ' (inactive)'}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {newAccount.deal_id && (
+                  <p className="text-xs text-muted-foreground">
+                    {describeTiers(deals.find((d) => d.id === newAccount.deal_id))} · below the first tier the fixed percentage applies
+                  </p>
+                )}
+              </div>
+            )}
 
             {/* Payment Configuration — hidden for Commission projects (no schedule). */}
             {isCommissionSelected ? (
@@ -2164,8 +2223,12 @@ export default function AccountsPage() {
                 <span className="text-muted-foreground">Platform:</span>
                 <span>{selectedAccount?.platform?.display_name}</span>
                 <span className="text-muted-foreground">Percentage:</span>
-                <span className="font-semibold text-primary">{selectedAccount?.percentage}%</span>
+                <span className="font-semibold text-primary">
+                  {selectedAccount?.percentage}%
+                  {selectedAccount?.deal && <span className="font-normal text-muted-foreground"> · deal {selectedAccount.deal.name}</span>}
+                </span>
               </div>
+              {selectedAccount?.deal && <p className="text-xs text-muted-foreground mt-1">{describeTiers(selectedAccount.deal)}</p>}
             </div>
 
             {/* Platform amount */}
@@ -2183,7 +2246,7 @@ export default function AccountsPage() {
                     ...reportForm,
                     platform_amount: value,
                     amount_paid: !isNaN(platformAmt) && selectedAccount
-                      ? ((platformAmt * (selectedAccount.percentage || 0)) / 100).toFixed(2)
+                      ? ((platformAmt * applyDeal(selectedAccount.percentage || 0, selectedAccount.deal, platformAmt).percentage) / 100).toFixed(2)
                       : '',
                   });
                 }}
@@ -2191,16 +2254,18 @@ export default function AccountsPage() {
             </div>
 
             {/* Calculated owed */}
-            {reportForm.platform_amount && selectedAccount && (
-              <div className="rounded-lg bg-primary/10 p-3 border border-primary/20 text-sm">
-                <div className="flex justify-between">
-                  <span>Should pay:</span>
-                  <span className="font-bold">
-                    ${(((parseFloat(reportForm.platform_amount) || 0) * (selectedAccount.percentage || 0)) / 100).toFixed(2)}
-                  </span>
+            {reportForm.platform_amount && selectedAccount && (() => {
+              const amt = parseFloat(reportForm.platform_amount) || 0;
+              const eff = applyDeal(selectedAccount.percentage || 0, selectedAccount.deal, amt);
+              return (
+                <div className="rounded-lg bg-primary/10 p-3 border border-primary/20 text-sm">
+                  <div className="flex justify-between">
+                    <span>Should pay ({eff.percentage}%{eff.tier ? ` · deal tier from $${eff.tier.min_amount}` : ''}):</span>
+                    <span className="font-bold">${((amt * eff.percentage) / 100).toFixed(2)}</span>
+                  </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             {/* Amount paid */}
             <div className="grid gap-2">

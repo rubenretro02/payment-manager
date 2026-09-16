@@ -22,6 +22,7 @@ export async function PUT(
       biweekly_second_day,
       wallet_address,
       wallet_network,
+      deal_id,
     } = body;
 
     // Calculate next payment date
@@ -61,6 +62,8 @@ export async function PUT(
     };
     if (wallet_address !== undefined) updateData.wallet_address = wallet_address || null;
     if (wallet_network !== undefined) updateData.wallet_network = wallet_network || null;
+    // Only sent by the form once the deals table exists (see accounts page).
+    if (deal_id !== undefined) updateData.deal_id = deal_id || null;
 
     const wasPaymentActive = existing?.status === 'production' || existing?.status === 'nesting';
     const isPaymentActive = newStatus === 'production' || newStatus === 'nesting';

@@ -37,12 +37,16 @@ export async function GET(request: NextRequest) {
       .from('users')
       .select('*');
 
+    // Deals (tiered percentages). Missing table before the migration → no deals.
+    const { data: deals } = await supabase.from('deals').select('*');
+
     // Manually join the data
     const data = (accounts || []).map(account => ({
       ...account,
       platform: platforms?.find(p => p.id === account.platform_id) || null,
       project: projects?.find(p => p.id === account.project_id) || null,
       user: users?.find(u => u.id === account.user_id) || null,
+      deal: account.deal_id ? deals?.find(d => d.id === account.deal_id) || null : null,
     }));
 
     return NextResponse.json({ success: true, data });
@@ -69,6 +73,7 @@ export async function POST(request: NextRequest) {
       wallet_address,
       wallet_network,
       owner_id,
+      deal_id,
     } = body;
 
     if (!full_name || !account_email || !platform_id) {
@@ -104,6 +109,7 @@ export async function POST(request: NextRequest) {
     if (wallet_address) insertData.wallet_address = wallet_address;
     if (wallet_network) insertData.wallet_network = wallet_network;
     if (owner_id) insertData.owner_id = owner_id;
+    if (deal_id) insertData.deal_id = deal_id;
     // Floor for overdue. Only set if creating in a payment-active status.
     if (initialStatus === 'production' || initialStatus === 'nesting') {
       insertData.payment_active_since = new Date().toISOString();

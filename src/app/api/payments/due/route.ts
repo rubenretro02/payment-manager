@@ -7,6 +7,7 @@ import {
   type PaymentFrequency,
 } from '@/lib/payment-dates';
 import { isCommissionAccount } from '@/lib/account-utils';
+import type { Deal } from '@/lib/deals';
 
 /**
  * Legacy fallback for payments without for_cycle_date set. Matches the
@@ -36,6 +37,7 @@ interface DueAccountInfo {
   platform_name: string;
   project_name: string | null;
   percentage: number;
+  deal: Deal | null;
   payment_frequency: PaymentFrequency;
   next_payment_date: string;
   days_until_due: number;
@@ -116,6 +118,10 @@ export async function GET() {
     }
 
     const result: DueAccountInfo[] = [];
+
+    // Deals (tiered percentages) — table may not exist before its migration.
+    const { data: dealRows } = await supabase.from('deals').select('*');
+    const dealById = new Map<string, Deal>((dealRows || []).map((d) => [d.id as string, d as Deal]));
 
     // ONE payments query for every account instead of one per account (the
     // per-account version was 20+ sequential round-trips and made this board
@@ -308,6 +314,7 @@ export async function GET() {
         platform_name: account.platform?.display_name || 'Platform',
         project_name: account.project?.display_name || null,
         percentage: account.percentage,
+        deal: account.deal_id ? dealById.get(account.deal_id as string) || null : null,
         payment_frequency: frequency,
         current_payment_id: currentPayment?.id || null,
         current_payment_status: currentPayment?.status || null,

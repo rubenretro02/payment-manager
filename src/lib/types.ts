@@ -2,6 +2,8 @@
  * Types and Interfaces for the Application
  */
 
+import type { Deal } from './deals';
+
 // =============================================
 // MAIN TYPES
 // =============================================
@@ -99,6 +101,10 @@ export interface Account {
   // NULL = admin-owned. Separate from user_id (the assigned worker).
   // Optional — absent on rows that predate the column.
   owner_id?: string | null;
+
+  // Tiered-percentage deal (see lib/deals.ts). NULL = fixed `percentage`.
+  deal_id?: string | null;
+  deal?: Deal | null;
 
   created_at: string;
   updated_at: string;

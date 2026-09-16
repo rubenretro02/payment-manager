@@ -56,6 +56,7 @@ import { format } from 'date-fns';
 import { enUS } from 'date-fns/locale';
 import { useAuth } from '@/hooks/useAuth';
 import type { Account, Payment, PaymentFrequency } from '@/lib/types';
+import { applyDeal, describeTiers } from '@/lib/deals';
 import {
   formatPaymentFrequency,
   formatPaymentSchedule,
@@ -606,8 +607,12 @@ export default function MyAccountsPage() {
     };
   };
 
-  const calculateAmountOwed = (platformAmount: number, percentage: number) => {
-    return (platformAmount * percentage) / 100;
+  // Effective percentage for this company payment: the account's deal tier if
+  // it reaches one, else the fixed percentage.
+  const effectivePercentage = (account: Account, platformAmount: number) =>
+    applyDeal(account.percentage, account.deal, platformAmount).percentage;
+  const calculateAmountOwed = (platformAmount: number, account: Account) => {
+    return (platformAmount * effectivePercentage(account, platformAmount)) / 100;
   };
 
   const copyToClipboard = async (text: string, id: string) => {
@@ -762,7 +767,7 @@ export default function MyAccountsPage() {
 
     // If the amount sent doesn't match what's owed, require an explanation
     const platformAmt = parseFloat(paymentForm.platform_amount);
-    const expectedOwed = calculateAmountOwed(platformAmt, selectedAccount.percentage);
+    const expectedOwed = calculateAmountOwed(platformAmt, selectedAccount);
     const sentAmt = parseFloat(paymentForm.amount_sent);
     // 1-cent tolerance for floating-point precision
     const hasMismatch = Math.abs(sentAmt - expectedOwed) >= 0.01;
@@ -790,7 +795,7 @@ export default function MyAccountsPage() {
 
     const platformAmount = parseFloat(paymentForm.platform_amount);
     const amountSent = parseFloat(paymentForm.amount_sent);
-    const amountToSend = calculateAmountOwed(platformAmount, selectedAccount.percentage);
+    const amountToSend = calculateAmountOwed(platformAmount, selectedAccount);
     const selectedMethod = getSelectedPaymentMethod();
 
     try {
@@ -804,7 +809,7 @@ export default function MyAccountsPage() {
         user_id: user?.id,
         account_id: selectedAccount.id,
         platform_amount: platformAmount,
-        percentage_applied: selectedAccount.percentage,
+        percentage_applied: effectivePercentage(selectedAccount, platformAmount),
         amount_owed: amountToSend,
         amount_paid: amountSent,
         payment_method: selectedMethod?.type || 'other',
@@ -1266,8 +1271,13 @@ export default function MyAccountsPage() {
                   <div className="rounded-lg bg-muted p-3 space-y-2">
                     <div className="flex justify-between text-sm">
                       <span className="text-muted-foreground">Your percentage:</span>
-                      <span className="font-semibold text-primary">{account.percentage}%</span>
+                      <span className="font-semibold text-primary">{account.percentage}%{account.deal ? ' + deal' : ''}</span>
                     </div>
+                    {account.deal && (
+                      <p className="text-xs text-muted-foreground -mt-1">
+                        Deal {account.deal.name}: {describeTiers(account.deal)}
+                      </p>
+                    )}
                     {isCommission ? null : (
                       <>
                         <div className="flex justify-between text-sm">
@@ -1564,8 +1574,11 @@ export default function MyAccountsPage() {
                 <span className="text-muted-foreground">Platform:</span>
                 <span>{selectedAccount?.platform?.display_name}</span>
                 <span className="text-muted-foreground">Your percentage:</span>
-                <span className="font-semibold text-primary">{selectedAccount?.percentage}%</span>
+                <span className="font-semibold text-primary">{selectedAccount?.percentage}%{selectedAccount?.deal ? ' + deal' : ''}</span>
               </div>
+              {selectedAccount?.deal && (
+                <p className="text-xs text-muted-foreground mt-1">Deal {selectedAccount.deal.name}: {describeTiers(selectedAccount.deal)}</p>
+              )}
             </div>
 
             {/* STEP 1 — Company paid you */}
@@ -1610,10 +1623,13 @@ export default function MyAccountsPage() {
                 </div>
                 <div className="text-center my-3">
                   <p className="text-4xl font-extrabold text-orange-600 dark:text-orange-400">
-                    ${calculateAmountOwed(parseFloat(paymentForm.platform_amount), selectedAccount.percentage).toFixed(2)}
+                    ${calculateAmountOwed(parseFloat(paymentForm.platform_amount), selectedAccount).toFixed(2)}
                   </p>
                   <p className="text-xs text-orange-700 dark:text-orange-400 mt-1">
-                    ({selectedAccount.percentage}% of ${parseFloat(paymentForm.platform_amount).toFixed(2)})
+                    ({effectivePercentage(selectedAccount, parseFloat(paymentForm.platform_amount))}% of ${parseFloat(paymentForm.platform_amount).toFixed(2)}
+                    {selectedAccount.deal && applyDeal(selectedAccount.percentage, selectedAccount.deal, parseFloat(paymentForm.platform_amount)).tier
+                      ? ` · deal ${selectedAccount.deal.name}`
+                      : ''})
                   </p>
                 </div>
                 {/* What the worker keeps — small line inside the same step so it's
@@ -1621,10 +1637,10 @@ export default function MyAccountsPage() {
                 <div className="mt-2 flex items-center justify-center gap-2 rounded-lg border border-green-300 dark:border-green-800 bg-green-50 dark:bg-green-950/30 px-3 py-2">
                   <span className="text-sm font-semibold text-green-800 dark:text-green-300">✓ You keep:</span>
                   <span className="text-base font-bold text-green-700 dark:text-green-400">
-                    ${(parseFloat(paymentForm.platform_amount) - calculateAmountOwed(parseFloat(paymentForm.platform_amount), selectedAccount.percentage)).toFixed(2)}
+                    ${(parseFloat(paymentForm.platform_amount) - calculateAmountOwed(parseFloat(paymentForm.platform_amount), selectedAccount)).toFixed(2)}
                   </span>
                   <span className="text-xs text-green-700/80 dark:text-green-400/80">
-                    ({100 - selectedAccount.percentage}%)
+                    ({100 - effectivePercentage(selectedAccount, parseFloat(paymentForm.platform_amount))}%)
                   </span>
                 </div>
               </div>
@@ -1654,7 +1670,7 @@ export default function MyAccountsPage() {
               />
               {paymentForm.amount_sent && paymentForm.platform_amount && selectedAccount && (() => {
                 const sentVal = parseFloat(paymentForm.amount_sent);
-                const owedVal = calculateAmountOwed(parseFloat(paymentForm.platform_amount), selectedAccount.percentage);
+                const owedVal = calculateAmountOwed(parseFloat(paymentForm.platform_amount), selectedAccount);
                 const diff = sentVal - owedVal;
                 // 1-cent tolerance to ignore floating-point precision issues
                 if (Math.abs(diff) < 0.01) {
@@ -1861,7 +1877,7 @@ export default function MyAccountsPage() {
             {/* Notes — mandatory when amount doesn't match exactly */}
             {(() => {
               const owed = paymentForm.platform_amount && selectedAccount
-                ? calculateAmountOwed(parseFloat(paymentForm.platform_amount), selectedAccount.percentage)
+                ? calculateAmountOwed(parseFloat(paymentForm.platform_amount), selectedAccount)
                 : 0;
               const sent = parseFloat(paymentForm.amount_sent || '0');
               // 1-cent tolerance — anything within $0.01 counts as 'exact'
@@ -1947,7 +1963,7 @@ export default function MyAccountsPage() {
                 // The note is mandatory whenever the amount sent doesn't match
                 // what's owed — whether they sent MORE or LESS.
                 const owed = selectedAccount && paymentForm.platform_amount
-                  ? calculateAmountOwed(parseFloat(paymentForm.platform_amount), selectedAccount.percentage)
+                  ? calculateAmountOwed(parseFloat(paymentForm.platform_amount), selectedAccount)
                   : 0;
                 const sent = parseFloat(paymentForm.amount_sent || '0');
                 const mismatch = !!paymentForm.amount_sent && Math.abs(sent - owed) >= 0.01;

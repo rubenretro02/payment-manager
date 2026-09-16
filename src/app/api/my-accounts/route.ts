@@ -17,7 +17,7 @@ export async function GET(request: NextRequest) {
 
     // Accounts assigned to this user + lookup tables, all in parallel (they
     // don't depend on each other).
-    const [{ data: accounts, error: accountsError }, { data: platforms }, { data: projects }] = await Promise.all([
+    const [{ data: accounts, error: accountsError }, { data: platforms }, { data: projects }, { data: deals }] = await Promise.all([
       supabase
         .from('accounts')
         .select('*')
@@ -25,6 +25,8 @@ export async function GET(request: NextRequest) {
         .order('created_at', { ascending: false }),
       supabase.from('platforms').select('*'),
       supabase.from('projects').select('*'),
+      // Tiered-percentage deals; table may not exist before its migration
+      supabase.from('deals').select('*'),
     ]);
 
     if (accountsError) {
@@ -36,6 +38,7 @@ export async function GET(request: NextRequest) {
       ...account,
       platform: platforms?.find(p => p.id === account.platform_id) || null,
       project: projects?.find(p => p.id === account.project_id) || null,
+      deal: account.deal_id ? deals?.find(d => d.id === account.deal_id) || null : null,
     }));
 
     return NextResponse.json({ success: true, data });

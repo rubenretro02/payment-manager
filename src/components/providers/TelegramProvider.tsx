@@ -32,6 +32,7 @@ const TOP_LEVEL_ROUTES = new Set([
   '/dashboard/reports',
   '/dashboard/users',
   '/dashboard/accounts',
+  '/dashboard/deals',
   '/dashboard/wallets',
   '/dashboard/platforms',
   '/dashboard/projects',

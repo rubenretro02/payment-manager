@@ -45,6 +45,7 @@ import {
   Building2,
 } from 'lucide-react';
 import type { Payment } from '@/lib/types';
+import { applyDeal, describeTiers, type Deal } from '@/lib/deals';
 import { ScreenshotImage } from '@/components/ScreenshotImage';
 import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { getScreenshotSrc } from '@/lib/screenshots';
@@ -68,6 +69,7 @@ interface DueAccountInfo {
   platform_name: string;
   project_name: string | null;
   percentage: number;
+  deal?: Deal | null;
   payment_frequency: 'weekly' | 'biweekly' | 'monthly';
   next_payment_date: string;
   days_until_due: number;
@@ -321,7 +323,8 @@ export default function DuePaymentsPage() {
     try {
       const platformAmount = parseFloat(reportForm.platform_amount);
       const amountPaid = parseFloat(reportForm.amount_paid);
-      const amountOwed = (platformAmount * selectedItem.percentage) / 100;
+      const pctApplied = applyDeal(selectedItem.percentage, selectedItem.deal, platformAmount).percentage;
+      const amountOwed = (platformAmount * pctApplied) / 100;
 
       // For unassigned accounts, attribute the payment to the admin so the
       // record has a valid user_id; admin_notes will mark it as on-behalf.
@@ -338,7 +341,7 @@ export default function DuePaymentsPage() {
           account_id: selectedItem.account_id,
           user_id: effectiveUserId,
           platform_amount: platformAmount,
-          percentage_applied: selectedItem.percentage,
+          percentage_applied: pctApplied,
           amount_owed: amountOwed,
           amount_paid: amountPaid,
           payment_method: reportForm.payment_method,
@@ -374,7 +377,7 @@ export default function DuePaymentsPage() {
     if (!selectedItem || !reportForm.platform_amount) return 0;
     const platformAmount = parseFloat(reportForm.platform_amount);
     if (isNaN(platformAmount)) return 0;
-    return (platformAmount * selectedItem.percentage) / 100;
+    return (platformAmount * applyDeal(selectedItem.percentage, selectedItem.deal, platformAmount).percentage) / 100;
   };
 
   const getInitials = (name: string | null) => {
@@ -790,8 +793,12 @@ export default function DuePaymentsPage() {
                 <span className="text-muted-foreground">Platform:</span>
                 <span>{selectedItem?.platform_name}</span>
                 <span className="text-muted-foreground">Percentage:</span>
-                <span className="font-semibold text-primary">{selectedItem?.percentage}%</span>
+                <span className="font-semibold text-primary">
+                  {selectedItem?.percentage}%
+                  {selectedItem?.deal && <span className="font-normal text-muted-foreground"> · deal {selectedItem.deal.name}</span>}
+                </span>
               </div>
+              {selectedItem?.deal && <p className="text-xs text-muted-foreground mt-1">{describeTiers(selectedItem.deal)}</p>}
             </div>
 
             {/* Platform amount */}
@@ -809,7 +816,7 @@ export default function DuePaymentsPage() {
                     ...reportForm,
                     platform_amount: value,
                     amount_paid: !isNaN(platformAmt) && selectedItem
-                      ? ((platformAmt * selectedItem.percentage) / 100).toFixed(2)
+                      ? ((platformAmt * applyDeal(selectedItem.percentage, selectedItem.deal, platformAmt).percentage) / 100).toFixed(2)
                       : '',
                   });
                 }}

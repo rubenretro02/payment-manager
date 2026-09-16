@@ -23,6 +23,7 @@ import {
   Inbox,
   ArrowLeftRight,
   BookUser,
+  Percent,
 } from 'lucide-react';
 import {
   Sheet,
@@ -79,6 +80,7 @@ const adminMoreItems = [
   { href: '/dashboard/wallets/transfers', label: 'Wallet Transfers', icon: ArrowLeftRight },
   { href: '/dashboard/wallets/book', label: 'Address Book', icon: BookUser },
   { href: '/dashboard/wallets/settings', label: 'Wallet Settings', icon: Settings },
+  { href: '/dashboard/deals', label: 'Deals', icon: Percent },
   { href: '/dashboard/platforms', label: 'Platforms', icon: Layers },
   { href: '/dashboard/projects', label: 'Projects', icon: UserCircle },
   { href: '/dashboard/payment-methods', label: 'Payment Methods', icon: CreditCard },
