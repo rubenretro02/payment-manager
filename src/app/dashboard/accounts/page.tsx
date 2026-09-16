@@ -63,6 +63,7 @@ import {
   CheckCircle2,
   Send,
 } from 'lucide-react';
+import { UserPicker } from '@/components/UserPicker';
 import { Textarea } from '@/components/ui/textarea';
 import { format } from 'date-fns';
 import { enUS } from 'date-fns/locale';
@@ -1561,22 +1562,12 @@ export default function AccountsPage() {
             {bulkAction === 'assign' && (
               <>
                 <Label>Assign to</Label>
-                <Select value={bulkAssignUserId} onValueChange={setBulkAssignUserId}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select IBO or user" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="unassigned">Unassigned</SelectItem>
-                    {assignableUsers.map((user) => (
-                      <SelectItem key={user.id} value={user.id}>
-                        {user.telegram_first_name}
-                        {user.telegram_username && ` (@${user.telegram_username})`}
-                        {' - '}
-                        {user.role === 'ibo' ? 'IBO' : 'User'}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <UserPicker
+                  users={assignableUsers}
+                  value={bulkAssignUserId === 'unassigned' ? '' : bulkAssignUserId}
+                  onChange={(id) => setBulkAssignUserId(id || 'unassigned')}
+                  noneLabel="Unassigned"
+                />
               </>
             )}
 
@@ -1684,25 +1675,7 @@ export default function AccountsPage() {
             </div>
             <div className="grid gap-2">
               <Label>Assign to</Label>
-              <Select
-                value={assignUserId || "unassigned"}
-                onValueChange={(value) => setAssignUserId(value === "unassigned" ? "" : value)}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select IBO or user" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="unassigned">Unassigned</SelectItem>
-                  {assignableUsers.map((user) => (
-                    <SelectItem key={user.id} value={user.id}>
-                      {user.telegram_first_name}
-                      {user.telegram_username && ` (@${user.telegram_username})`}
-                      {' - '}
-                      {user.role === 'ibo' ? 'IBO' : 'User'}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <UserPicker users={assignableUsers} value={assignUserId} onChange={setAssignUserId} noneLabel="Unassigned" />
             </div>
           </div>
           <DialogFooter>
@@ -1741,21 +1714,12 @@ export default function AccountsPage() {
             </div>
             <div className="grid gap-2">
               <Label>Owner</Label>
-              <Select value={ownerUserId} onValueChange={setOwnerUserId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select owner" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="admin">Admin (no partner)</SelectItem>
-                  {partnerUsers.map((partner) => (
-                    <SelectItem key={partner.id} value={partner.id}>
-                      {partner.telegram_first_name}
-                      {partner.telegram_username && ` (@${partner.telegram_username})`}
-                      {' - Partner'}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <UserPicker
+                users={partnerUsers}
+                value={ownerUserId === 'admin' ? '' : ownerUserId}
+                onChange={(id) => setOwnerUserId(id || 'admin')}
+                noneLabel="Admin (no partner)"
+              />
             </div>
           </div>
           <DialogFooter>

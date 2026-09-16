@@ -68,6 +68,7 @@ import {
   KeyRound,
   MessageCircle,
 } from 'lucide-react';
+import { TelegramHandle } from '@/components/TelegramHandle';
 import { format } from 'date-fns';
 import { useAuth } from '@/hooks/useAuth';
 import type { User } from '@/lib/types';
@@ -681,9 +682,7 @@ export default function UsersPage() {
                           <p className="font-medium">
                             {user.telegram_first_name} {user.telegram_last_name || ''}
                           </p>
-                          <p className="text-sm text-muted-foreground">
-                            {user.telegram_username ? `@${user.telegram_username}` : 'No username'}
-                          </p>
+                          <TelegramHandle username={user.telegram_username} />
                         </div>
                       </div>
                     </TableCell>
@@ -844,9 +843,7 @@ export default function UsersPage() {
                   <AtSign className="h-4 w-4 text-muted-foreground" />
                   <div>
                     <p className="text-xs text-muted-foreground">Telegram Username</p>
-                    <p className="font-medium">
-                      {selectedUser.telegram_username ? `@${selectedUser.telegram_username}` : 'Not set'}
-                    </p>
+                    <TelegramHandle username={selectedUser.telegram_username} className="font-medium" />
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
