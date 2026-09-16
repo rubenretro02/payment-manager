@@ -303,6 +303,20 @@ export async function updateWalletAuto(id: string, patch: { auto_transfer?: bool
   }
 }
 
+/** Turn auto-transfer on/off for every seed wallet except `excludeIds` (the gas tanks). Returns how many changed. */
+export async function setAutoTransferAll(on: boolean, excludeIds: string[]): Promise<number> {
+  const supabase = createAdminClient();
+  let q = supabase.from('wallets').update({ auto_transfer: on }).eq('source', 'seed').eq('auto_transfer', !on);
+  if (excludeIds.length > 0) q = q.not('id', 'in', `(${excludeIds.join(',')})`);
+  const { data, error } = await q.select('id');
+  if (error) {
+    throw /auto_transfer/i.test(error.message)
+      ? new Error('Automation columns are missing. Run migration-add-wallet-book-auto.sql in Supabase.')
+      : dbError(error);
+  }
+  return (data || []).length;
+}
+
 export async function renameWallet(id: string, name: string): Promise<void> {
   const supabase = createAdminClient();
   const { error } = await supabase.from('wallets').update({ name: name.trim() || null }).eq('id', id);

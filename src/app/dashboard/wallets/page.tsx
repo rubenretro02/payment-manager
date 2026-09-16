@@ -8,6 +8,14 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -139,6 +147,28 @@ export default function WalletsOverviewPage() {
       toast.error('Failed to create wallet');
     } finally {
       setCreating(false);
+    }
+  };
+
+  // Global switch: auto-transfer on/off for every seed wallet (gas tanks excluded
+  // server-side). Sweeps are NOT started here so single wallets can still be
+  // turned off before "Run queue now".
+  const [bulkAutoBusy, setBulkAutoBusy] = useState(false);
+  const setAllAuto = async (on: boolean) => {
+    setBulkAutoBusy(true);
+    try {
+      const res = await vault.authFetch('/api/wallets/auto-transfer-all', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ on }) });
+      const json = await res.json();
+      if (!json.success) {
+        if (res.status !== 401) toast.error(json.error || 'Could not update');
+        return;
+      }
+      const n = json.data.changed as number;
+      if (on) toast.success(`Auto-transfer turned on for ${n} wallet${n === 1 ? '' : 's'}. Turn it off on any you want to keep, then use Run queue now (Transfers) or unlock again to start sweeping.`);
+      else toast.success(`Auto-transfer turned off on ${n} wallet${n === 1 ? '' : 's'}.`);
+      await loadWallets();
+    } finally {
+      setBulkAutoBusy(false);
     }
   };
 
@@ -384,6 +414,26 @@ export default function WalletsOverviewPage() {
             <Button type="button" variant={onlyWithBalance ? 'default' : 'outline'} size="sm" className="gap-1" onClick={() => setOnlyWithBalance((v) => !v)}>
               <Coins className="h-3.5 w-3.5" /> With balance
             </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button type="button" variant="outline" size="sm" className="gap-1" disabled={bulkAutoBusy}>
+                  {bulkAutoBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
+                  Auto-transfer · {wallets.filter((w) => w.auto_transfer).length}/{wallets.filter((w) => w.source === 'seed').length}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-72">
+                <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+                  Applies to every seed wallet at once (gas tanks are left alone). You can still turn single wallets off afterwards.
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => setAllAuto(true)}>
+                  <Zap className="h-4 w-4 mr-2 text-emerald-600" /> Turn ON for all wallets
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setAllAuto(false)}>
+                  <Zap className="h-4 w-4 mr-2 text-muted-foreground" /> Turn OFF for all wallets
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Button variant="outline" size="sm" onClick={() => { loadWallets(); loadBalances(); }} disabled={loadingBalances} className="gap-1">
               <RefreshCw className={`h-3.5 w-3.5 ${loadingBalances ? 'animate-spin' : ''}`} /> Refresh
             </Button>
