@@ -39,6 +39,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { format, startOfDay, startOfWeek, startOfMonth, startOfYear, isAfter, isBefore, endOfDay } from 'date-fns';
+import { CycleInfo } from '@/components/CycleInfo';
 import { useAuth } from '@/hooks/useAuth';
 import type { Payment } from '@/lib/types';
 import { DateRangePicker } from '@/components/ui/date-range-picker';
@@ -866,10 +867,21 @@ export default function PaymentsPage() {
                           {payment.user?.telegram_username && (
                             <span>@{payment.user.telegram_username}</span>
                           )}
+                          {payment.for_cycle_date && (
+                            <>
+                              <span>•</span>
+                              <CycleInfo
+                                variant="inline"
+                                forCycleDate={payment.for_cycle_date}
+                                reportedAt={payment.submitted_at || payment.created_at}
+                                frequency={payment.account?.payment_frequency}
+                              />
+                            </>
+                          )}
                           {payment.submitted_at && (
                             <>
                               <span>•</span>
-                              <span>{format(new Date(payment.submitted_at), "MMM d, HH:mm")}</span>
+                              <span>reported {format(new Date(payment.submitted_at), "MMM d, HH:mm")}</span>
                             </>
                           )}
                         </div>
@@ -1243,7 +1255,17 @@ export default function PaymentsPage() {
 
           {/* Payment details summary */}
           <div className="rounded-lg bg-muted p-4 mt-4">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm">
+              <div>
+                <p className="text-muted-foreground">Cycle</p>
+                <div className="[&>span]:items-start [&>span]:text-left">
+                  <CycleInfo
+                    forCycleDate={selectedPayment?.for_cycle_date}
+                    reportedAt={selectedPayment?.submitted_at || selectedPayment?.created_at}
+                    frequency={selectedPayment?.account?.payment_frequency}
+                  />
+                </div>
+              </div>
               <div>
                 <p className="text-muted-foreground">Platform</p>
                 <p className="font-medium">{selectedPayment?.account?.platform?.display_name}</p>
@@ -1305,6 +1327,20 @@ export default function PaymentsPage() {
           <div className="grid gap-4 py-4">
             <div className="rounded-lg bg-muted p-4">
               <div className="grid grid-cols-2 gap-2 text-sm">
+                <span className="text-muted-foreground">Cycle:</span>
+                <span className="[&>span]:items-start [&>span]:text-left">
+                  <CycleInfo
+                    forCycleDate={selectedPayment?.for_cycle_date}
+                    reportedAt={selectedPayment?.submitted_at || selectedPayment?.created_at}
+                    frequency={selectedPayment?.account?.payment_frequency}
+                  />
+                </span>
+                <span className="text-muted-foreground">Reported:</span>
+                <span>
+                  {selectedPayment
+                    ? format(new Date(selectedPayment.submitted_at || selectedPayment.created_at), "MMM d, yyyy 'at' HH:mm")
+                    : '—'}
+                </span>
                 <span className="text-muted-foreground">Platform:</span>
                 <span>{selectedPayment?.account?.platform?.display_name}</span>
                 <span className="text-muted-foreground">Amount earned:</span>
@@ -1422,10 +1458,18 @@ export default function PaymentsPage() {
               {/* Payment Info Grid */}
               <div className="grid gap-3">
                 <div className="rounded-lg bg-muted p-4 space-y-3">
+                  <div className="flex justify-between items-start gap-3">
+                    <span className="text-muted-foreground">Cycle</span>
+                    <CycleInfo
+                      forCycleDate={selectedPayment.for_cycle_date}
+                      reportedAt={selectedPayment.submitted_at || selectedPayment.created_at}
+                      frequency={selectedPayment.account?.payment_frequency}
+                    />
+                  </div>
                   <div className="flex justify-between items-center">
-                    <span className="text-muted-foreground">Date</span>
+                    <span className="text-muted-foreground">Reported</span>
                     <span className="font-medium">
-                      {format(new Date(selectedPayment.created_at), "MMMM d, yyyy 'at' HH:mm")}
+                      {format(new Date(selectedPayment.submitted_at || selectedPayment.created_at), "MMMM d, yyyy 'at' HH:mm")}
                     </span>
                   </div>
                   <div className="flex justify-between items-center">

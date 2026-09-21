@@ -257,6 +257,32 @@ export function findNearestCycleDate(
 }
 
 /**
+ * Which cycle a payment was for, and how many days after that date it was
+ * reported. Shown next to the screenshots so the admin can check the
+ * company-payment date in the photo against the cycle: a report filed
+ * BEFORE the cycle date (the company can't have paid yet) or long after it
+ * deserves a closer look.
+ */
+export function reportCycleGap(
+  forCycleDate: string | null | undefined,
+  reportedAt: string | null | undefined,
+  frequency?: PaymentFrequency | null
+): { cycle: Date; daysAfter: number | null; flag: 'early' | 'late' | null } | null {
+  if (!forCycleDate) return null;
+  const [y, m, d] = forCycleDate.split('T')[0].split('-').map(Number);
+  if (!y || !m || !d) return null;
+  // Local calendar date — new Date('2026-09-16') would be UTC midnight and
+  // render as Sep 15 in US time zones.
+  const cycle = new Date(y, m - 1, d);
+  if (!reportedAt) return { cycle, daysAfter: null, flag: null };
+  const reported = startOfDay(new Date(reportedAt));
+  const daysAfter = Math.round((reported.getTime() - cycle.getTime()) / 86_400_000);
+  const lateAfter = frequency === 'weekly' ? 4 : frequency === 'monthly' ? 15 : 7;
+  const flag = daysAfter < 0 ? 'early' : daysAfter > lateAfter ? 'late' : null;
+  return { cycle, daysAfter, flag };
+}
+
+/**
  * Window around a scheduled cycle date in which a payment is considered
  * to "belong to" that cycle. Used so that a late cycle-1 payment doesn't
  * get mistakenly credited as a cycle-2 payment just because it happened

@@ -50,6 +50,7 @@ import type { Payment } from '@/lib/types';
 import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { isCommissionAccount } from '@/lib/account-utils';
 import { ScreenshotImage } from '@/components/ScreenshotImage';
+import { CycleInfo } from '@/components/CycleInfo';
 import { getScreenshotSrc } from '@/lib/screenshots';
 import { getCached, setCached, CACHE_KEYS } from '@/lib/client-cache';
 import { useAuth } from '@/hooks/useAuth';
@@ -1351,7 +1352,8 @@ export default function ReportsPage() {
                 <div className="flex justify-between"><span className="text-muted-foreground">Account:</span><span className="font-medium">{selectedPayment.account?.full_name || '-'}</span></div>
                 <div className="flex justify-between"><span className="text-muted-foreground">Email:</span><span className="text-xs">{selectedPayment.account?.account_email || '-'}</span></div>
                 <div className="flex justify-between"><span className="text-muted-foreground">Platform:</span><span>{selectedPayment.account?.platform?.display_name || '-'}</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">Date:</span><span>{format(new Date(selectedPayment.created_at), "MMMM d, yyyy 'at' HH:mm")}</span></div>
+                <div className="flex justify-between items-start gap-3"><span className="text-muted-foreground">Cycle:</span><CycleInfo forCycleDate={selectedPayment.for_cycle_date} reportedAt={selectedPayment.submitted_at || selectedPayment.created_at} frequency={selectedPayment.account?.payment_frequency} /></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Reported:</span><span>{format(new Date(selectedPayment.created_at), "MMMM d, yyyy 'at' HH:mm")}</span></div>
               </div>
 
               {/* Amounts */}
