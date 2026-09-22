@@ -1571,6 +1571,14 @@ export default function MyAccountsPage() {
             {/* Account Info */}
             <div className="rounded-lg bg-muted p-3">
               <div className="grid grid-cols-2 gap-2 text-sm">
+                {selectedCycleStr && (
+                  <>
+                    <span className="text-muted-foreground">For cycle:</span>
+                    <span className="font-semibold">
+                      {format(new Date(`${selectedCycleStr}T00:00:00`), 'EEE, MMM d, yyyy', { locale: enUS })}
+                    </span>
+                  </>
+                )}
                 <span className="text-muted-foreground">Platform:</span>
                 <span>{selectedAccount?.platform?.display_name}</span>
                 <span className="text-muted-foreground">Your percentage:</span>
