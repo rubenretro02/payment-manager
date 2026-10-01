@@ -9,11 +9,13 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { HandCoins, Loader2, RefreshCw, DollarSign, CheckCircle2, Clock, AlertTriangle, Camera, Upload, X, Check } from 'lucide-react';
+import { HandCoins, Loader2, RefreshCw, DollarSign, CheckCircle2, Clock, AlertTriangle, Camera, Upload, X, Check, ChevronRight, ExternalLink } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import { useAutoRefresh } from '@/hooks/useAutoRefresh';
+import { ScreenshotImage } from '@/components/ScreenshotImage';
+import { getScreenshotSrc } from '@/lib/screenshots';
 import {
   EXTRA_MODE_LABEL, FREQUENCY_LABEL, STATUS_LABEL, allocatePayment, daysBetween, fmtMoney, graceEnd, installmentDue, payoffQuote, planPayAhead, round2, toLocalDate, todayStr,
   type ExtraMode, type LoanDisplayStatus, type LoanInstallment, type LoanView,
@@ -42,6 +44,24 @@ const STATUS_COLOR: Record<LoanDisplayStatus, string> = {
   cancelled: 'bg-gray-100 text-gray-700 border-gray-300',
 };
 const fmtDay = (s: string | null | undefined, f = 'EEE, MMM d, yyyy') => (s ? format(toLocalDate(s), f) : '—');
+const fmtStamp = (s: string | null | undefined) => (s ? format(new Date(s), 'MMM d, yyyy · HH:mm') : '—');
+/** Notes without the "[extra:…]" marker the report form adds for the admin. */
+const cleanNotes = (s: string | null | undefined) => (s || '').replace(/\[extra:[a-z_]+\]\s*/g, '').trim();
+const extraAsked = (s: string | null | undefined) => (s || '').match(/\[extra:(reduce_installment|reduce_term|pay_ahead)\]/)?.[1] as ExtraMode | undefined;
+
+/** Balance right after each confirmed payment, in the order they were confirmed. */
+function balancesAfter(loan: LoanView): Map<string, number> {
+  const confirmed = loan.installments_list
+    .filter((i) => i.status === 'confirmed')
+    .sort((a, b) => (a.confirmed_at || a.due_date).localeCompare(b.confirmed_at || b.due_date) || a.seq - b.seq);
+  const map = new Map<string, number>();
+  let bal = loan.principal;
+  for (const i of confirmed) {
+    bal = round2(bal + (i.shortfall ?? 0) - (i.principal_paid ?? 0));
+    map.set(i.id, Math.max(0, bal));
+  }
+  return map;
+}
 
 export default function MyLoansPage() {
   const { user } = useAuth();
@@ -50,6 +70,7 @@ export default function MyLoansPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [reportFor, setReportFor] = useState<{ loan: LoanView; inst: LoanInstallment } | null>(null);
+  const [detail, setDetail] = useState<{ loan: LoanView; inst: LoanInstallment } | null>(null);
 
   const load = async (show = false) => {
     if (!user?.id) return;
@@ -93,15 +114,17 @@ export default function MyLoansPage() {
         <Card><CardContent className="p-8 text-center text-muted-foreground">You have no loans.</CardContent></Card>
       ) : (
         <>
-          {active.map((loan) => <LoanCard key={loan.id} loan={loan} today={today} onReport={(inst) => setReportFor({ loan, inst })} />)}
+          {active.map((loan) => <LoanCard key={loan.id} loan={loan} today={today} onReport={(inst) => setReportFor({ loan, inst })} onDetail={(inst) => setDetail({ loan, inst })} />)}
           {closed.length > 0 && (
             <>
               <p className="text-sm font-medium text-muted-foreground pt-2">Past loans</p>
-              {closed.map((loan) => <LoanCard key={loan.id} loan={loan} today={today} onReport={() => undefined} />)}
+              {closed.map((loan) => <LoanCard key={loan.id} loan={loan} today={today} onReport={() => undefined} onDetail={(inst) => setDetail({ loan, inst })} />)}
             </>
           )}
         </>
       )}
+
+      {detail && <PaymentDetailDialog loan={detail.loan} inst={detail.inst} onClose={() => setDetail(null)} />}
 
       {reportFor && user && (
         <ReportDialog
@@ -117,7 +140,7 @@ export default function MyLoansPage() {
   );
 }
 
-function LoanCard({ loan, today, onReport }: { loan: LoanView; today: string; onReport: (inst: LoanInstallment) => void }) {
+function LoanCard({ loan, today, onReport, onDetail }: { loan: LoanView; today: string; onReport: (inst: LoanInstallment) => void; onDetail: (inst: LoanInstallment) => void }) {
   const cur = loan.current;
   const due = cur ? installmentDue(loan, cur, today) : null;
   const daysTo = cur ? daysBetween(today, cur.due_date) : null;
@@ -181,10 +204,11 @@ function LoanCard({ loan, today, onReport }: { loan: LoanView; today: string; on
           </div>
         )}
         {cur?.status === 'submitted' && (
-          <div className="rounded-md border border-purple-300 bg-purple-50 dark:bg-purple-950/30 p-2 text-xs text-purple-900 dark:text-purple-200 flex gap-2">
+          <button type="button" onClick={() => onDetail(cur)} className="w-full text-left rounded-md border border-purple-300 bg-purple-50 dark:bg-purple-950/30 p-2 text-xs text-purple-900 dark:text-purple-200 flex items-center gap-2">
             <Clock className="h-4 w-4 shrink-0" />
-            <span>You reported {fmtMoney(cur.reported_amount)}{cur.submitted_at ? ` on ${format(new Date(cur.submitted_at), 'MMM d, HH:mm')}` : ''}. Waiting for the admin to confirm.</span>
-          </div>
+            <span className="flex-1">You reported {fmtMoney(cur.reported_amount)}{cur.submitted_at ? ` on ${format(new Date(cur.submitted_at), 'MMM d, HH:mm')}` : ''}. Waiting for the admin to confirm.</span>
+            <ChevronRight className="h-4 w-4 shrink-0" />
+          </button>
         )}
 
         {canReport && (
@@ -202,20 +226,119 @@ function LoanCard({ loan, today, onReport }: { loan: LoanView; today: string; on
           </details>
         )}
         {history.length > 0 && (
-          <details className="text-xs">
+          <details className="text-xs" open>
             <summary className="cursor-pointer text-muted-foreground">Payments made ({history.length}) · {fmtMoney(loan.totals.paid)}</summary>
-            <ul className="mt-1 space-y-0.5">
+            <ul className="mt-1 divide-y rounded-md border">
               {history.map((i) => (
-                <li key={i.id} className="flex justify-between gap-2">
-                  <span className="flex items-center gap-1"><CheckCircle2 className="h-3 w-3 text-green-600" /> {i.confirmed_at ? format(new Date(i.confirmed_at), 'MMM d, yyyy') : fmtDay(i.due_date, 'MMM d, yyyy')}{i.kind === 'principal' ? <span className="text-emerald-700 font-medium"> · principal payment</span> : ''}</span>
-                  <span>{fmtMoney(i.amount_paid)} {i.kind !== 'principal' && <span className="text-muted-foreground">({fmtMoney(i.interest_paid)} int · {fmtMoney(i.principal_paid)} principal{(i.fee_paid ?? 0) > 0 ? ` · ${fmtMoney(i.fee_paid)} fee` : ''})</span>}</span>
+                <li key={i.id}>
+                  <button type="button" onClick={() => onDetail(i)} className="w-full flex items-center justify-between gap-2 px-2 py-2 text-left hover:bg-muted active:bg-muted">
+                    <span className="flex items-center gap-1.5 min-w-0">
+                      <CheckCircle2 className="h-3.5 w-3.5 text-green-600 shrink-0" />
+                      <span className="truncate">
+                        {i.confirmed_at ? format(new Date(i.confirmed_at), 'MMM d, yyyy') : fmtDay(i.due_date, 'MMM d, yyyy')}
+                        {i.kind === 'principal' ? <span className="text-emerald-700 font-medium"> · principal payment</span> : <span className="text-muted-foreground"> · #{i.seq}</span>}
+                      </span>
+                    </span>
+                    <span className="flex items-center gap-1 shrink-0">
+                      <span className="font-semibold">{fmtMoney(i.amount_paid)}</span>
+                      <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                    </span>
+                  </button>
                 </li>
               ))}
             </ul>
+            <p className="mt-1 text-[11px] text-muted-foreground">Tap a payment to see the full breakdown and your screenshot.</p>
           </details>
         )}
       </CardContent>
     </Card>
+  );
+}
+
+function PaymentDetailDialog({ loan, inst, onClose }: { loan: LoanView; inst: LoanInstallment; onClose: () => void }) {
+  const confirmed = inst.status === 'confirmed';
+  const after = balancesAfter(loan).get(inst.id);
+  const before = after !== undefined ? round2(after - (inst.shortfall ?? 0) + (inst.principal_paid ?? 0)) : undefined;
+  const asked = extraAsked(inst.user_notes);
+  const notes = cleanNotes(inst.user_notes);
+  const src = getScreenshotSrc(inst.screenshot_url, inst.screenshot_file_id);
+  const amount = confirmed ? inst.amount_paid : inst.reported_amount;
+  const Row = ({ label, value, strong, tone }: { label: string; value: React.ReactNode; strong?: boolean; tone?: string }) => (
+    <div className="flex justify-between gap-3 py-1.5">
+      <span className="text-muted-foreground">{label}</span>
+      <span className={`text-right ${strong ? 'font-bold' : 'font-medium'} ${tone || ''}`}>{value}</span>
+    </div>
+  );
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-md max-h-[92vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            {inst.kind === 'principal' ? 'Principal payment' : inst.is_payoff ? 'Final payment' : `Payment #${inst.seq}`}
+            <Badge className={confirmed ? 'bg-green-100 text-green-800 hover:bg-green-100' : 'bg-purple-100 text-purple-800 hover:bg-purple-100'}>{confirmed ? 'confirmed' : 'waiting for confirmation'}</Badge>
+          </DialogTitle>
+          <DialogDescription>Loan of {fmtMoney(loan.principal)} · {loan.model === 'open' ? `${loan.rate_pct}% per cycle` : `${loan.rate_pct}% per year`}</DialogDescription>
+        </DialogHeader>
+
+        <div className="rounded-lg bg-muted p-3 text-center">
+          <p className="text-xs text-muted-foreground">{confirmed ? 'Amount applied' : 'Amount you reported'}</p>
+          <p className="text-3xl font-extrabold">{fmtMoney(amount)}</p>
+          {confirmed && inst.reported_amount !== null && Math.abs((inst.reported_amount ?? 0) - (inst.amount_paid ?? 0)) > 0.009 && (
+            <p className="text-[11px] text-muted-foreground">you reported {fmtMoney(inst.reported_amount)}</p>
+          )}
+        </div>
+
+        <div className="text-sm divide-y rounded-lg border px-3">
+          {inst.kind !== 'principal' && <Row label="Due date" value={fmtDay(inst.due_date)} />}
+          {inst.submitted_at && <Row label="Reported" value={fmtStamp(inst.submitted_at)} />}
+          {confirmed && <Row label="Confirmed" value={fmtStamp(inst.confirmed_at)} />}
+          {inst.payment_method && <Row label="Paid with" value={inst.payment_method} />}
+          {inst.payment_reference && <Row label="Reference" value={<span className="font-mono text-xs break-all">{inst.payment_reference}</span>} />}
+        </div>
+
+        <div className="text-sm divide-y rounded-lg border px-3">
+          {confirmed ? (
+            <>
+              {(inst.fee_paid ?? 0) > 0 && <Row label="Late fee" value={fmtMoney(inst.fee_paid)} tone="text-red-700" />}
+              <Row label="Interest" value={fmtMoney(inst.interest_paid)} />
+              <Row label="Principal" value={fmtMoney(inst.principal_paid)} />
+              {(inst.shortfall ?? 0) > 0 && <Row label="Unpaid interest added to balance" value={`+${fmtMoney(inst.shortfall)}`} tone="text-amber-700" />}
+              {before !== undefined && after !== undefined && (
+                <Row label="Balance" value={<span>{fmtMoney(before)} <span className="text-muted-foreground">→</span> <b>{fmtMoney(after)}</b></span>} />
+              )}
+              {after !== undefined && after <= 0.009 && <Row label="Result" value="Loan paid off 🎉" tone="text-green-700" />}
+            </>
+          ) : (
+            <>
+              <Row label="Interest due" value={fmtMoney(inst.interest_due)} />
+              {(loan.model === 'french' || inst.is_payoff) && <Row label="Principal due" value={fmtMoney(inst.principal_due)} />}
+              <Row label="Status" value="The admin reviews it and confirms how it is applied." />
+            </>
+          )}
+        </div>
+
+        {(asked || notes || inst.admin_notes || inst.rejection_reason) && (
+          <div className="text-sm divide-y rounded-lg border px-3">
+            {asked && <Row label="You asked" value={EXTRA_MODE_LABEL[asked]} />}
+            {notes && <Row label="Your note" value={<span className="italic">“{notes}”</span>} />}
+            {inst.admin_notes && inst.admin_notes !== 'Principal payment' && <Row label="Admin note" value={inst.admin_notes} />}
+            {inst.rejection_reason && <Row label="Earlier rejection" value={inst.rejection_reason} tone="text-red-700" />}
+          </div>
+        )}
+
+        {src && (
+          <div className="space-y-1">
+            <p className="text-xs text-muted-foreground">Your screenshot</p>
+            <ScreenshotImage url={inst.screenshot_url} fileId={inst.screenshot_file_id} alt="Payment screenshot" className="w-full max-h-72 object-contain rounded-lg border bg-black/5" />
+            <a href={src} target="_blank" rel="noreferrer" className="text-xs text-blue-700 underline inline-flex items-center gap-1"><ExternalLink className="h-3 w-3" /> Open full size</a>
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Close</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
