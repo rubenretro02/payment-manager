@@ -23,6 +23,7 @@ import {
   ArrowLeftRight,
   BookUser,
   Percent,
+  HandCoins,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useState } from 'react';
@@ -52,6 +53,7 @@ const adminLinks: NavLink[] = [
   { href: '/dashboard/reports', label: 'Reports', icon: BarChart3 },
   { href: '/dashboard/accounts', label: 'Accounts', icon: Building2 },
   { href: '/dashboard/deals', label: 'Deals', icon: Percent },
+  { href: '/dashboard/loans', label: 'Loans', icon: HandCoins },
   { href: '/dashboard/wallets', label: 'Wallets', icon: Wallet, children: walletChildren },
   { href: '/dashboard/platforms', label: 'Platforms', icon: Layers },
   { href: '/dashboard/projects', label: 'Projects', icon: UserCircle },
@@ -72,6 +74,7 @@ const iboLinks: NavLink[] = [
 const partnerLinks: NavLink[] = [
   { href: '/dashboard/my-accounts', label: 'My Accounts', icon: Building2 },
   { href: '/dashboard/my-payments', label: 'My Payments', icon: History },
+  { href: '/dashboard/my-loans', label: 'Loans', icon: HandCoins },
   { href: '/dashboard/accounts', label: 'Accounts', icon: Building2 },
   { href: '/dashboard/payments', label: 'Payments', icon: CreditCard },
   { href: '/dashboard/reports', label: 'Reports', icon: BarChart3 },
@@ -81,6 +84,7 @@ const userLinks: NavLink[] = [
   { href: '/dashboard', label: 'Home', icon: LayoutDashboard },
   { href: '/dashboard/my-accounts', label: 'My Accounts', icon: Building2 },
   { href: '/dashboard/payments', label: 'My Payments', icon: CreditCard },
+  { href: '/dashboard/my-loans', label: 'Loans', icon: HandCoins },
 ];
 
 export function Sidebar() {

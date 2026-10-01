@@ -33,6 +33,8 @@ const TOP_LEVEL_ROUTES = new Set([
   '/dashboard/users',
   '/dashboard/accounts',
   '/dashboard/deals',
+  '/dashboard/loans',
+  '/dashboard/my-loans',
   '/dashboard/wallets',
   '/dashboard/platforms',
   '/dashboard/projects',

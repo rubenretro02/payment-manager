@@ -22,7 +22,10 @@ export type UserNotificationType =
   | 'payment_overdue'
   | 'new_account_assigned'
   | 'account_status_changed'
-  | 'welcome';
+  | 'welcome'
+  | 'loan_created'
+  | 'loan_payment_confirmed'
+  | 'loan_payment_rejected';
 
 export type AdminNotificationType =
   | 'new_payment_received'
@@ -44,6 +47,12 @@ interface UserNotificationData {
   percentage?: number;
   status?: string;
   userName?: string;
+  // loans
+  principal?: number;
+  balance?: number;
+  nextDue?: string;
+  terms?: string;
+  paidOff?: boolean;
 }
 
 const userNotificationTemplates: Record<UserNotificationType, (data: UserNotificationData) => string> = {
@@ -138,6 +147,30 @@ You can now:
 • Track your payment history
 
 Open the app to get started! 🚀`,
+
+  loan_created: (data) => `
+🤝 <b>New Loan</b>
+
+You received a loan of <b>$${data.principal?.toFixed(2)}</b>.
+
+📋 Terms: ${data.terms}
+📅 First payment: ${data.nextDue}
+
+Open the app → <b>Loans</b> to see your schedule. On each payment day, report your payment there.`,
+
+  loan_payment_confirmed: (data) => `
+✅ <b>Loan Payment Confirmed</b>
+
+💰 Amount: <b>$${data.amount?.toFixed(2)}</b>
+${data.paidOff ? '🎉 <b>Your loan is fully paid off. Thank you!</b>' : `📉 Remaining balance: <b>$${data.balance?.toFixed(2)}</b>\n📅 Next payment: ${data.nextDue}`}`,
+
+  loan_payment_rejected: (data) => `
+❌ <b>Loan Payment Rejected</b>
+
+Your loan payment of <b>$${data.amount?.toFixed(2)}</b> was not approved.
+${data.reason ? `\n📝 Reason: <i>${data.reason}</i>` : ''}
+
+Please review and report it again in the app → <b>Loans</b>.`,
 };
 
 // =============================================

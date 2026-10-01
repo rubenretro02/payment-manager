@@ -24,6 +24,7 @@ import {
   ArrowLeftRight,
   BookUser,
   Percent,
+  HandCoins,
 } from 'lucide-react';
 import {
   Sheet,
@@ -38,6 +39,7 @@ import { Button } from '@/components/ui/button';
 const userNavItems = [
   { href: '/dashboard/my-accounts', label: 'Accounts', icon: Building2 },
   { href: '/dashboard/my-payments', label: 'Payments', icon: History },
+  { href: '/dashboard/my-loans', label: 'Loans', icon: HandCoins },
   { href: '/dashboard/payment-info', label: 'Pay Methods', icon: CreditCard },
   { href: '/dashboard/profile', label: 'Profile', icon: User },
 ];
@@ -53,6 +55,7 @@ const partnerBottomItems = [
 const partnerMoreItems = [
   { href: '/dashboard/my-accounts', label: 'My Accounts', icon: Building2 },
   { href: '/dashboard/my-payments', label: 'My Payments', icon: History },
+  { href: '/dashboard/my-loans', label: 'Loans', icon: HandCoins },
   { href: '/dashboard/accounts', label: 'Accounts', icon: Building2 },
   { href: '/dashboard/payments', label: 'Payments', icon: CreditCard },
   { href: '/dashboard/reports', label: 'Reports', icon: BarChart3 },
@@ -81,6 +84,7 @@ const adminMoreItems = [
   { href: '/dashboard/wallets/book', label: 'Address Book', icon: BookUser },
   { href: '/dashboard/wallets/settings', label: 'Wallet Settings', icon: Settings },
   { href: '/dashboard/deals', label: 'Deals', icon: Percent },
+  { href: '/dashboard/loans', label: 'Loans', icon: HandCoins },
   { href: '/dashboard/platforms', label: 'Platforms', icon: Layers },
   { href: '/dashboard/projects', label: 'Projects', icon: UserCircle },
   { href: '/dashboard/payment-methods', label: 'Payment Methods', icon: CreditCard },
