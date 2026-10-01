@@ -15,8 +15,8 @@ import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import { useAutoRefresh } from '@/hooks/useAutoRefresh';
 import {
-  FREQUENCY_LABEL, STATUS_LABEL, allocatePayment, daysBetween, fmtMoney, graceEnd, installmentDue, payoffQuote, toLocalDate, todayStr,
-  type LoanDisplayStatus, type LoanInstallment, type LoanView,
+  EXTRA_MODE_LABEL, FREQUENCY_LABEL, STATUS_LABEL, allocatePayment, daysBetween, fmtMoney, graceEnd, installmentDue, payoffQuote, planPayAhead, round2, toLocalDate, todayStr,
+  type ExtraMode, type LoanDisplayStatus, type LoanInstallment, type LoanView,
 } from '@/lib/loans';
 
 interface PaymentMethod {
@@ -207,8 +207,8 @@ function LoanCard({ loan, today, onReport }: { loan: LoanView; today: string; on
             <ul className="mt-1 space-y-0.5">
               {history.map((i) => (
                 <li key={i.id} className="flex justify-between gap-2">
-                  <span className="flex items-center gap-1"><CheckCircle2 className="h-3 w-3 text-green-600" /> {i.confirmed_at ? format(new Date(i.confirmed_at), 'MMM d, yyyy') : fmtDay(i.due_date, 'MMM d, yyyy')}</span>
-                  <span>{fmtMoney(i.amount_paid)} <span className="text-muted-foreground">({fmtMoney(i.interest_paid)} int · {fmtMoney(i.principal_paid)} principal{(i.fee_paid ?? 0) > 0 ? ` · ${fmtMoney(i.fee_paid)} fee` : ''})</span></span>
+                  <span className="flex items-center gap-1"><CheckCircle2 className="h-3 w-3 text-green-600" /> {i.confirmed_at ? format(new Date(i.confirmed_at), 'MMM d, yyyy') : fmtDay(i.due_date, 'MMM d, yyyy')}{i.kind === 'principal' ? <span className="text-emerald-700 font-medium"> · principal payment</span> : ''}</span>
+                  <span>{fmtMoney(i.amount_paid)} {i.kind !== 'principal' && <span className="text-muted-foreground">({fmtMoney(i.interest_paid)} int · {fmtMoney(i.principal_paid)} principal{(i.fee_paid ?? 0) > 0 ? ` · ${fmtMoney(i.fee_paid)} fee` : ''})</span>}</span>
                 </li>
               ))}
             </ul>
@@ -228,10 +228,15 @@ function ReportDialog({ loan, inst, userId, methods, onClose, onDone }: { loan: 
   const [notes, setNotes] = useState('');
   const [shot, setShot] = useState<Shot | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [extraMode, setExtraMode] = useState<ExtraMode>('reduce_installment');
   const fileRef = useRef<HTMLInputElement>(null);
   const camRef = useRef<HTMLInputElement>(null);
   const selectedMethod = methods.find((m) => m.id === method);
-  const alloc = allocatePayment(Number(amount) || 0, due, loan.balance);
+  const amt = Number(amount) || 0;
+  const alloc = allocatePayment(amt, due, loan.balance);
+  const extra = round2(amt - due.total);
+  const askExtra = loan.model === 'french' && !inst.is_payoff && extra > 0.005;
+  const aheadPlan = askExtra && extraMode === 'pay_ahead' ? planPayAhead(loan, inst, due, amt) : null;
 
   const onFile = async (file: File | undefined) => {
     if (!file) return;
@@ -272,7 +277,8 @@ function ReportDialog({ loan, inst, userId, methods, onClose, onDone }: { loan: 
           payment_reference: reference || null,
           screenshot_url: shot.url || shot.preview,
           screenshot_file_id: shot.fileId,
-          user_notes: notes || null,
+          // The admin sees this and applies the extra the way the user asked.
+          user_notes: [askExtra ? `[extra:${extraMode}]` : '', notes].filter(Boolean).join(' ') || null,
         }),
       });
       const json = await res.json();
@@ -303,14 +309,33 @@ function ReportDialog({ loan, inst, userId, methods, onClose, onDone }: { loan: 
           <div className="grid gap-2">
             <Label htmlFor="loan_amount" className="text-base font-bold">How much did you send?</Label>
             <Input id="loan_amount" type="number" step="0.01" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} className="text-2xl font-bold h-14" />
-            {Number(amount) > 0 && (
+            {amt > 0 && !aheadPlan && (
               <p className="text-xs text-muted-foreground">
                 {alloc.fee_paid ? `${fmtMoney(alloc.fee_paid)} late fee · ` : ''}{fmtMoney(alloc.interest_paid)} interest · {fmtMoney(alloc.principal_paid)} principal →{' '}
                 {alloc.new_balance <= 0.009 ? <b className="text-green-700">loan paid off</b> : <>you would owe <b>{fmtMoney(alloc.new_balance)}</b></>}
                 {alloc.shortfall > 0 && <span className="text-amber-700"> · {fmtMoney(alloc.shortfall)} of unpaid interest is added to your balance</span>}
               </p>
             )}
+            {aheadPlan && (
+              <p className="text-xs text-muted-foreground">
+                This installment{aheadPlan.paid.length ? ` + ${aheadPlan.paid.map((p) => `#${p.inst.seq}`).join(', ')} paid ahead` : ''}{aheadPlan.leftover ? ` · ${fmtMoney(aheadPlan.leftover)} to principal` : ''} →{' '}
+                {aheadPlan.new_balance <= 0.009 ? <b className="text-green-700">loan paid off</b> : <>you would owe <b>{fmtMoney(aheadPlan.new_balance)}</b></>}
+              </p>
+            )}
           </div>
+
+          {askExtra && (
+            <div className="grid gap-1.5">
+              <Label className="text-sm">You&apos;re sending {fmtMoney(extra)} more than this installment. What should it do?</Label>
+              {(Object.keys(EXTRA_MODE_LABEL) as ExtraMode[]).map((m) => (
+                <button key={m} type="button" onClick={() => setExtraMode(m)} className={`w-full text-left rounded-md border px-3 py-2 text-sm flex items-center gap-2 ${extraMode === m ? 'border-primary bg-primary/5 ring-1 ring-primary' : 'hover:bg-muted'}`}>
+                  <span className={`h-3 w-3 rounded-full border shrink-0 ${extraMode === m ? 'bg-primary border-primary' : ''}`} />
+                  {EXTRA_MODE_LABEL[m]}
+                </button>
+              ))}
+              <p className="text-[11px] text-muted-foreground">The admin applies it when confirming.</p>
+            </div>
+          )}
 
           {methods.length > 0 && (
             <div className="grid gap-2">

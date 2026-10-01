@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
   HandCoins, Plus, Loader2, Search, RefreshCw, CheckCircle2, XCircle, Pencil, AlertTriangle,
-  Banknote, TrendingUp, Clock, Wallet, Trash2, Ban, Undo2, Zap, ImageIcon, CalendarPlus,
+  Banknote, TrendingUp, Clock, Wallet, Trash2, Ban, Undo2, Zap, ImageIcon, CalendarPlus, PiggyBank,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
@@ -20,9 +20,9 @@ import { UserPicker, type UserLike } from '@/components/UserPicker';
 import { ScreenshotImage } from '@/components/ScreenshotImage';
 import { getScreenshotSrc } from '@/lib/screenshots';
 import {
-  FREQUENCY_LABEL, MODEL_LABEL, STATUS_LABEL, addCycle, allocatePayment, buildSchedule, daysBetween, fmtMoney,
-  frenchInstallment, graceEnd, installmentDue, isLate, payoffQuote, periodRate, round2, toLocalDate, todayStr,
-  type LoanDisplayStatus, type LoanFrequency, type LoanInstallment, type LoanModel, type LoanSummary, type LoanView,
+  EXTRA_MODE_LABEL, FREQUENCY_LABEL, MODEL_LABEL, STATUS_LABEL, addCycle, allocatePayment, buildSchedule, daysBetween, fmtMoney,
+  frenchInstallment, graceEnd, installmentDue, isLate, payoffQuote, periodRate, planPayAhead, round2, shortenedTerm, toLocalDate, todayStr,
+  type ExtraMode, type LoanDisplayStatus, type LoanFrequency, type LoanInstallment, type LoanModel, type LoanSummary, type LoanView,
 } from '@/lib/loans';
 
 const STATUS_COLOR: Record<LoanDisplayStatus, string> = {
@@ -411,7 +411,20 @@ type Panel =
   | { kind: 'reject'; inst: LoanInstallment }
   | { kind: 'adjust'; inst: LoanInstallment }
   | { kind: 'terms' }
+  | { kind: 'principal' }
   | null;
+
+/** Scheduled installments already confirmed (principal payments don't use up a slot). */
+const confirmedScheduledCount = (loan: LoanView) => loan.installments_list.filter((i) => i.status === 'confirmed' && i.kind !== 'principal').length;
+
+/** "n × $pay (last $x)" for a keep-the-payment plan. */
+function describeShortened(loan: LoanView, balance: number, pay: number): string {
+  const r = periodRate('french', loan.rate_pct, loan.frequency);
+  const n = shortenedTerm(balance, r, pay);
+  const rows = buildSchedule({ model: 'french', rate_pct: loan.rate_pct, frequency: loan.frequency, balance, firstDue: loan.first_due_date, firstSeq: 1, count: n, fixedPay: pay });
+  const last = rows.length ? round2(rows[rows.length - 1].interest_due + rows[rows.length - 1].principal_due) : pay;
+  return `${n} × ${fmtMoney(pay)}${Math.abs(last - pay) > 0.01 ? ` (last ${fmtMoney(last)})` : ''}`;
+}
 
 function ManageLoan({ loan, adminId, onChanged, onClose }: { loan: LoanView; adminId?: string; onChanged: () => Promise<void> | void; onClose: () => void }) {
   const today = todayStr();
@@ -475,6 +488,7 @@ function ManageLoan({ loan, adminId, onChanged, onClose }: { loan: LoanView; adm
       {loan.status === 'active' && (
         <div className="flex flex-wrap gap-2">
           <Button size="sm" variant="outline" onClick={() => setPanel(panel?.kind === 'terms' ? null : { kind: 'terms' })} className="gap-1"><Pencil className="h-3.5 w-3.5" /> Edit terms</Button>
+          <Button size="sm" variant="outline" onClick={() => setPanel(panel?.kind === 'principal' ? null : { kind: 'principal' })} className="gap-1 border-emerald-300 text-emerald-800"><PiggyBank className="h-3.5 w-3.5" /> Principal payment</Button>
           {loan.current?.is_payoff ? (
             <Button size="sm" variant="outline" disabled={busy} onClick={() => call(`/api/loans/${loan.id}/payoff`, { undo: true }, 'POST', 'Back to the normal schedule')} className="gap-1"><Undo2 className="h-3.5 w-3.5" /> Undo early payoff</Button>
           ) : (
@@ -489,6 +503,7 @@ function ManageLoan({ loan, adminId, onChanged, onClose }: { loan: LoanView; adm
       )}
 
       {panel?.kind === 'terms' && <TermsPanel loan={loan} busy={busy} onSave={(body) => call(`/api/loans/${loan.id}`, body, 'PUT', 'Terms updated')} onCancel={() => setPanel(null)} />}
+      {panel?.kind === 'principal' && <PrincipalPanel loan={loan} busy={busy} onSave={(body) => call(`/api/loans/${loan.id}/principal`, { ...body, admin_id: adminId }, 'POST', 'Principal payment applied')} onCancel={() => setPanel(null)} />}
 
       <div className="rounded-lg border overflow-x-auto">
         <table className="w-full text-sm min-w-[760px]">
@@ -511,7 +526,10 @@ function ManageLoan({ loan, adminId, onChanged, onClose }: { loan: LoanView; adm
               const open = inst.status !== 'confirmed';
               return (
                 <tr key={inst.id} className={`${inst.status === 'submitted' ? 'bg-purple-50/60' : late && open ? 'bg-red-50/60' : ''}`}>
-                  <td className="px-3 py-2 align-top">{inst.seq}{inst.is_payoff ? <span className="block text-[10px] text-blue-700">payoff</span> : null}</td>
+                  <td className="px-3 py-2 align-top">
+                    {inst.kind === 'principal' ? <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700"><PiggyBank className="h-3 w-3" /> capital</span> : inst.seq}
+                    {inst.is_payoff ? <span className="block text-[10px] text-blue-700">payoff</span> : null}
+                  </td>
                   <td className="px-3 py-2 align-top">
                     <p>{fmtDay(inst.due_date)}</p>
                     {open && <p className={`text-[11px] ${late ? 'text-red-700 font-medium' : 'text-muted-foreground'}`}>{late ? `late · grace ended ${fmtDay(graceEnd(loan, inst), 'MMM d')}` : `grace until ${fmtDay(graceEnd(loan, inst), 'MMM d')}`}</p>}
@@ -531,31 +549,30 @@ function ManageLoan({ loan, adminId, onChanged, onClose }: { loan: LoanView; adm
                         <p>reported <b>{fmtMoney(inst.reported_amount)}</b> · {inst.payment_method || 'method?'}{inst.payment_reference ? ` · ref ${inst.payment_reference}` : ''}</p>
                         {inst.submitted_at && <p>{format(new Date(inst.submitted_at), 'MMM d, HH:mm')}</p>}
                         {inst.user_notes && <p className="italic">“{inst.user_notes}”</p>}
-                        {(inst.screenshot_url || inst.screenshot_file_id) && (
-                          <button type="button" className="text-blue-700 underline inline-flex items-center gap-1" onClick={() => setShot(inst)}><ImageIcon className="h-3 w-3" /> screenshot</button>
-                        )}
                       </div>
                     )}
                     {inst.status === 'rejected' && inst.rejection_reason && <p className="text-[11px] text-red-700 mt-1">{inst.rejection_reason}</p>}
-                    {inst.status === 'confirmed' && (inst.screenshot_url || inst.screenshot_file_id) && (
-                      <button type="button" className="text-[11px] text-blue-700 underline mt-1" onClick={() => setShot(inst)}>screenshot</button>
-                    )}
                     {inst.admin_notes && <p className="text-[11px] text-muted-foreground mt-1">note: {inst.admin_notes}</p>}
                   </td>
                   <td className="px-3 py-2 align-top text-right">
-                    {open && loan.status === 'active' && (
-                      <div className="flex flex-wrap justify-end gap-1">
-                        {inst.status === 'submitted' ? (
-                          <>
-                            <Button size="sm" className="h-7 bg-green-600 hover:bg-green-700" onClick={() => setPanel({ kind: 'confirm', inst })}><CheckCircle2 className="h-3.5 w-3.5 mr-1" /> Confirm</Button>
-                            <Button size="sm" variant="outline" className="h-7 text-red-700" onClick={() => setPanel({ kind: 'reject', inst })}><XCircle className="h-3.5 w-3.5 mr-1" /> Reject</Button>
-                          </>
-                        ) : (
-                          <Button size="sm" variant="outline" className="h-7" onClick={() => setPanel({ kind: 'confirm', inst })}><Banknote className="h-3.5 w-3.5 mr-1" /> Record payment</Button>
-                        )}
-                        <Button size="sm" variant="ghost" className="h-7" onClick={() => setPanel({ kind: 'adjust', inst })}><Pencil className="h-3.5 w-3.5 mr-1" /> Adjust</Button>
-                      </div>
-                    )}
+                    <div className="flex flex-wrap justify-end gap-1">
+                      {(inst.screenshot_url || inst.screenshot_file_id) && (
+                        <Button size="sm" variant="outline" className="h-7" onClick={() => setShot(inst)}><ImageIcon className="h-3.5 w-3.5 mr-1" /> View screenshot</Button>
+                      )}
+                      {open && loan.status === 'active' && (
+                        <>
+                          {inst.status === 'submitted' ? (
+                            <>
+                              <Button size="sm" className="h-7 bg-green-600 hover:bg-green-700" onClick={() => setPanel({ kind: 'confirm', inst })}><CheckCircle2 className="h-3.5 w-3.5 mr-1" /> Confirm</Button>
+                              <Button size="sm" variant="outline" className="h-7 text-red-700" onClick={() => setPanel({ kind: 'reject', inst })}><XCircle className="h-3.5 w-3.5 mr-1" /> Reject</Button>
+                            </>
+                          ) : (
+                            <Button size="sm" variant="outline" className="h-7" onClick={() => setPanel({ kind: 'confirm', inst })}><Banknote className="h-3.5 w-3.5 mr-1" /> Record payment</Button>
+                          )}
+                          <Button size="sm" variant="ghost" className="h-7" onClick={() => setPanel({ kind: 'adjust', inst })}><Pencil className="h-3.5 w-3.5 mr-1" /> Adjust</Button>
+                        </>
+                      )}
+                    </div>
                   </td>
                 </tr>
               );
@@ -608,9 +625,36 @@ function ConfirmPanel({ loan, inst, busy, onCancel, onConfirm }: { loan: LoanVie
   const [interest, setInterest] = useState(String(inst.interest_due));
   const [fee, setFee] = useState(String(base.fee));
   const [notes, setNotes] = useState('');
-  const due = { fee: Number(fee) || 0, interest: Number(interest) || 0, principal: inst.principal_due, total: 0 };
-  const alloc = allocatePayment(Number(amount) || 0, due, loan.balance);
+  // The user can say what they want done with any extra; default to that.
+  const wanted = (inst.user_notes || '').match(/\[extra:(reduce_installment|reduce_term|pay_ahead)\]/)?.[1] as ExtraMode | undefined;
+  const [mode, setMode] = useState<ExtraMode>(wanted || 'reduce_installment');
+  const amt = Number(amount) || 0;
+  const feeN = Number(fee) || 0;
+  const intN = Number(interest) || 0;
+  const due = { fee: feeN, interest: intN, principal: inst.principal_due, total: round2(feeN + intN + inst.principal_due) };
+  const extra = round2(amt - due.total);
+  const showModes = loan.model === 'french' && !inst.is_payoff && extra > 0.005;
+  const plain = allocatePayment(amt, due, loan.balance);
+  const plan = showModes && mode === 'pay_ahead' ? planPayAhead(loan, inst, due, amt) : null;
+  const alloc = plan
+    ? { ...plain, principal_paid: round2(Math.min(due.principal, loan.balance) + plan.leftover), shortfall: 0, overpaid: plan.overpaid, new_balance: plan.new_balance }
+    : plain;
   const paidOff = alloc.new_balance <= 0.009 || inst.is_payoff;
+  const r = periodRate('french', loan.rate_pct, loan.frequency);
+  const scheduledPay = round2(inst.interest_due + inst.principal_due);
+  const remainingAfter = Math.max(0, (loan.installments || 1) - confirmedScheduledCount(loan) - 1);
+  const previews: Record<ExtraMode, string> | null = showModes
+    ? {
+        reduce_installment: plain.new_balance <= 0.009 ? 'pays off the loan' : `${Math.max(1, remainingAfter)} × ${fmtMoney(frenchInstallment(plain.new_balance, r, Math.max(1, remainingAfter)))} (was ${fmtMoney(scheduledPay)})`,
+        reduce_term: plain.new_balance <= 0.009 ? 'pays off the loan' : `${describeShortened(loan, plain.new_balance, scheduledPay)} (${remainingAfter} left before)`,
+        pay_ahead: (() => {
+          const p = planPayAhead(loan, inst, due, amt);
+          const seqs = p.paid.map((x) => `#${x.inst.seq}`);
+          const next = loan.installments_list.filter((i) => i.status !== 'confirmed' && i.id !== inst.id && !p.paid.some((x) => x.inst.id === i.id)).sort((a, b) => a.seq - b.seq)[0];
+          return `${seqs.length ? `pays ${seqs.join(', ')} ahead` : 'not enough for a whole installment'}${p.leftover ? ` · ${fmtMoney(p.leftover)} to principal` : ''}${p.new_balance <= 0.009 ? ' · pays off' : next ? ` · next due ${fmtDay(next.due_date, 'MMM d')}` : ''}`;
+        })(),
+      }
+    : null;
   return (
     <div className="rounded-lg border-2 border-green-300 bg-green-50/50 p-4 space-y-3">
       <p className="font-semibold text-sm">{inst.status === 'submitted' ? `Confirm the payment reported for installment #${inst.seq}` : `Record a payment for installment #${inst.seq}`}</p>
@@ -631,10 +675,30 @@ function ConfirmPanel({ loan, inst, busy, onCancel, onConfirm }: { loan: LoanVie
           <p className="text-[11px] text-muted-foreground">{base.fee ? `auto ${fmtMoney(base.fee)} — set 0 to waive` : 'not late'}</p>
         </div>
       </div>
+      {showModes && previews && (
+        <div className="rounded-md border bg-white/70 dark:bg-background p-3 space-y-1.5">
+          <p className="text-xs font-semibold">{fmtMoney(extra)} more than this installment. Apply the extra to:</p>
+          {(Object.keys(EXTRA_MODE_LABEL) as ExtraMode[]).map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setMode(m)}
+              className={`w-full text-left rounded-md border px-3 py-2 text-sm flex items-start gap-2 ${mode === m ? 'border-primary bg-primary/5 ring-1 ring-primary' : 'hover:bg-muted'}`}
+            >
+              <span className={`mt-1 h-3 w-3 rounded-full border shrink-0 ${mode === m ? 'bg-primary border-primary' : ''}`} />
+              <span>
+                <span className="font-medium">{EXTRA_MODE_LABEL[m]}</span>
+                {wanted === m && <span className="ml-1 text-[10px] text-purple-700">(user asked)</span>}
+                <span className="block text-xs text-muted-foreground">{previews[m]}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
       <div className="rounded-md bg-white/70 dark:bg-background p-3 text-sm grid sm:grid-cols-5 gap-2">
         <span>Fee <b>{fmtMoney(alloc.fee_paid)}</b></span>
         <span>Interest <b>{fmtMoney(alloc.interest_paid)}</b></span>
-        <span>Principal <b>{fmtMoney(alloc.principal_paid)}</b></span>
+        <span>Principal <b>{fmtMoney(alloc.principal_paid)}</b>{plan && plan.paid.length > 0 ? <span className="block text-[11px] text-muted-foreground">+ {plan.paid.length} installment{plan.paid.length === 1 ? '' : 's'} ahead</span> : null}</span>
         <span className={alloc.shortfall ? 'text-amber-700' : ''}>{alloc.shortfall ? <>Unpaid interest <b>+{fmtMoney(alloc.shortfall)}</b> to balance</> : alloc.overpaid ? <>Over by <b>{fmtMoney(alloc.overpaid)}</b></> : <>Covers the due</>}</span>
         <span className="font-semibold">{paidOff ? '✅ Loan paid off' : <>New balance <b>{fmtMoney(alloc.new_balance)}</b></>}</span>
       </div>
@@ -644,7 +708,7 @@ function ConfirmPanel({ loan, inst, busy, onCancel, onConfirm }: { loan: LoanVie
       </div>
       <div className="flex justify-end gap-2">
         <Button variant="outline" size="sm" onClick={onCancel} disabled={busy}>Cancel</Button>
-        <Button size="sm" className="bg-green-600 hover:bg-green-700 gap-1" disabled={busy || !(Number(amount) > 0)} onClick={() => onConfirm({ amount: Number(amount), interest: Number(interest) || 0, late_fee: Number(fee) || 0, admin_notes: notes || null })}>
+        <Button size="sm" className="bg-green-600 hover:bg-green-700 gap-1" disabled={busy || !(Number(amount) > 0)} onClick={() => onConfirm({ amount: Number(amount), interest: Number(interest) || 0, late_fee: Number(fee) || 0, admin_notes: notes || null, extra_mode: showModes ? mode : undefined })}>
           {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />} Confirm {fmtMoney(Number(amount) || 0)}
         </Button>
       </div>
@@ -702,6 +766,64 @@ function AdjustPanel({ loan, inst, busy, onCancel, onSave }: { loan: LoanView; i
       <div className="flex justify-end gap-2">
         <Button variant="outline" size="sm" onClick={onCancel} disabled={busy}>Cancel</Button>
         <Button size="sm" disabled={busy} onClick={() => onSave({ interest_due: Number(interest) || 0, principal_due: loan.model === 'french' && !inst.is_payoff ? Number(principal) || 0 : undefined, late_fee_override: fee === '' ? null : Number(fee) || 0, due_date: due })}>Save</Button>
+      </div>
+    </div>
+  );
+}
+
+function PrincipalPanel({ loan, busy, onSave, onCancel }: { loan: LoanView; busy: boolean; onSave: (b: Record<string, unknown>) => void; onCancel: () => void }) {
+  const [amount, setAmount] = useState('');
+  const [mode, setMode] = useState<'reduce_installment' | 'reduce_term'>('reduce_installment');
+  const [notes, setNotes] = useState('');
+  const amt = Number(amount) || 0;
+  const tooMuch = amt >= loan.balance - 0.005;
+  const nb = round2(loan.balance - amt);
+  const cur = loan.current;
+  const r = periodRate('french', loan.rate_pct, loan.frequency);
+  const scheduledPay = cur ? round2(cur.interest_due + cur.principal_due) : 0;
+  const remaining = Math.max(1, (loan.installments || 1) - confirmedScheduledCount(loan));
+  return (
+    <div className="rounded-lg border-2 border-emerald-300 bg-emerald-50/50 p-4 space-y-3">
+      <p className="font-semibold text-sm flex items-center gap-2"><PiggyBank className="h-4 w-4" /> Principal payment (abono a capital)</p>
+      <p className="text-xs text-muted-foreground">Money straight to the balance, any day, with no interest or fee on it. Balance now {fmtMoney(loan.balance)}.</p>
+      <div className="grid sm:grid-cols-3 gap-3">
+        <div className="grid gap-1">
+          <Label>Amount ($)</Label>
+          <Input type="number" step="0.01" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} />
+          {tooMuch && amt > 0 && <p className="text-[11px] text-red-700">That pays everything — use “Settle early” so this cycle&apos;s interest is included.</p>}
+        </div>
+        <div className="grid gap-1 sm:col-span-2">
+          <Label>Note (optional)</Label>
+          <Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="e.g. cash on Oct 5" />
+        </div>
+      </div>
+      {amt > 0 && !tooMuch && (
+        loan.model === 'french' ? (
+          <div className="space-y-1.5">
+            <p className="text-xs font-semibold">New balance {fmtMoney(nb)}. Re-plan the pending installments by:</p>
+            {(['reduce_installment', 'reduce_term'] as const).map((m) => (
+              <button key={m} type="button" onClick={() => setMode(m)} className={`w-full text-left rounded-md border px-3 py-2 text-sm flex items-start gap-2 ${mode === m ? 'border-primary bg-primary/5 ring-1 ring-primary' : 'hover:bg-muted bg-white/70 dark:bg-background'}`}>
+                <span className={`mt-1 h-3 w-3 rounded-full border shrink-0 ${mode === m ? 'bg-primary border-primary' : ''}`} />
+                <span>
+                  <span className="font-medium">{EXTRA_MODE_LABEL[m]}</span>
+                  <span className="block text-xs text-muted-foreground">
+                    {m === 'reduce_installment'
+                      ? `${remaining} × ${fmtMoney(frenchInstallment(nb, r, remaining))} (was ${fmtMoney(scheduledPay)})`
+                      : `${describeShortened(loan, nb, scheduledPay)} (${remaining} left before)`}
+                  </span>
+                </span>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <p className="text-xs rounded-md bg-white/70 dark:bg-background p-2">
+            New balance <b>{fmtMoney(nb)}</b>. This cycle&apos;s interest stays {fmtMoney(cur?.interest_due ?? 0)} (already owed); the next cycle charges {loan.rate_pct}% of {fmtMoney(nb)} = <b>{fmtMoney(round2(nb * periodRate('open', loan.rate_pct, loan.frequency)))}</b>.
+          </p>
+        )
+      )}
+      <div className="flex justify-end gap-2">
+        <Button variant="outline" size="sm" onClick={onCancel} disabled={busy}>Cancel</Button>
+        <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" disabled={busy || !(amt > 0) || tooMuch} onClick={() => onSave({ amount: amt, mode, notes: notes || null })}>Apply {fmtMoney(amt)} to principal</Button>
       </div>
     </div>
   );

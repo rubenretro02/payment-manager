@@ -33,6 +33,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
           late_fee: body.late_fee !== undefined && body.late_fee !== '' && body.late_fee !== null ? Number(body.late_fee) : null,
           admin_notes: body.admin_notes ?? null,
           confirmed_by: body.admin_id || null,
+          extra_mode: ['reduce_installment', 'reduce_term', 'pay_ahead'].includes(body.extra_mode) ? body.extra_mode : undefined,
         });
         after(() => notifyLoanPaymentConfirmed(result.view, result.applied.amount, result.applied.paid_off));
         return NextResponse.json({ success: true, data: result.view, applied: result.applied });

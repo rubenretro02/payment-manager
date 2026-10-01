@@ -60,6 +60,8 @@ export interface LoanInstallment {
   principal_due: number;
   late_fee_override: number | null;
   is_payoff: boolean;
+  /** 'principal' = an extra payment straight to capital (always confirmed) */
+  kind: 'scheduled' | 'principal';
   status: InstallmentStatus;
   reported_amount: number | null;
   payment_method: string | null;
@@ -177,13 +179,15 @@ export function buildSchedule(opts: {
   firstDue: string;
   firstSeq: number;
   count: number;
+  /** French: keep this payment amount (shorten-term plans); the last row absorbs the difference */
+  fixedPay?: number;
 }): ScheduleRow[] {
   const r = periodRate(opts.model, opts.rate_pct, opts.frequency);
   if (opts.model === 'open') {
     return [{ seq: opts.firstSeq, due_date: opts.firstDue, interest_due: round2(opts.balance * r), principal_due: 0 }];
   }
   const count = Math.max(1, opts.count);
-  const pay = frenchInstallment(opts.balance, r, count);
+  const pay = opts.fixedPay && opts.fixedPay > 0 ? opts.fixedPay : frenchInstallment(opts.balance, r, count);
   const rows: ScheduleRow[] = [];
   let bal = round2(opts.balance);
   for (let i = 0; i < count; i++) {
@@ -278,6 +282,75 @@ export function allocatePayment(amount: number, due: Due, balance: number): Allo
     overpaid: rem,
     new_balance: round2(balance + shortfall - principal_paid),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Extra money on a French loan: what to do with it
+// ---------------------------------------------------------------------------
+
+export type ExtraMode = 'reduce_installment' | 'reduce_term' | 'pay_ahead';
+export const EXTRA_MODE_LABEL: Record<ExtraMode, string> = {
+  reduce_installment: 'Lower the remaining installments (same number of them)',
+  reduce_term: 'Shorten the loan (keep the installment, fewer of them)',
+  pay_ahead: 'Pay the next installments ahead, as scheduled',
+};
+
+/** Installments needed to repay `balance` with a fixed `pay` at period rate r. */
+export function termForPayment(balance: number, r: number, pay: number): number {
+  if (balance <= 0) return 0;
+  if (pay <= 0) return 1;
+  if (r === 0) return Math.max(1, Math.ceil(round2(balance / pay) - 1e-9));
+  const x = 1 - (r * balance) / pay;
+  if (x <= 0) return 1; // payment doesn't even cover interest — caller falls back
+  return Math.max(1, Math.ceil(-Math.log(x) / Math.log(1 + r) - 1e-9));
+}
+
+/**
+ * Shorten-term plan: how many installments of exactly `pay` repay `balance`.
+ * A leftover tail smaller than a quarter of a payment is folded into the
+ * previous installment (slightly bigger last payment) instead of becoming a
+ * tiny extra one.
+ */
+export function shortenedTerm(balance: number, r: number, pay: number): number {
+  const n = termForPayment(balance, r, pay);
+  if (n <= 1) return n;
+  let bal = balance;
+  for (let i = 0; i < n - 1; i++) bal = round2(bal - Math.max(0, round2(pay - round2(bal * r))));
+  const lastTotal = round2(bal * (1 + r));
+  return lastTotal < pay * 0.25 ? n - 1 : n;
+}
+
+export interface AheadPlan {
+  /** Following installments fully covered by the extra, in order */
+  paid: { inst: LoanInstallment; amount: number; interest: number; principal: number }[];
+  /** Extra that didn't cover a whole installment → straight to principal */
+  leftover: number;
+  overpaid: number;
+  new_balance: number;
+}
+
+/**
+ * "Pay ahead": the current installment takes exactly its due; the extra pays
+ * the next scheduled installments one by one (interest included, as
+ * planned); whatever is left but doesn't cover a whole one lowers the
+ * balance. Shared by the server (to apply it) and the admin UI (to preview).
+ */
+export function planPayAhead(view: LoanView, current: LoanInstallment, due: Due, amount: number): AheadPlan {
+  let rem = round2(amount - due.total);
+  let bal = round2(view.balance - Math.min(due.principal, view.balance));
+  const paid: AheadPlan['paid'] = [];
+  const next = view.installments_list.filter((i) => i.id !== current.id && i.status !== 'confirmed').sort((a, b) => a.seq - b.seq);
+  for (const p of next) {
+    const total = round2(p.interest_due + p.principal_due);
+    if (total <= 0 || rem + 0.005 < total || bal <= 0.009) break;
+    const principal = Math.min(p.principal_due, bal);
+    paid.push({ inst: p, amount: total, interest: p.interest_due, principal });
+    bal = round2(bal - principal);
+    rem = round2(rem - total);
+  }
+  const leftover = Math.max(0, Math.min(rem, bal));
+  bal = round2(bal - leftover);
+  return { paid, leftover, overpaid: round2(rem - leftover), new_balance: bal };
 }
 
 // ---------------------------------------------------------------------------

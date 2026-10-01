@@ -90,3 +90,7 @@ CREATE POLICY "loan_installments_all" ON loan_installments FOR ALL USING (true) 
 
 COMMENT ON TABLE loans IS 'Loans from the admin to users: open (interest per cycle on balance) or french (fixed installments, annual rate)';
 COMMENT ON TABLE loan_installments IS 'Scheduled payments of a loan, what the user reported and how the admin applied it';
+
+-- Principal payments ("abono a capital") are stored as confirmed rows of
+-- kind 'principal' so the accounting stays in one table. Safe to re-run.
+ALTER TABLE loan_installments ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'scheduled' CHECK (kind IN ('scheduled', 'principal'));
