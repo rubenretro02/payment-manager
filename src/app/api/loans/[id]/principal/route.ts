@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { principalPayment, LoanError } from '@/lib/loans-store';
 
 /**
- * POST /api/loans/[id]/principal { amount, mode?: 'reduce_installment'|'reduce_term', notes?, admin_id? }
- * Extra money straight to the balance ("abono a capital"), any day.
+ * POST /api/loans/[id]/principal { amount, notes?, admin_id? }
+ * Extra money straight to the balance ("abono a capital"), any day. Open loans only.
  */
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -11,7 +11,6 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const body = await request.json();
     const view = await principalPayment(id, {
       amount: Number(body.amount),
-      mode: body.mode === 'reduce_term' ? 'reduce_term' : 'reduce_installment',
       notes: body.notes ?? null,
       confirmed_by: body.admin_id || null,
     });

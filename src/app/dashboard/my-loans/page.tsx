@@ -18,8 +18,8 @@ import { ScreenshotImage } from '@/components/ScreenshotImage';
 import { ImageLightbox } from '@/components/ImageLightbox';
 import { getScreenshotSrc } from '@/lib/screenshots';
 import {
-  EXTRA_MODE_LABEL, FREQUENCY_LABEL, MODEL_BADGE_CLASS, MODEL_EDGE_CLASS, MODEL_SHORT_LABEL, STATUS_LABEL, allocatePayment, daysBetween, fmtMoney, graceEnd, installmentDue, payoffQuote, planPayAhead, round2, toLocalDate, todayStr,
-  type ExtraMode, type LoanDisplayStatus, type LoanInstallment, type LoanView,
+  FREQUENCY_LABEL, MODEL_BADGE_CLASS, MODEL_EDGE_CLASS, MODEL_SHORT_LABEL, STATUS_LABEL, allocatePayment, daysBetween, fmtMoney, graceEnd, installmentDue, payoffQuote, planPayAhead, round2, toLocalDate, todayStr,
+  type LoanDisplayStatus, type LoanInstallment, type LoanView,
 } from '@/lib/loans';
 
 interface PaymentMethod {
@@ -46,9 +46,8 @@ const STATUS_COLOR: Record<LoanDisplayStatus, string> = {
 };
 const fmtDay = (s: string | null | undefined, f = 'EEE, MMM d, yyyy') => (s ? format(toLocalDate(s), f) : '—');
 const fmtStamp = (s: string | null | undefined) => (s ? format(new Date(s), 'MMM d, yyyy · HH:mm') : '—');
-/** Notes without the "[extra:…]" marker the report form adds for the admin. */
+/** Notes without the "[extra:…]" marker an older report form used to add. */
 const cleanNotes = (s: string | null | undefined) => (s || '').replace(/\[extra:[a-z_]+\]\s*/g, '').trim();
-const extraAsked = (s: string | null | undefined) => (s || '').match(/\[extra:(reduce_installment|reduce_term|pay_ahead)\]/)?.[1] as ExtraMode | undefined;
 
 /** Balance right after each confirmed payment, in the order they were confirmed. */
 function balancesAfter(loan: LoanView): Map<string, number> {
@@ -271,7 +270,6 @@ function PaymentDetailDialog({ loan, inst, onClose }: { loan: LoanView; inst: Lo
   const closed = loan.model === 'french';
   const after = balancesAfter(loan).get(inst.id);
   const before = after !== undefined ? round2(after - (inst.shortfall ?? 0) + (inst.principal_paid ?? 0)) : undefined;
-  const asked = extraAsked(inst.user_notes);
   const notes = cleanNotes(inst.user_notes);
   const src = getScreenshotSrc(inst.screenshot_url, inst.screenshot_file_id);
   const amount = confirmed ? inst.amount_paid : inst.reported_amount;
@@ -345,9 +343,8 @@ function PaymentDetailDialog({ loan, inst, onClose }: { loan: LoanView; inst: Lo
           )}
         </div>
 
-        {(asked || notes || inst.admin_notes || inst.rejection_reason) && (
+        {(notes || inst.admin_notes || inst.rejection_reason) && (
           <div className="text-sm divide-y rounded-lg border px-3">
-            {asked && <Row label="You asked" value={EXTRA_MODE_LABEL[asked]} />}
             {notes && <Row label="Your note" value={<span className="italic">“{notes}”</span>} />}
             {inst.admin_notes && inst.admin_notes !== 'Principal payment' && <Row label="Admin note" value={inst.admin_notes} />}
             {inst.rejection_reason && <Row label="Earlier rejection" value={inst.rejection_reason} tone="text-red-700" />}
@@ -383,15 +380,15 @@ function ReportDialog({ loan, inst, userId, methods, onClose, onDone }: { loan: 
   const [notes, setNotes] = useState('');
   const [shot, setShot] = useState<Shot | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [extraMode, setExtraMode] = useState<ExtraMode>('reduce_installment');
   const fileRef = useRef<HTMLInputElement>(null);
   const camRef = useRef<HTMLInputElement>(null);
   const selectedMethod = methods.find((m) => m.id === method);
   const amt = Number(amount) || 0;
   const alloc = allocatePayment(amt, due, loan.balance);
   const extra = round2(amt - due.total);
-  const askExtra = loan.model === 'french' && !inst.is_payoff && extra > 0.005;
-  const aheadPlan = askExtra && extraMode === 'pay_ahead' ? planPayAhead(loan, inst, due, amt) : null;
+  // Closed loans: extra money only pays whole installments ahead.
+  const aheadPlan = loan.model === 'french' && !inst.is_payoff && extra > 0.005 ? planPayAhead(loan, inst, due, amt) : null;
+  const blocked = !!aheadPlan && aheadPlan.leftover > 0.005;
 
   const onFile = async (file: File | undefined) => {
     if (!file) return;
@@ -417,6 +414,7 @@ function ReportDialog({ loan, inst, userId, methods, onClose, onDone }: { loan: 
   const submit = async () => {
     const amt = Number(amount);
     if (!(amt > 0)) return toast.error('Enter the amount you sent');
+    if (blocked) return toast.error('On this loan you can only pay whole installments. Pick one of the suggested amounts.');
     if (!shot) return toast.error('Upload the screenshot of your payment');
     if (shot.uploading) return toast.error('Wait for the screenshot to finish uploading');
     setSubmitting(true);
@@ -432,8 +430,7 @@ function ReportDialog({ loan, inst, userId, methods, onClose, onDone }: { loan: 
           payment_reference: reference || null,
           screenshot_url: shot.url || shot.preview,
           screenshot_file_id: shot.fileId,
-          // The admin sees this and applies the extra the way the user asked.
-          user_notes: [askExtra ? `[extra:${extraMode}]` : '', notes].filter(Boolean).join(' ') || null,
+          user_notes: notes || null,
         }),
       });
       const json = await res.json();
@@ -488,26 +485,23 @@ function ReportDialog({ loan, inst, userId, methods, onClose, onDone }: { loan: 
                 {loan.model === 'open' && alloc.shortfall > 0 && <span className="text-amber-700"> · {fmtMoney(alloc.shortfall)} of unpaid interest is added to your balance</span>}
               </p>
             )}
-            {aheadPlan && (
+            {aheadPlan && !blocked && (
               <p className="text-xs text-muted-foreground">
-                This installment{aheadPlan.paid.length ? ` + ${aheadPlan.paid.map((p) => `#${p.inst.seq}`).join(', ')} paid ahead` : ''}{aheadPlan.leftover ? ` · ${fmtMoney(aheadPlan.leftover)} to principal` : ''} →{' '}
+                This installment{aheadPlan.paid.length ? ` + ${aheadPlan.paid.map((p) => `#${p.inst.seq}`).join(', ')} paid ahead` : ''} →{' '}
                 {aheadPlan.new_balance <= 0.009 ? <b className="text-green-700">loan paid off</b> : <>you would owe <b>{fmtMoney(aheadPlan.new_balance)}</b></>}
               </p>
             )}
+            {aheadPlan && blocked && (
+              <div className="rounded-md border border-red-300 bg-red-50 dark:bg-red-950/30 p-2 text-xs text-red-800 dark:text-red-200 space-y-1">
+                <p>On this loan you can only pay whole installments, and {fmtMoney(aheadPlan.leftover)} of that does not complete one. Pick an amount:</p>
+                <div className="flex flex-wrap gap-1">
+                  {aheadPlan.valid_totals.slice(0, 4).map((t) => (
+                    <Button key={t} type="button" size="sm" variant="outline" className="h-7 bg-white dark:bg-background" onClick={() => setAmount(String(t))}>{fmtMoney(t)}</Button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
-
-          {askExtra && (
-            <div className="grid gap-1.5">
-              <Label className="text-sm">You&apos;re sending {fmtMoney(extra)} more than this installment. What should it do?</Label>
-              {(Object.keys(EXTRA_MODE_LABEL) as ExtraMode[]).map((m) => (
-                <button key={m} type="button" onClick={() => setExtraMode(m)} className={`w-full text-left rounded-md border px-3 py-2 text-sm flex items-center gap-2 ${extraMode === m ? 'border-primary bg-primary/5 ring-1 ring-primary' : 'hover:bg-muted'}`}>
-                  <span className={`h-3 w-3 rounded-full border shrink-0 ${extraMode === m ? 'bg-primary border-primary' : ''}`} />
-                  {EXTRA_MODE_LABEL[m]}
-                </button>
-              ))}
-              <p className="text-[11px] text-muted-foreground">The admin applies it when confirming.</p>
-            </div>
-          )}
 
           {methods.length > 0 && (
             <div className="grid gap-2">
@@ -560,7 +554,7 @@ function ReportDialog({ loan, inst, userId, methods, onClose, onDone }: { loan: 
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={submitting}>Cancel</Button>
-          <Button onClick={submit} disabled={submitting || !shot || shot.uploading || !(Number(amount) > 0)} className="gap-2">
+          <Button onClick={submit} disabled={submitting || blocked || !shot || shot.uploading || !(Number(amount) > 0)} className="gap-2">
             {submitting && <Loader2 className="h-4 w-4 animate-spin" />} Submit report
           </Button>
         </DialogFooter>

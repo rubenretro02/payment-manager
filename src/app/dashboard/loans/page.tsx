@@ -9,11 +9,13 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { DateRangePicker } from '@/components/ui/date-range-picker';
 import {
   HandCoins, Plus, Loader2, Search, RefreshCw, CheckCircle2, XCircle, Pencil, AlertTriangle,
-  Banknote, TrendingUp, Clock, Wallet, Trash2, Ban, Undo2, Zap, ImageIcon, CalendarPlus, PiggyBank,
+  Banknote, TrendingUp, Clock, Wallet, Trash2, Ban, Undo2, Zap, ImageIcon, CalendarPlus, PiggyBank, Calendar, Users,
 } from 'lucide-react';
-import { format } from 'date-fns';
+import { format, startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, startOfYear, endOfYear, isBefore, isAfter } from 'date-fns';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import { UserPicker, type UserLike } from '@/components/UserPicker';
@@ -21,9 +23,9 @@ import { ScreenshotImage } from '@/components/ScreenshotImage';
 import { ImageLightbox } from '@/components/ImageLightbox';
 import { getScreenshotSrc } from '@/lib/screenshots';
 import {
-  EXTRA_MODE_LABEL, FREQUENCY_LABEL, MODEL_BADGE_CLASS, MODEL_EDGE_CLASS, MODEL_LABEL, MODEL_SHORT_LABEL, STATUS_LABEL, addCycle, allocatePayment, buildSchedule, daysBetween, fmtMoney,
-  frenchInstallment, graceEnd, installmentDue, isLate, payoffQuote, periodRate, planPayAhead, round2, shortenedTerm, toLocalDate, todayStr,
-  type ExtraMode, type LoanDisplayStatus, type LoanFrequency, type LoanInstallment, type LoanModel, type LoanSummary, type LoanView,
+  FREQUENCY_LABEL, MODEL_BADGE_CLASS, MODEL_EDGE_CLASS, MODEL_LABEL, MODEL_SHORT_LABEL, STATUS_LABEL, addCycle, allocatePayment, buildSchedule, daysBetween, fmtMoney,
+  frenchInstallment, graceEnd, installmentDue, isLate, payoffQuote, periodRate, planPayAhead, round2, toLocalDate, todayStr,
+  type LoanDisplayStatus, type LoanFrequency, type LoanInstallment, type LoanModel, type LoanSummary, type LoanView,
 } from '@/lib/loans';
 
 const STATUS_COLOR: Record<LoanDisplayStatus, string> = {
@@ -42,6 +44,33 @@ const fmtDay = (s: string | null | undefined, f = 'MMM d, yyyy') => (s ? format(
 const userName = (v: LoanView) => v.user?.telegram_first_name || 'User';
 
 type Filter = 'all' | 'active' | 'overdue' | 'reported' | 'paid' | 'cancelled';
+type DateRange = 'all' | 'today' | 'week' | 'month' | 'year' | 'custom';
+type Tab = 'overview' | 'users' | 'payments';
+
+/** Same period logic as Reports: calendar ranges in the admin's local time. */
+function periodBounds(range: DateRange, customFrom: string, customTo: string): { from: Date | null; to: Date | null } {
+  const now = new Date();
+  switch (range) {
+    case 'today': return { from: startOfDay(now), to: endOfDay(now) };
+    case 'week': return { from: startOfWeek(now, { weekStartsOn: 1 }), to: endOfWeek(now, { weekStartsOn: 1 }) };
+    case 'month': return { from: startOfMonth(now), to: endOfMonth(now) };
+    case 'year': return { from: startOfYear(now), to: endOfYear(now) };
+    case 'custom':
+      return {
+        from: customFrom ? startOfDay(new Date(customFrom + 'T00:00:00')) : null,
+        to: customTo ? endOfDay(new Date(customTo + 'T00:00:00')) : null,
+      };
+    default: return { from: null, to: null };
+  }
+}
+const PERIOD_LABEL: Record<DateRange, string> = { all: 'all time', today: 'today', week: 'this week', month: 'this month', year: 'this year', custom: 'selected dates' };
+
+/** A confirmed payment with its loan, for the By User / All Payments views. */
+interface PaymentRow {
+  loan: LoanView;
+  inst: LoanInstallment;
+  at: string;
+}
 
 const emptyForm = {
   user_id: '',
@@ -65,6 +94,11 @@ export default function LoansPage() {
   const [loadError, setLoadError] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
   const [q, setQ] = useState('');
+  const [tab, setTab] = useState<Tab>('overview');
+  const [dateRange, setDateRange] = useState<DateRange>('month');
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState('');
+  const [zoomSrc, setZoomSrc] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [creating, setCreating] = useState(false);
@@ -113,6 +147,73 @@ export default function LoansPage() {
     paid: loans.filter((l) => l.display_status === 'paid').length,
     cancelled: loans.filter((l) => l.display_status === 'cancelled').length,
   }), [loans]);
+
+  // ---- period (date filter) ----
+  const { from, to } = useMemo(() => periodBounds(dateRange, customFrom, customTo), [dateRange, customFrom, customTo]);
+  const inPeriod = (d: Date) => (!from || !isBefore(d, from)) && (!to || !isAfter(d, to));
+
+  /** Every confirmed payment (and reported-but-unconfirmed one) inside the period, newest first. */
+  const periodPayments = useMemo<PaymentRow[]>(() => {
+    const rows: PaymentRow[] = [];
+    for (const loan of loans) {
+      if (loan.status === 'cancelled') continue;
+      for (const inst of loan.installments_list) {
+        const at = inst.status === 'confirmed' ? inst.confirmed_at : inst.status === 'submitted' ? inst.submitted_at : null;
+        if (!at || !inPeriod(new Date(at))) continue;
+        rows.push({ loan, inst, at });
+      }
+    }
+    return rows.sort((a, b) => b.at.localeCompare(a.at));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loans, from, to]);
+
+  const period = useMemo(() => {
+    const lentLoans = loans.filter((l) => l.status !== 'cancelled' && inPeriod(toLocalDate(l.start_date)));
+    const confirmed = periodPayments.filter((p) => p.inst.status === 'confirmed');
+    const sum = (f: (i: LoanInstallment) => number | null) => round2(confirmed.reduce((s, p) => s + (f(p.inst) ?? 0), 0));
+    const interest = sum((i) => i.interest_paid);
+    const fees = sum((i) => i.fee_paid);
+    return {
+      lent: round2(lentLoans.reduce((s, l) => s + l.principal, 0)),
+      lentCount: lentLoans.length,
+      collected: sum((i) => i.amount_paid),
+      principal: sum((i) => i.principal_paid),
+      interest,
+      fees,
+      earned: round2(interest + fees),
+      payments: confirmed.length,
+      reported: periodPayments.filter((p) => p.inst.status === 'submitted').length,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loans, periodPayments, from, to]);
+
+  /** Per-borrower totals: period money + current snapshot. */
+  const byUser = useMemo(() => {
+    const map = new Map<string, { id: string; name: string; username: string | null; loans: number; active: number; lent: number; outstanding: number; collected: number; earned: number; overdue: number; nextDue: string | null }>();
+    for (const l of loans) {
+      if (l.status === 'cancelled') continue;
+      const key = l.user_id;
+      const row = map.get(key) || { id: key, name: userName(l), username: l.user?.telegram_username || null, loans: 0, active: 0, lent: 0, outstanding: 0, collected: 0, earned: 0, overdue: 0, nextDue: null };
+      row.loans++;
+      if (l.status === 'active') {
+        row.active++;
+        row.outstanding = round2(row.outstanding + l.balance);
+        if (l.display_status === 'overdue') row.overdue = round2(row.overdue + l.amount_due);
+        if (l.next_due_date && (!row.nextDue || l.next_due_date < row.nextDue)) row.nextDue = l.next_due_date;
+      }
+      if (inPeriod(toLocalDate(l.start_date))) row.lent = round2(row.lent + l.principal);
+      map.set(key, row);
+    }
+    for (const p of periodPayments) {
+      if (p.inst.status !== 'confirmed') continue;
+      const row = map.get(p.loan.user_id);
+      if (!row) continue;
+      row.collected = round2(row.collected + (p.inst.amount_paid ?? 0));
+      row.earned = round2(row.earned + (p.inst.interest_paid ?? 0) + (p.inst.fee_paid ?? 0));
+    }
+    return [...map.values()].sort((a, b) => b.outstanding - a.outstanding || b.collected - a.collected);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loans, periodPayments, from, to]);
 
   // ---- create ----
   const openCreate = () => {
@@ -183,13 +284,50 @@ export default function LoansPage() {
 
       {loadError && <Card className="border-red-300"><CardContent className="p-4 text-sm text-red-700">{loadError}</CardContent></Card>}
 
+      {/* Date filter — same as Reports. Applies to money that moved (lent,
+          collected, earned, payments list). Outstanding / overdue / due soon
+          are always "now". */}
+      <Card>
+        <CardContent className="p-4">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div className="flex items-center gap-2">
+              <Calendar className="h-4 w-4 text-muted-foreground" />
+              <span className="text-sm font-medium">Filter by:</span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Tabs value={dateRange} onValueChange={(v) => setDateRange(v as DateRange)}>
+                <TabsList>
+                  <TabsTrigger value="all">All</TabsTrigger>
+                  <TabsTrigger value="today">Today</TabsTrigger>
+                  <TabsTrigger value="week">This Week</TabsTrigger>
+                  <TabsTrigger value="month">This Month</TabsTrigger>
+                  <TabsTrigger value="year">This Year</TabsTrigger>
+                  <TabsTrigger value="custom">Custom</TabsTrigger>
+                </TabsList>
+              </Tabs>
+            </div>
+            {dateRange === 'custom' && (
+              <DateRangePicker from={customFrom} to={customTo} onChange={(f, t) => { setCustomFrom(f); setCustomTo(t); }} />
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)} className="space-y-4">
+        <TabsList>
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="users">By User</TabsTrigger>
+          <TabsTrigger value="payments">All Payments</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="overview" className="space-y-4">
       {summary && (
         <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
-          <Stat label="Lent (principal)" value={fmtMoney(summary.lent)} sub={`${summary.loans} loan${summary.loans === 1 ? '' : 's'}`} icon={Banknote} />
-          <Stat label="Outstanding" value={fmtMoney(summary.outstanding)} sub={`${summary.active} active`} icon={Wallet} tone="text-blue-700" />
-          <Stat label="Principal collected" value={fmtMoney(summary.principal_collected)} sub={`of ${fmtMoney(summary.collected)} received`} icon={CheckCircle2} />
-          <Stat label="Earned (net)" value={fmtMoney(summary.earned)} sub={`interest ${fmtMoney(summary.interest_collected)} · fees ${fmtMoney(summary.fees_collected)}`} icon={TrendingUp} tone="text-emerald-700" />
-          <Stat label="Overdue" value={fmtMoney(summary.overdue_amount)} sub={`${summary.overdue} loan${summary.overdue === 1 ? '' : 's'} in mora`} icon={AlertTriangle} tone={summary.overdue ? 'text-red-700' : undefined} onClick={() => setFilter('overdue')} />
+          <Stat label={`Lent · ${PERIOD_LABEL[dateRange]}`} value={fmtMoney(period.lent)} sub={`${period.lentCount} loan${period.lentCount === 1 ? '' : 's'} given · ${fmtMoney(summary.lent)} all time`} icon={Banknote} />
+          <Stat label={`Collected · ${PERIOD_LABEL[dateRange]}`} value={fmtMoney(period.collected)} sub={`${fmtMoney(period.principal)} principal · ${period.payments} payment${period.payments === 1 ? '' : 's'}`} icon={CheckCircle2} onClick={() => setTab('payments')} />
+          <Stat label={`Earned · ${PERIOD_LABEL[dateRange]}`} value={fmtMoney(period.earned)} sub={`interest ${fmtMoney(period.interest)} · fees ${fmtMoney(period.fees)} · ${fmtMoney(summary.earned)} all time`} icon={TrendingUp} tone="text-emerald-700" />
+          <Stat label="Outstanding now" value={fmtMoney(summary.outstanding)} sub={`${summary.active} active loan${summary.active === 1 ? '' : 's'}`} icon={Wallet} tone="text-blue-700" />
+          <Stat label="Overdue now" value={fmtMoney(summary.overdue_amount)} sub={`${summary.overdue} loan${summary.overdue === 1 ? '' : 's'} in mora`} icon={AlertTriangle} tone={summary.overdue ? 'text-red-700' : undefined} onClick={() => setFilter('overdue')} />
           <Stat label="Due next 7 days" value={fmtMoney(summary.due_7_days)} sub={summary.reported ? `${summary.reported} reported, to confirm` : 'nothing reported'} icon={Clock} tone="text-amber-700" onClick={() => setFilter(summary.reported ? 'reported' : 'active')} />
         </div>
       )}
@@ -219,6 +357,156 @@ export default function LoansPage() {
           ))}
         </div>
       )}
+        </TabsContent>
+
+        {/* ---------------- By User ---------------- */}
+        <TabsContent value="users">
+          <Card>
+            <CardContent className="p-0">
+              <div className="flex items-center gap-2 px-4 py-3 border-b">
+                <Users className="h-4 w-4 text-muted-foreground" />
+                <p className="text-sm font-medium">By user</p>
+                <p className="text-xs text-muted-foreground">· lent, collected and earned are {PERIOD_LABEL[dateRange]}; outstanding and overdue are now</p>
+              </div>
+              {byUser.length === 0 ? (
+                <p className="p-8 text-center text-sm text-muted-foreground">No loans.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm min-w-[820px]">
+                    <thead className="bg-muted/50 text-xs text-muted-foreground">
+                      <tr>
+                        <th className="text-left px-4 py-2 font-medium">User</th>
+                        <th className="text-right px-3 py-2 font-medium">Loans</th>
+                        <th className="text-right px-3 py-2 font-medium">Lent</th>
+                        <th className="text-right px-3 py-2 font-medium">Collected</th>
+                        <th className="text-right px-3 py-2 font-medium">Earned</th>
+                        <th className="text-right px-3 py-2 font-medium">Outstanding</th>
+                        <th className="text-right px-3 py-2 font-medium">Overdue</th>
+                        <th className="text-left px-3 py-2 font-medium">Next due</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {byUser.map((u) => (
+                        <tr key={u.id} className="hover:bg-muted/40 cursor-pointer" onClick={() => { setQ(u.name); setFilter('all'); setTab('overview'); }} title="Show this user's loans">
+                          <td className="px-4 py-2">
+                            <p className="font-medium">{u.name}</p>
+                            {u.username && <p className="text-xs text-muted-foreground">@{u.username}</p>}
+                          </td>
+                          <td className="px-3 py-2 text-right">{u.active}<span className="text-muted-foreground"> / {u.loans}</span></td>
+                          <td className="px-3 py-2 text-right">{fmtMoney(u.lent)}</td>
+                          <td className="px-3 py-2 text-right">{fmtMoney(u.collected)}</td>
+                          <td className="px-3 py-2 text-right text-emerald-700 font-medium">{fmtMoney(u.earned)}</td>
+                          <td className="px-3 py-2 text-right font-semibold">{fmtMoney(u.outstanding)}</td>
+                          <td className={`px-3 py-2 text-right ${u.overdue ? 'text-red-700 font-semibold' : 'text-muted-foreground'}`}>{u.overdue ? fmtMoney(u.overdue) : '—'}</td>
+                          <td className="px-3 py-2">{u.nextDue ? fmtDay(u.nextDue) : '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot className="bg-muted/30 font-semibold">
+                      <tr>
+                        <td className="px-4 py-2">Total · {byUser.length} user{byUser.length === 1 ? '' : 's'}</td>
+                        <td className="px-3 py-2 text-right">{byUser.reduce((s, u) => s + u.active, 0)}<span className="text-muted-foreground font-normal"> / {byUser.reduce((s, u) => s + u.loans, 0)}</span></td>
+                        <td className="px-3 py-2 text-right">{fmtMoney(byUser.reduce((s, u) => s + u.lent, 0))}</td>
+                        <td className="px-3 py-2 text-right">{fmtMoney(byUser.reduce((s, u) => s + u.collected, 0))}</td>
+                        <td className="px-3 py-2 text-right text-emerald-700">{fmtMoney(byUser.reduce((s, u) => s + u.earned, 0))}</td>
+                        <td className="px-3 py-2 text-right">{fmtMoney(byUser.reduce((s, u) => s + u.outstanding, 0))}</td>
+                        <td className="px-3 py-2 text-right text-red-700">{fmtMoney(byUser.reduce((s, u) => s + u.overdue, 0))}</td>
+                        <td />
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* ---------------- All Payments ---------------- */}
+        <TabsContent value="payments">
+          <Card>
+            <CardContent className="p-0">
+              <div className="flex flex-wrap items-center gap-2 px-4 py-3 border-b">
+                <Banknote className="h-4 w-4 text-muted-foreground" />
+                <p className="text-sm font-medium">All loan payments · {PERIOD_LABEL[dateRange]}</p>
+                <p className="text-xs text-muted-foreground">· {period.payments} confirmed · {fmtMoney(period.collected)} received · {fmtMoney(period.earned)} earned{period.reported ? ` · ${period.reported} reported, to confirm` : ''}</p>
+              </div>
+              {periodPayments.length === 0 ? (
+                <p className="p-8 text-center text-sm text-muted-foreground">No loan payments in this period.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm min-w-[960px]">
+                    <thead className="bg-muted/50 text-xs text-muted-foreground">
+                      <tr>
+                        <th className="text-left px-4 py-2 font-medium">Date</th>
+                        <th className="text-left px-3 py-2 font-medium">User</th>
+                        <th className="text-left px-3 py-2 font-medium">Loan</th>
+                        <th className="text-left px-3 py-2 font-medium">Payment</th>
+                        <th className="text-right px-3 py-2 font-medium">Amount</th>
+                        <th className="text-right px-3 py-2 font-medium">Interest</th>
+                        <th className="text-right px-3 py-2 font-medium">Fee</th>
+                        <th className="text-right px-3 py-2 font-medium">Principal</th>
+                        <th className="text-left px-3 py-2 font-medium">Method</th>
+                        <th className="text-right px-3 py-2 font-medium"></th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {periodPayments.map(({ loan, inst, at }) => {
+                        const confirmed = inst.status === 'confirmed';
+                        const src = getScreenshotSrc(inst.screenshot_url, inst.screenshot_file_id);
+                        return (
+                          <tr key={inst.id} className={`hover:bg-muted/40 ${confirmed ? '' : 'bg-purple-50/50'}`}>
+                            <td className="px-4 py-2 whitespace-nowrap">
+                              <p>{format(new Date(at), 'MMM d, yyyy')}</p>
+                              <p className="text-[11px] text-muted-foreground">{format(new Date(at), 'HH:mm')}{confirmed ? '' : ' · reported, to confirm'}</p>
+                            </td>
+                            <td className="px-3 py-2">
+                              <p className="font-medium">{userName(loan)}</p>
+                              {loan.user?.telegram_username && <p className="text-[11px] text-muted-foreground">@{loan.user.telegram_username}</p>}
+                            </td>
+                            <td className="px-3 py-2">
+                              <button type="button" className="text-left" onClick={() => setSelectedId(loan.id)} title="Open loan">
+                                <Badge variant="outline" className={MODEL_BADGE_CLASS[loan.model]}>{MODEL_SHORT_LABEL[loan.model]}</Badge>
+                                <p className="text-[11px] text-muted-foreground mt-0.5">{fmtMoney(loan.principal)} · {loan.model === 'open' ? `${loan.rate_pct}%/cycle` : `${loan.installments} × ${loan.rate_pct}%/yr`}</p>
+                              </button>
+                            </td>
+                            <td className="px-3 py-2 whitespace-nowrap">
+                              {inst.kind === 'principal' ? <span className="inline-flex items-center gap-1 text-emerald-700"><PiggyBank className="h-3.5 w-3.5" /> principal</span> : inst.is_payoff ? 'payoff' : `#${inst.seq}`}
+                              <p className="text-[11px] text-muted-foreground">due {fmtDay(inst.due_date, 'MMM d')}</p>
+                            </td>
+                            <td className="px-3 py-2 text-right font-semibold">{fmtMoney(confirmed ? inst.amount_paid : inst.reported_amount)}</td>
+                            <td className="px-3 py-2 text-right">{confirmed ? fmtMoney(inst.interest_paid) : <span className="text-muted-foreground">—</span>}</td>
+                            <td className={`px-3 py-2 text-right ${(inst.fee_paid ?? 0) > 0 ? 'text-red-700' : 'text-muted-foreground'}`}>{confirmed && (inst.fee_paid ?? 0) > 0 ? fmtMoney(inst.fee_paid) : '—'}</td>
+                            <td className="px-3 py-2 text-right">{confirmed ? fmtMoney(inst.principal_paid) : <span className="text-muted-foreground">—</span>}</td>
+                            <td className="px-3 py-2">
+                              <p>{inst.payment_method || '—'}</p>
+                              {inst.payment_reference && <p className="text-[11px] text-muted-foreground font-mono truncate max-w-[140px]" title={inst.payment_reference}>{inst.payment_reference}</p>}
+                            </td>
+                            <td className="px-3 py-2 text-right">
+                              {src && <Button size="sm" variant="outline" className="h-7" onClick={() => setZoomSrc(src)}><ImageIcon className="h-3.5 w-3.5 mr-1" /> Screenshot</Button>}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                    <tfoot className="bg-muted/30 font-semibold">
+                      <tr>
+                        <td className="px-4 py-2" colSpan={4}>Total · {period.payments} confirmed payment{period.payments === 1 ? '' : 's'}</td>
+                        <td className="px-3 py-2 text-right">{fmtMoney(period.collected)}</td>
+                        <td className="px-3 py-2 text-right">{fmtMoney(period.interest)}</td>
+                        <td className="px-3 py-2 text-right text-red-700">{fmtMoney(period.fees)}</td>
+                        <td className="px-3 py-2 text-right">{fmtMoney(period.principal)}</td>
+                        <td colSpan={2} />
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
+
+      <ImageLightbox src={zoomSrc} alt="Loan payment screenshot" onClose={() => setZoomSrc(null)} />
 
       {/* ---------------- Create ---------------- */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
@@ -416,17 +704,6 @@ type Panel =
   | { kind: 'principal' }
   | null;
 
-/** Scheduled installments already confirmed (principal payments don't use up a slot). */
-const confirmedScheduledCount = (loan: LoanView) => loan.installments_list.filter((i) => i.status === 'confirmed' && i.kind !== 'principal').length;
-
-/** "n × $pay (last $x)" for a keep-the-payment plan. */
-function describeShortened(loan: LoanView, balance: number, pay: number): string {
-  const r = periodRate('french', loan.rate_pct, loan.frequency);
-  const n = shortenedTerm(balance, r, pay);
-  const rows = buildSchedule({ model: 'french', rate_pct: loan.rate_pct, frequency: loan.frequency, balance, firstDue: loan.first_due_date, firstSeq: 1, count: n, fixedPay: pay });
-  const last = rows.length ? round2(rows[rows.length - 1].interest_due + rows[rows.length - 1].principal_due) : pay;
-  return `${n} × ${fmtMoney(pay)}${Math.abs(last - pay) > 0.01 ? ` (last ${fmtMoney(last)})` : ''}`;
-}
 
 function ManageLoan({ loan, adminId, onChanged, onClose }: { loan: LoanView; adminId?: string; onChanged: () => Promise<void> | void; onClose: () => void }) {
   const today = todayStr();
@@ -494,7 +771,9 @@ function ManageLoan({ loan, adminId, onChanged, onClose }: { loan: LoanView; adm
       {loan.status === 'active' && (
         <div className="flex flex-wrap gap-2">
           <Button size="sm" variant="outline" onClick={() => setPanel(panel?.kind === 'terms' ? null : { kind: 'terms' })} className="gap-1"><Pencil className="h-3.5 w-3.5" /> Edit terms</Button>
-          <Button size="sm" variant="outline" onClick={() => setPanel(panel?.kind === 'principal' ? null : { kind: 'principal' })} className="gap-1 border-emerald-300 text-emerald-800"><PiggyBank className="h-3.5 w-3.5" /> Principal payment</Button>
+          {loan.model === 'open' && (
+            <Button size="sm" variant="outline" onClick={() => setPanel(panel?.kind === 'principal' ? null : { kind: 'principal' })} className="gap-1 border-emerald-300 text-emerald-800"><PiggyBank className="h-3.5 w-3.5" /> Principal payment</Button>
+          )}
           {loan.current?.is_payoff ? (
             <Button size="sm" variant="outline" disabled={busy} onClick={() => call(`/api/loans/${loan.id}/payoff`, { undo: true }, 'POST', 'Back to the normal schedule')} className="gap-1"><Undo2 className="h-3.5 w-3.5" /> Undo early payoff</Button>
           ) : (
@@ -664,35 +943,19 @@ function ConfirmPanel({ loan, inst, busy, onCancel, onConfirm }: { loan: LoanVie
   const [interest, setInterest] = useState(String(inst.interest_due));
   const [fee, setFee] = useState(String(base.fee));
   const [notes, setNotes] = useState('');
-  // The user can say what they want done with any extra; default to that.
-  const wanted = (inst.user_notes || '').match(/\[extra:(reduce_installment|reduce_term|pay_ahead)\]/)?.[1] as ExtraMode | undefined;
-  const [mode, setMode] = useState<ExtraMode>(wanted || 'reduce_installment');
   const amt = Number(amount) || 0;
   const feeN = Number(fee) || 0;
   const intN = Number(interest) || 0;
   const due = { fee: feeN, interest: intN, principal: inst.principal_due, total: round2(feeN + intN + inst.principal_due) };
   const extra = round2(amt - due.total);
-  const showModes = loan.model === 'french' && !inst.is_payoff && extra > 0.005;
+  // Closed loans: extra money can only pay whole installments ahead.
+  const plan = loan.model === 'french' && !inst.is_payoff && extra > 0.005 ? planPayAhead(loan, inst, due, amt) : null;
+  const blocked = !!plan && plan.leftover > 0.005;
   const plain = allocatePayment(amt, due, loan.balance);
-  const plan = showModes && mode === 'pay_ahead' ? planPayAhead(loan, inst, due, amt) : null;
-  const alloc = plan
-    ? { ...plain, principal_paid: round2(Math.min(due.principal, loan.balance) + plan.leftover), shortfall: 0, overpaid: plan.overpaid, new_balance: plan.new_balance }
-    : plain;
+  const alloc = plan ? { ...plain, principal_paid: Math.min(due.principal, loan.balance), shortfall: 0, overpaid: 0, new_balance: plan.new_balance } : plain;
   const paidOff = alloc.new_balance <= 0.009 || inst.is_payoff;
-  const r = periodRate('french', loan.rate_pct, loan.frequency);
-  const scheduledPay = round2(inst.interest_due + inst.principal_due);
-  const remainingAfter = Math.max(0, (loan.installments || 1) - confirmedScheduledCount(loan) - 1);
-  const previews: Record<ExtraMode, string> | null = showModes
-    ? {
-        reduce_installment: plain.new_balance <= 0.009 ? 'pays off the loan' : `${Math.max(1, remainingAfter)} × ${fmtMoney(frenchInstallment(plain.new_balance, r, Math.max(1, remainingAfter)))} (was ${fmtMoney(scheduledPay)})`,
-        reduce_term: plain.new_balance <= 0.009 ? 'pays off the loan' : `${describeShortened(loan, plain.new_balance, scheduledPay)} (${remainingAfter} left before)`,
-        pay_ahead: (() => {
-          const p = planPayAhead(loan, inst, due, amt);
-          const seqs = p.paid.map((x) => `#${x.inst.seq}`);
-          const next = loan.installments_list.filter((i) => i.status !== 'confirmed' && i.id !== inst.id && !p.paid.some((x) => x.inst.id === i.id)).sort((a, b) => a.seq - b.seq)[0];
-          return `${seqs.length ? `pays ${seqs.join(', ')} ahead` : 'not enough for a whole installment'}${p.leftover ? ` · ${fmtMoney(p.leftover)} to principal` : ''}${p.new_balance <= 0.009 ? ' · pays off' : next ? ` · next due ${fmtDay(next.due_date, 'MMM d')}` : ''}`;
-        })(),
-      }
+  const nextAfterPlan = plan
+    ? loan.installments_list.filter((i) => i.status !== 'confirmed' && i.id !== inst.id && !plan.paid.some((x) => x.inst.id === i.id)).sort((a, b) => a.seq - b.seq)[0]
     : null;
   return (
     <div className="rounded-lg border-2 border-green-300 bg-green-50/50 p-4 space-y-3">
@@ -714,24 +977,22 @@ function ConfirmPanel({ loan, inst, busy, onCancel, onConfirm }: { loan: LoanVie
           <p className="text-[11px] text-muted-foreground">{base.fee ? `auto ${fmtMoney(base.fee)} — set 0 to waive` : 'not late'}</p>
         </div>
       </div>
-      {showModes && previews && (
-        <div className="rounded-md border bg-white/70 dark:bg-background p-3 space-y-1.5">
-          <p className="text-xs font-semibold">{fmtMoney(extra)} more than this installment. Apply the extra to:</p>
-          {(Object.keys(EXTRA_MODE_LABEL) as ExtraMode[]).map((m) => (
-            <button
-              key={m}
-              type="button"
-              onClick={() => setMode(m)}
-              className={`w-full text-left rounded-md border px-3 py-2 text-sm flex items-start gap-2 ${mode === m ? 'border-primary bg-primary/5 ring-1 ring-primary' : 'hover:bg-muted'}`}
-            >
-              <span className={`mt-1 h-3 w-3 rounded-full border shrink-0 ${mode === m ? 'bg-primary border-primary' : ''}`} />
-              <span>
-                <span className="font-medium">{EXTRA_MODE_LABEL[m]}</span>
-                {wanted === m && <span className="ml-1 text-[10px] text-purple-700">(user asked)</span>}
-                <span className="block text-xs text-muted-foreground">{previews[m]}</span>
-              </span>
-            </button>
-          ))}
+      {plan && (
+        <div className={`rounded-md border p-3 text-sm space-y-1 ${blocked ? 'border-red-300 bg-red-50/70 dark:bg-red-950/30' : 'bg-white/70 dark:bg-background'}`}>
+          <p className="font-semibold text-xs">{fmtMoney(extra)} more than this installment. Closed loans take no principal payments — the extra pays the next installments ahead, whole.</p>
+          {plan.paid.length > 0 && (
+            <p>Pays ahead {plan.paid.map((p) => `#${p.inst.seq} (${fmtMoney(p.amount)})`).join(', ')}{nextAfterPlan ? ` · next due becomes ${fmtDay(nextAfterPlan.due_date)}` : plan.new_balance <= 0.009 ? ' · loan paid off' : ''}</p>
+          )}
+          {blocked && (
+            <div className="text-red-800 dark:text-red-200">
+              <p><b>{fmtMoney(plan.leftover)}</b> does not complete an installment. Enter one of these amounts:</p>
+              <div className="flex flex-wrap gap-1 mt-1">
+                {plan.valid_totals.slice(0, 5).map((t) => (
+                  <Button key={t} type="button" size="sm" variant="outline" className="h-7" onClick={() => setAmount(String(t))}>{fmtMoney(t)}</Button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
       <div className="rounded-md bg-white/70 dark:bg-background p-3 text-sm grid sm:grid-cols-5 gap-2">
@@ -747,7 +1008,7 @@ function ConfirmPanel({ loan, inst, busy, onCancel, onConfirm }: { loan: LoanVie
       </div>
       <div className="flex justify-end gap-2">
         <Button variant="outline" size="sm" onClick={onCancel} disabled={busy}>Cancel</Button>
-        <Button size="sm" className="bg-green-600 hover:bg-green-700 gap-1" disabled={busy || !(Number(amount) > 0)} onClick={() => onConfirm({ amount: Number(amount), interest: Number(interest) || 0, late_fee: Number(fee) || 0, admin_notes: notes || null, extra_mode: showModes ? mode : undefined })}>
+        <Button size="sm" className="bg-green-600 hover:bg-green-700 gap-1" disabled={busy || blocked || !(Number(amount) > 0)} onClick={() => onConfirm({ amount: Number(amount), interest: Number(interest) || 0, late_fee: Number(fee) || 0, admin_notes: notes || null })}>
           {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />} Confirm {fmtMoney(Number(amount) || 0)}
         </Button>
       </div>
@@ -812,15 +1073,11 @@ function AdjustPanel({ loan, inst, busy, onCancel, onSave }: { loan: LoanView; i
 
 function PrincipalPanel({ loan, busy, onSave, onCancel }: { loan: LoanView; busy: boolean; onSave: (b: Record<string, unknown>) => void; onCancel: () => void }) {
   const [amount, setAmount] = useState('');
-  const [mode, setMode] = useState<'reduce_installment' | 'reduce_term'>('reduce_installment');
   const [notes, setNotes] = useState('');
   const amt = Number(amount) || 0;
   const tooMuch = amt >= loan.balance - 0.005;
   const nb = round2(loan.balance - amt);
   const cur = loan.current;
-  const r = periodRate('french', loan.rate_pct, loan.frequency);
-  const scheduledPay = cur ? round2(cur.interest_due + cur.principal_due) : 0;
-  const remaining = Math.max(1, (loan.installments || 1) - confirmedScheduledCount(loan));
   return (
     <div className="rounded-lg border-2 border-emerald-300 bg-emerald-50/50 p-4 space-y-3">
       <p className="font-semibold text-sm flex items-center gap-2"><PiggyBank className="h-4 w-4" /> Principal payment (abono a capital)</p>
@@ -837,32 +1094,13 @@ function PrincipalPanel({ loan, busy, onSave, onCancel }: { loan: LoanView; busy
         </div>
       </div>
       {amt > 0 && !tooMuch && (
-        loan.model === 'french' ? (
-          <div className="space-y-1.5">
-            <p className="text-xs font-semibold">New balance {fmtMoney(nb)}. Re-plan the pending installments by:</p>
-            {(['reduce_installment', 'reduce_term'] as const).map((m) => (
-              <button key={m} type="button" onClick={() => setMode(m)} className={`w-full text-left rounded-md border px-3 py-2 text-sm flex items-start gap-2 ${mode === m ? 'border-primary bg-primary/5 ring-1 ring-primary' : 'hover:bg-muted bg-white/70 dark:bg-background'}`}>
-                <span className={`mt-1 h-3 w-3 rounded-full border shrink-0 ${mode === m ? 'bg-primary border-primary' : ''}`} />
-                <span>
-                  <span className="font-medium">{EXTRA_MODE_LABEL[m]}</span>
-                  <span className="block text-xs text-muted-foreground">
-                    {m === 'reduce_installment'
-                      ? `${remaining} × ${fmtMoney(frenchInstallment(nb, r, remaining))} (was ${fmtMoney(scheduledPay)})`
-                      : `${describeShortened(loan, nb, scheduledPay)} (${remaining} left before)`}
-                  </span>
-                </span>
-              </button>
-            ))}
-          </div>
-        ) : (
-          <p className="text-xs rounded-md bg-white/70 dark:bg-background p-2">
-            New balance <b>{fmtMoney(nb)}</b>. This cycle&apos;s interest stays {fmtMoney(cur?.interest_due ?? 0)} (already owed); the next cycle charges {loan.rate_pct}% of {fmtMoney(nb)} = <b>{fmtMoney(round2(nb * periodRate('open', loan.rate_pct, loan.frequency)))}</b>.
-          </p>
-        )
+        <p className="text-xs rounded-md bg-white/70 dark:bg-background p-2">
+          New balance <b>{fmtMoney(nb)}</b>. This cycle&apos;s interest stays {fmtMoney(cur?.interest_due ?? 0)} (already owed); the next cycle charges {loan.rate_pct}% of {fmtMoney(nb)} = <b>{fmtMoney(round2(nb * periodRate('open', loan.rate_pct, loan.frequency)))}</b>.
+        </p>
       )}
       <div className="flex justify-end gap-2">
         <Button variant="outline" size="sm" onClick={onCancel} disabled={busy}>Cancel</Button>
-        <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" disabled={busy || !(amt > 0) || tooMuch} onClick={() => onSave({ amount: amt, mode, notes: notes || null })}>Apply {fmtMoney(amt)} to principal</Button>
+        <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" disabled={busy || !(amt > 0) || tooMuch} onClick={() => onSave({ amount: amt, notes: notes || null })}>Apply {fmtMoney(amt)} to principal</Button>
       </div>
     </div>
   );

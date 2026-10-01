@@ -10,11 +10,9 @@ import {
   periodRate,
   planPayAhead,
   round2,
-  shortenedTerm,
   todayStr,
   toView,
   type Allocation,
-  type ExtraMode,
   type Loan,
   type LoanFrequency,
   type LoanInstallment,
@@ -202,7 +200,7 @@ export interface UpdateLoanInput {
  * Rebuild the pending schedule from the current balance. Keeps confirmed
  * rows as history and continues the due dates where they were.
  */
-async function regeneratePending(view: LoanView, overrides: { rate_pct?: number; installments?: number | null; fixedPay?: number } = {}): Promise<void> {
+async function regeneratePending(view: LoanView, overrides: { rate_pct?: number; installments?: number | null } = {}): Promise<void> {
   if (view.installments_list.some((i) => i.status === 'submitted')) {
     throw new LoanError('A payment report is waiting for confirmation. Confirm or reject it first.');
   }
@@ -224,7 +222,7 @@ async function regeneratePending(view: LoanView, overrides: { rate_pct?: number;
     if (error) throw dbError(error);
   }
   if (view.balance <= 0) return;
-  const rows = buildSchedule({ model: view.model, rate_pct: rate, frequency: view.frequency, balance: view.balance, firstDue, firstSeq, count: remaining, fixedPay: overrides.fixedPay });
+  const rows = buildSchedule({ model: view.model, rate_pct: rate, frequency: view.frequency, balance: view.balance, firstDue, firstSeq, count: remaining });
   const { error } = await supabase.from('loan_installments').insert(rows.map((r) => ({ loan_id: view.id, ...r })));
   if (error) throw dbError(error);
 }
@@ -325,23 +323,6 @@ export interface ConfirmInput {
   /** Override the interest for this installment (help out / adjust) */
   interest?: number | null;
   confirmed_by?: string | null;
-  /** French only: what to do with money beyond this installment's due */
-  extra_mode?: ExtraMode;
-}
-
-/**
- * Keep the installment amount and shorten the plan to fit the new balance:
- * stores the new total count and rebuilds the pending rows at exactly `pay`
- * (last one adjusted).
- */
-async function shortenTerm(view: LoanView, newBalance: number, pay: number, extraConfirmedScheduled: number): Promise<void> {
-  const r = periodRate('french', view.rate_pct, view.frequency);
-  const n = shortenedTerm(newBalance, r, pay);
-  const confirmedScheduled = view.installments_list.filter((i) => i.status === 'confirmed' && i.kind !== 'principal').length + extraConfirmedScheduled;
-  const supabase = createAdminClient();
-  const { error } = await supabase.from('loans').update({ installments: confirmedScheduled + n, updated_at: new Date().toISOString() }).eq('id', view.id);
-  if (error) throw dbError(error);
-  await regeneratePending(await getLoan(view.id), { fixedPay: pay });
 }
 
 export interface ConfirmResult {
@@ -368,25 +349,29 @@ export async function confirmInstallment(instId: string, input: ConfirmInput): P
     late_fee_override: input.late_fee !== undefined && input.late_fee !== null ? round2(Math.max(0, input.late_fee)) : inst.late_fee_override,
   };
   const due = installmentDue(view, adjusted, today);
-  const scheduledPay = round2(inst.interest_due + inst.principal_due);
-  const mode: ExtraMode = view.model === 'french' && !inst.is_payoff && amount > due.total + 0.005 ? input.extra_mode || 'reduce_installment' : 'reduce_installment';
 
-  // Pay-ahead splits the money across this row and the next scheduled ones.
+  // Closed loans: money beyond the due can only pay whole installments
+  // ahead (no principal prepayments). Open loans: anything extra reduces
+  // the balance.
   let alloc: Allocation;
   let amountOnRow = amount;
   let ahead: ReturnType<typeof planPayAhead>['paid'] = [];
-  if (mode === 'pay_ahead') {
+  if (view.model === 'french' && !inst.is_payoff && amount > due.total + 0.005) {
     const plan = planPayAhead(view, adjusted, due, amount);
+    if (plan.leftover > 0.005) {
+      const options = plan.valid_totals.slice(0, 4).map((t) => t.toFixed(2)).join(', ');
+      throw new LoanError(`${plan.leftover.toFixed(2)} does not complete an installment. Closed loans take whole installments only — enter one of: ${options}.`);
+    }
     ahead = plan.paid;
     alloc = {
       fee_paid: due.fee,
       interest_paid: due.interest,
-      principal_paid: round2(Math.min(due.principal, view.balance) + plan.leftover),
+      principal_paid: Math.min(due.principal, view.balance),
       shortfall: 0,
-      overpaid: plan.overpaid,
+      overpaid: 0,
       new_balance: plan.new_balance,
     };
-    amountOnRow = round2(due.total + plan.leftover);
+    amountOnRow = due.total;
   } else {
     alloc = allocatePayment(amount, due, view.balance);
   }
@@ -462,10 +447,9 @@ export async function confirmInstallment(instId: string, input: ConfirmInput): P
     });
     if (nErr) throw dbError(nErr);
   } else {
-    // French: re-amortize what's left from the new balance — over the same
-    // number of installments, or keep the payment and shorten the plan.
-    if (mode === 'reduce_term') await shortenTerm(view, newBalance, scheduledPay, 1);
-    else await regeneratePending(await getLoan(view.id));
+    // French: re-plan what's left from the new balance (same count; after a
+    // normal or pay-ahead payment this reproduces the original schedule).
+    await regeneratePending(await getLoan(view.id));
   }
 
   const finalView = await getLoan(view.id);
@@ -541,21 +525,20 @@ export async function createPayoff(loanId: string): Promise<LoanView> {
 
 export interface PrincipalPaymentInput {
   amount: number;
-  /** French: lower the installments (default) or shorten the plan */
-  mode?: 'reduce_installment' | 'reduce_term';
   notes?: string | null;
   confirmed_by?: string | null;
 }
 
 /**
- * "Abono a capital": money straight to the balance, any day, no interest or
- * fee charged on it. Open loans keep this cycle's interest as it was (the
- * cost of the cycle) and charge the next one on the lower balance; French
- * loans re-plan the pending installments (lower them, or fewer of them).
+ * "Abono a capital" — open loans only: money straight to the balance, any
+ * day, no interest or fee charged on it. This cycle's interest stays as it
+ * was (the cost of the cycle); the next one is charged on the lower balance.
+ * Closed loans don't take it: extra money there pays installments ahead.
  */
 export async function principalPayment(loanId: string, input: PrincipalPaymentInput): Promise<LoanView> {
   const view = await getLoan(loanId);
   if (view.status !== 'active') throw new LoanError('This loan is closed');
+  if (view.model === 'french') throw new LoanError('Closed loans take no principal payments. Extra money pays the next installments ahead — confirm it on the installment.');
   const amount = round2(Number(input.amount) || 0);
   if (!(amount > 0)) throw new LoanError('Amount must be greater than zero');
   if (amount >= view.balance - 0.005) throw new LoanError(`That pays the whole balance (${view.balance.toFixed(2)}). Use “Settle early” so this cycle's interest is included.`);
@@ -589,13 +572,7 @@ export async function principalPayment(loanId: string, input: PrincipalPaymentIn
   const { error: lErr } = await supabase.from('loans').update({ balance: newBalance, updated_at: now }).eq('id', loanId);
   if (lErr) throw dbError(lErr);
 
-  if (view.model === 'french') {
-    if (input.mode === 'reduce_term' && view.current) {
-      await shortenTerm(view, newBalance, round2(view.current.interest_due + view.current.principal_due), 0);
-    } else {
-      await regeneratePending(await getLoan(loanId));
-    }
-  } else if (view.current?.is_payoff) {
+  if (view.current?.is_payoff) {
     // A pending payoff row must now ask for the new balance.
     await supabase.from('loan_installments').update({ principal_due: newBalance }).eq('id', view.current.id);
   }
