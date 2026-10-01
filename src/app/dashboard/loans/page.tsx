@@ -18,6 +18,7 @@ import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import { UserPicker, type UserLike } from '@/components/UserPicker';
 import { ScreenshotImage } from '@/components/ScreenshotImage';
+import { ImageLightbox } from '@/components/ImageLightbox';
 import { getScreenshotSrc } from '@/lib/screenshots';
 import {
   EXTRA_MODE_LABEL, FREQUENCY_LABEL, MODEL_BADGE_CLASS, MODEL_EDGE_CLASS, MODEL_LABEL, MODEL_SHORT_LABEL, STATUS_LABEL, addCycle, allocatePayment, buildSchedule, daysBetween, fmtMoney,
@@ -432,6 +433,7 @@ function ManageLoan({ loan, adminId, onChanged, onClose }: { loan: LoanView; adm
   const [panel, setPanel] = useState<Panel>(null);
   const [busy, setBusy] = useState(false);
   const [shot, setShot] = useState<LoanInstallment | null>(null);
+  const [zoomSrc, setZoomSrc] = useState<string | null>(null);
   const quote = payoffQuote(loan, today);
 
   const call = async (url: string, body: Record<string, unknown>, method = 'POST', okMsg?: string) => {
@@ -452,14 +454,16 @@ function ManageLoan({ loan, adminId, onChanged, onClose }: { loan: LoanView; adm
     }
   };
 
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const paidCount = loan.installments_list.filter((i) => i.status === 'confirmed').length;
   const del = async () => {
-    if (!confirm('Delete this loan? Only possible while nothing is confirmed.')) return;
     setBusy(true);
     const res = await fetch(`/api/loans/${loan.id}`, { method: 'DELETE' });
     const json = await res.json();
     setBusy(false);
     if (!json.success) return toast.error(json.error || 'Could not delete');
     toast.success('Loan deleted');
+    setConfirmDelete(false);
     await onChanged();
     onClose();
   };
@@ -497,12 +501,41 @@ function ManageLoan({ loan, adminId, onChanged, onClose }: { loan: LoanView; adm
             <Button size="sm" variant="outline" disabled={busy} onClick={() => call(`/api/loans/${loan.id}/payoff`, {}, 'POST', `Payoff set: ${fmtMoney(quote.total)}. Adjust the interest if you want to help, then confirm when paid.`)} className="gap-1"><Zap className="h-3.5 w-3.5" /> Settle early ({fmtMoney(quote.total)})</Button>
           )}
           <Button size="sm" variant="outline" disabled={busy} onClick={() => confirm('Cancel this loan? It stops being collected. Confirmed payments stay in history.') && call(`/api/loans/${loan.id}`, { status: 'cancelled' }, 'PUT', 'Loan cancelled')} className="gap-1 text-red-700"><Ban className="h-3.5 w-3.5" /> Cancel loan</Button>
-          {loan.totals.paid === 0 && <Button size="sm" variant="ghost" disabled={busy} onClick={del} className="gap-1 text-red-700"><Trash2 className="h-3.5 w-3.5" /> Delete</Button>}
+          <Button size="sm" variant="ghost" disabled={busy} onClick={() => setConfirmDelete(true)} className="gap-1 text-red-700"><Trash2 className="h-3.5 w-3.5" /> Delete</Button>
         </div>
       )}
-      {loan.status === 'cancelled' && (
-        <Button size="sm" variant="outline" disabled={busy} onClick={() => call(`/api/loans/${loan.id}`, { status: 'active' }, 'PUT', 'Loan reactivated')} className="w-fit gap-1"><Undo2 className="h-3.5 w-3.5" /> Reactivate</Button>
+      {loan.status !== 'active' && (
+        <div className="flex flex-wrap gap-2">
+          {loan.status === 'cancelled' && (
+            <Button size="sm" variant="outline" disabled={busy} onClick={() => call(`/api/loans/${loan.id}`, { status: 'active' }, 'PUT', 'Loan reactivated')} className="gap-1"><Undo2 className="h-3.5 w-3.5" /> Reactivate</Button>
+          )}
+          <Button size="sm" variant="ghost" disabled={busy} onClick={() => setConfirmDelete(true)} className="gap-1 text-red-700"><Trash2 className="h-3.5 w-3.5" /> Delete</Button>
+        </div>
       )}
+
+      <Dialog open={confirmDelete} onOpenChange={(o) => !o && setConfirmDelete(false)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-700"><Trash2 className="h-5 w-5" /> Delete this loan?</DialogTitle>
+            <DialogDescription>This cannot be undone. Use “Cancel loan” instead if it should stay in the books.</DialogDescription>
+          </DialogHeader>
+          <div className="rounded-lg border border-red-200 bg-red-50 dark:bg-red-950/30 p-3 text-sm space-y-1">
+            <p><b>{userName(loan)}</b> · {MODEL_SHORT_LABEL[loan.model]} of {fmtMoney(loan.principal)} · {STATUS_LABEL[loan.display_status]}</p>
+            <p>
+              {paidCount === 0
+                ? 'No payments have been recorded on it.'
+                : <>It erases <b>{paidCount} recorded payment{paidCount === 1 ? '' : 's'}</b> totalling <b>{fmtMoney(loan.totals.paid)}</b> ({fmtMoney(round2(loan.totals.interest + loan.totals.fees))} of it earned) from the accounting.</>}
+            </p>
+            <p className="text-xs text-muted-foreground">The user stops seeing it in the app immediately.</p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmDelete(false)} disabled={busy}>Keep it</Button>
+            <Button variant="destructive" onClick={del} disabled={busy} className="gap-2">
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />} Delete loan
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {panel?.kind === 'terms' && <TermsPanel loan={loan} busy={busy} onSave={(body) => call(`/api/loans/${loan.id}`, body, 'PUT', 'Terms updated')} onCancel={() => setPanel(null)} />}
       {panel?.kind === 'principal' && <PrincipalPanel loan={loan} busy={busy} onSave={(body) => call(`/api/loans/${loan.id}/principal`, { ...body, admin_id: adminId }, 'POST', 'Principal payment applied')} onCancel={() => setPanel(null)} />}
@@ -598,14 +631,18 @@ function ManageLoan({ loan, adminId, onChanged, onClose }: { loan: LoanView; adm
           <DialogHeader><DialogTitle>Payment screenshot · installment #{shot?.seq}</DialogTitle></DialogHeader>
           {shot && (
             <div className="space-y-2">
-              <ScreenshotImage url={shot.screenshot_url} fileId={shot.screenshot_file_id} alt="Loan payment" className="max-h-[70vh] w-auto mx-auto rounded-lg" />
+              {/* Expands in place (a new tab would leave the Telegram mini-app). */}
+              <button type="button" className="w-full cursor-zoom-in" onClick={() => setZoomSrc(getScreenshotSrc(shot.screenshot_url, shot.screenshot_file_id))} aria-label="View full size">
+                <ScreenshotImage url={shot.screenshot_url} fileId={shot.screenshot_file_id} alt="Loan payment" className="max-h-[70vh] w-auto mx-auto rounded-lg" />
+              </button>
               {getScreenshotSrc(shot.screenshot_url, shot.screenshot_file_id) && (
-                <a href={getScreenshotSrc(shot.screenshot_url, shot.screenshot_file_id) || '#'} target="_blank" rel="noreferrer" className="text-xs underline text-blue-700">Open full size</a>
+                <Button type="button" variant="outline" size="sm" className="gap-2" onClick={() => setZoomSrc(getScreenshotSrc(shot.screenshot_url, shot.screenshot_file_id))}><ImageIcon className="h-4 w-4" /> View full size</Button>
               )}
             </div>
           )}
         </DialogContent>
       </Dialog>
+      <ImageLightbox src={zoomSrc} alt="Loan payment screenshot" onClose={() => setZoomSrc(null)} />
     </>
   );
 }

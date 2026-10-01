@@ -9,12 +9,13 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { HandCoins, Loader2, RefreshCw, DollarSign, CheckCircle2, Clock, AlertTriangle, Camera, Upload, X, Check, ChevronRight, ExternalLink } from 'lucide-react';
+import { HandCoins, Loader2, RefreshCw, DollarSign, CheckCircle2, Clock, AlertTriangle, Camera, Upload, X, Check, ChevronRight, Maximize2 } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import { useAutoRefresh } from '@/hooks/useAutoRefresh';
 import { ScreenshotImage } from '@/components/ScreenshotImage';
+import { ImageLightbox } from '@/components/ImageLightbox';
 import { getScreenshotSrc } from '@/lib/screenshots';
 import {
   EXTRA_MODE_LABEL, FREQUENCY_LABEL, MODEL_BADGE_CLASS, MODEL_EDGE_CLASS, MODEL_SHORT_LABEL, STATUS_LABEL, allocatePayment, daysBetween, fmtMoney, graceEnd, installmentDue, payoffQuote, planPayAhead, round2, toLocalDate, todayStr,
@@ -191,11 +192,18 @@ function LoanCard({ loan, today, onReport, onDetail }: { loan: LoanView; today: 
         {cur && due && loan.status === 'active' && (
           <div className="text-xs text-muted-foreground rounded-md border p-2 space-y-0.5">
             {due.fee > 0 && <p>Late fee: <b className="text-red-700">{fmtMoney(due.fee)}</b></p>}
-            <p>Interest: <b>{fmtMoney(due.interest)}</b>{loan.model === 'open' && !cur.is_payoff ? ` (${loan.rate_pct}% of ${fmtMoney(loan.balance)})` : ''}</p>
-            {loan.model === 'open' && !cur.is_payoff ? (
-              <p>Minimum this cycle is the interest. Anything you pay above it reduces what you owe, and next cycle&apos;s interest is calculated on the new balance.</p>
+            {loan.model === 'french' ? (
+              // Closed loans: one fixed amount per installment, no split for the borrower.
+              <p>{cur.is_payoff ? 'Final payment' : `Installment ${cur.seq}${loan.installments ? ` of ${loan.installments}` : ''}`}: <b>{fmtMoney(due.interest + due.principal)}</b></p>
             ) : (
-              <p>Principal: <b>{fmtMoney(due.principal)}</b>{cur.is_payoff ? ' (full balance)' : ''}</p>
+              <>
+                <p>Interest: <b>{fmtMoney(due.interest)}</b>{!cur.is_payoff ? ` (${loan.rate_pct}% of ${fmtMoney(loan.balance)})` : ''}</p>
+                {cur.is_payoff ? (
+                  <p>Principal: <b>{fmtMoney(due.principal)}</b> (full balance)</p>
+                ) : (
+                  <p>Minimum this cycle is the interest. Anything you pay above it reduces what you owe, and next cycle&apos;s interest is calculated on the new balance.</p>
+                )}
+              </>
             )}
           </div>
         )}
@@ -260,12 +268,14 @@ function LoanCard({ loan, today, onReport, onDetail }: { loan: LoanView; today: 
 
 function PaymentDetailDialog({ loan, inst, onClose }: { loan: LoanView; inst: LoanInstallment; onClose: () => void }) {
   const confirmed = inst.status === 'confirmed';
+  const closed = loan.model === 'french';
   const after = balancesAfter(loan).get(inst.id);
   const before = after !== undefined ? round2(after - (inst.shortfall ?? 0) + (inst.principal_paid ?? 0)) : undefined;
   const asked = extraAsked(inst.user_notes);
   const notes = cleanNotes(inst.user_notes);
   const src = getScreenshotSrc(inst.screenshot_url, inst.screenshot_file_id);
   const amount = confirmed ? inst.amount_paid : inst.reported_amount;
+  const [zoom, setZoom] = useState(false);
   const Row = ({ label, value, strong, tone }: { label: string; value: React.ReactNode; strong?: boolean; tone?: string }) => (
     <div className="flex justify-between gap-3 py-1.5">
       <span className="text-muted-foreground">{label}</span>
@@ -306,9 +316,15 @@ function PaymentDetailDialog({ loan, inst, onClose }: { loan: LoanView; inst: Lo
           {confirmed ? (
             <>
               {(inst.fee_paid ?? 0) > 0 && <Row label="Late fee" value={fmtMoney(inst.fee_paid)} tone="text-red-700" />}
-              <Row label="Interest" value={fmtMoney(inst.interest_paid)} />
-              <Row label="Principal" value={fmtMoney(inst.principal_paid)} />
-              {(inst.shortfall ?? 0) > 0 && <Row label="Unpaid interest added to balance" value={`+${fmtMoney(inst.shortfall)}`} tone="text-amber-700" />}
+              {closed && inst.kind !== 'principal' ? (
+                <Row label={inst.is_payoff ? 'Final payment' : `Installment ${inst.seq}`} value={fmtMoney(round2((inst.interest_paid ?? 0) + (inst.principal_paid ?? 0)))} />
+              ) : (
+                <>
+                  {inst.kind !== 'principal' && <Row label="Interest" value={fmtMoney(inst.interest_paid)} />}
+                  <Row label="Principal" value={fmtMoney(inst.principal_paid)} />
+                </>
+              )}
+              {(inst.shortfall ?? 0) > 0 && <Row label="Unpaid amount added to balance" value={`+${fmtMoney(inst.shortfall)}`} tone="text-amber-700" />}
               {before !== undefined && after !== undefined && (
                 <Row label="Balance" value={<span>{fmtMoney(before)} <span className="text-muted-foreground">→</span> <b>{fmtMoney(after)}</b></span>} />
               )}
@@ -316,8 +332,14 @@ function PaymentDetailDialog({ loan, inst, onClose }: { loan: LoanView; inst: Lo
             </>
           ) : (
             <>
-              <Row label="Interest due" value={fmtMoney(inst.interest_due)} />
-              {(loan.model === 'french' || inst.is_payoff) && <Row label="Principal due" value={fmtMoney(inst.principal_due)} />}
+              {closed ? (
+                <Row label={inst.is_payoff ? 'Final payment due' : 'Installment due'} value={fmtMoney(round2(inst.interest_due + inst.principal_due))} />
+              ) : (
+                <>
+                  <Row label="Interest due" value={fmtMoney(inst.interest_due)} />
+                  {inst.is_payoff && <Row label="Principal due" value={fmtMoney(inst.principal_due)} />}
+                </>
+              )}
               <Row label="Status" value="The admin reviews it and confirms how it is applied." />
             </>
           )}
@@ -335,8 +357,12 @@ function PaymentDetailDialog({ loan, inst, onClose }: { loan: LoanView; inst: Lo
         {src && (
           <div className="space-y-1">
             <p className="text-xs text-muted-foreground">Your screenshot</p>
-            <ScreenshotImage url={inst.screenshot_url} fileId={inst.screenshot_file_id} alt="Payment screenshot" className="w-full max-h-72 object-contain rounded-lg border bg-black/5" />
-            <a href={src} target="_blank" rel="noreferrer" className="text-xs text-blue-700 underline inline-flex items-center gap-1"><ExternalLink className="h-3 w-3" /> Open full size</a>
+            {/* Expands in place — a new tab would kick the user out of Telegram. */}
+            <button type="button" onClick={() => setZoom(true)} className="w-full cursor-zoom-in" aria-label="View full size">
+              <ScreenshotImage url={inst.screenshot_url} fileId={inst.screenshot_file_id} alt="Payment screenshot" className="w-full max-h-72 object-contain rounded-lg border bg-black/5" />
+            </button>
+            <Button type="button" variant="outline" size="sm" className="w-full gap-2" onClick={() => setZoom(true)}><Maximize2 className="h-4 w-4" /> View full size</Button>
+            <ImageLightbox src={zoom ? src : null} alt="Payment screenshot" onClose={() => setZoom(false)} />
           </div>
         )}
 
@@ -433,8 +459,14 @@ function ReportDialog({ loan, inst, userId, methods, onClose, onDone }: { loan: 
           <div className="rounded-lg bg-muted p-3 text-sm space-y-1">
             <div className="flex justify-between"><span className="text-muted-foreground">You owe</span><span className="font-semibold">{fmtMoney(loan.balance)}</span></div>
             {due.fee > 0 && <div className="flex justify-between text-red-700"><span>Late fee</span><span>{fmtMoney(due.fee)}</span></div>}
-            <div className="flex justify-between"><span className="text-muted-foreground">Interest this cycle</span><span>{fmtMoney(due.interest)}</span></div>
-            {(loan.model === 'french' || inst.is_payoff) && <div className="flex justify-between"><span className="text-muted-foreground">Principal</span><span>{fmtMoney(due.principal)}</span></div>}
+            {loan.model === 'french' ? (
+              <div className="flex justify-between"><span className="text-muted-foreground">{inst.is_payoff ? 'Final payment' : `Installment ${inst.seq}${loan.installments ? ` of ${loan.installments}` : ''}`}</span><span>{fmtMoney(round2(due.interest + due.principal))}</span></div>
+            ) : (
+              <>
+                <div className="flex justify-between"><span className="text-muted-foreground">Interest this cycle</span><span>{fmtMoney(due.interest)}</span></div>
+                {inst.is_payoff && <div className="flex justify-between"><span className="text-muted-foreground">Principal</span><span>{fmtMoney(due.principal)}</span></div>}
+              </>
+            )}
             <div className="flex justify-between border-t pt-1"><span className="font-medium">{loan.model === 'open' && !inst.is_payoff ? 'Minimum due' : 'Amount due'}</span><span className="font-bold">{fmtMoney(due.total)}</span></div>
           </div>
 
@@ -443,9 +475,17 @@ function ReportDialog({ loan, inst, userId, methods, onClose, onDone }: { loan: 
             <Input id="loan_amount" type="number" step="0.01" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} className="text-2xl font-bold h-14" />
             {amt > 0 && !aheadPlan && (
               <p className="text-xs text-muted-foreground">
-                {alloc.fee_paid ? `${fmtMoney(alloc.fee_paid)} late fee · ` : ''}{fmtMoney(alloc.interest_paid)} interest · {fmtMoney(alloc.principal_paid)} principal →{' '}
+                {loan.model === 'open' ? (
+                  <>{alloc.fee_paid ? `${fmtMoney(alloc.fee_paid)} late fee · ` : ''}{fmtMoney(alloc.interest_paid)} interest · {fmtMoney(alloc.principal_paid)} principal → </>
+                ) : amt + 0.005 < due.total ? (
+                  <>{fmtMoney(round2(due.total - amt))} short of the installment → </>
+                ) : extra > 0.005 ? (
+                  <>{fmtMoney(extra)} more than the installment → </>
+                ) : (
+                  <>Covers the installment → </>
+                )}
                 {alloc.new_balance <= 0.009 ? <b className="text-green-700">loan paid off</b> : <>you would owe <b>{fmtMoney(alloc.new_balance)}</b></>}
-                {alloc.shortfall > 0 && <span className="text-amber-700"> · {fmtMoney(alloc.shortfall)} of unpaid interest is added to your balance</span>}
+                {loan.model === 'open' && alloc.shortfall > 0 && <span className="text-amber-700"> · {fmtMoney(alloc.shortfall)} of unpaid interest is added to your balance</span>}
               </p>
             )}
             {aheadPlan && (

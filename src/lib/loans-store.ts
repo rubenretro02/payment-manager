@@ -265,11 +265,13 @@ export async function updateLoan(id: string, patch: UpdateLoanInput): Promise<Lo
   return getLoan(id);
 }
 
+/**
+ * Permanently removes the loan and every installment (payments included).
+ * The UI confirms first and spells out what goes away; for a real loan that
+ * should stay in the books, "cancel" is the right action instead.
+ */
 export async function deleteLoan(id: string): Promise<void> {
-  const view = await getLoan(id);
-  if (view.installments_list.some((i) => i.status === 'confirmed')) {
-    throw new LoanError('This loan already has confirmed payments. Cancel it instead of deleting it.');
-  }
+  await getLoan(id); // 404 if missing
   const supabase = createAdminClient();
   const { error } = await supabase.from('loans').delete().eq('id', id);
   if (error) throw dbError(error);
