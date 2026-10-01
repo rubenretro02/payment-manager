@@ -100,6 +100,14 @@ export interface LoanView extends Loan {
 export const PERIODS_PER_YEAR: Record<LoanFrequency, number> = { weekly: 52, biweekly: 26, monthly: 12 };
 export const FREQUENCY_LABEL: Record<LoanFrequency, string> = { weekly: 'Weekly', biweekly: 'Every 2 weeks', monthly: 'Monthly' };
 export const MODEL_LABEL: Record<LoanModel, string> = { open: 'Open (interest on balance)', french: 'Installments (French / bank style)' };
+/** Short names the user sees on cards; "closed" = fixed installments, as borrowers call it. */
+export const MODEL_SHORT_LABEL: Record<LoanModel, string> = { open: 'Open loan', french: 'Closed loan' };
+/** Tailwind classes so open and closed loans look different at a glance everywhere. */
+export const MODEL_BADGE_CLASS: Record<LoanModel, string> = {
+  open: 'bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-950/40 dark:text-amber-200 dark:border-amber-800',
+  french: 'bg-indigo-100 text-indigo-900 border-indigo-300 dark:bg-indigo-950/40 dark:text-indigo-200 dark:border-indigo-800',
+};
+export const MODEL_EDGE_CLASS: Record<LoanModel, string> = { open: 'border-l-4 border-l-amber-400', french: 'border-l-4 border-l-indigo-500' };
 
 export const round2 = (n: number): number => Math.round((n + Number.EPSILON) * 100) / 100;
 

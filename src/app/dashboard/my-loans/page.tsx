@@ -17,7 +17,7 @@ import { useAutoRefresh } from '@/hooks/useAutoRefresh';
 import { ScreenshotImage } from '@/components/ScreenshotImage';
 import { getScreenshotSrc } from '@/lib/screenshots';
 import {
-  EXTRA_MODE_LABEL, FREQUENCY_LABEL, STATUS_LABEL, allocatePayment, daysBetween, fmtMoney, graceEnd, installmentDue, payoffQuote, planPayAhead, round2, toLocalDate, todayStr,
+  EXTRA_MODE_LABEL, FREQUENCY_LABEL, MODEL_BADGE_CLASS, MODEL_EDGE_CLASS, MODEL_SHORT_LABEL, STATUS_LABEL, allocatePayment, daysBetween, fmtMoney, graceEnd, installmentDue, payoffQuote, planPayAhead, round2, toLocalDate, todayStr,
   type ExtraMode, type LoanDisplayStatus, type LoanInstallment, type LoanView,
 } from '@/lib/loans';
 
@@ -150,16 +150,19 @@ function LoanCard({ loan, today, onReport, onDetail }: { loan: LoanView; today: 
   const upcoming = loan.model === 'french' ? loan.installments_list.filter((i) => i.status !== 'confirmed' && i.id !== cur?.id) : [];
 
   return (
-    <Card className={loan.display_status === 'overdue' ? 'border-red-300' : ''}>
+    <Card className={`${MODEL_EDGE_CLASS[loan.model]} ${loan.display_status === 'overdue' ? 'border-red-300' : ''}`}>
       <CardContent className="p-4 space-y-3">
         <div className="flex items-start justify-between gap-2">
-          <div>
-            <p className="font-semibold">Loan of {fmtMoney(loan.principal)}</p>
-            <p className="text-xs text-muted-foreground">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <p className="font-semibold">Loan of {fmtMoney(loan.principal)}</p>
+              <Badge variant="outline" className={MODEL_BADGE_CLASS[loan.model]}>{MODEL_SHORT_LABEL[loan.model]}</Badge>
+            </div>
+            <p className="text-xs text-muted-foreground mt-0.5">
               {loan.model === 'open' ? `${loan.rate_pct}% per cycle on the balance` : `${loan.installments} installments · ${loan.rate_pct}% per year`} · {FREQUENCY_LABEL[loan.frequency]} · since {fmtDay(loan.start_date, 'MMM d, yyyy')}
             </p>
           </div>
-          <Badge variant="outline" className={STATUS_COLOR[loan.display_status]}>{STATUS_LABEL[loan.display_status]}</Badge>
+          <Badge variant="outline" className={`shrink-0 ${STATUS_COLOR[loan.display_status]}`}>{STATUS_LABEL[loan.display_status]}</Badge>
         </div>
 
         <div className="grid grid-cols-2 gap-3">
@@ -277,7 +280,10 @@ function PaymentDetailDialog({ loan, inst, onClose }: { loan: LoanView; inst: Lo
             {inst.kind === 'principal' ? 'Principal payment' : inst.is_payoff ? 'Final payment' : `Payment #${inst.seq}`}
             <Badge className={confirmed ? 'bg-green-100 text-green-800 hover:bg-green-100' : 'bg-purple-100 text-purple-800 hover:bg-purple-100'}>{confirmed ? 'confirmed' : 'waiting for confirmation'}</Badge>
           </DialogTitle>
-          <DialogDescription>Loan of {fmtMoney(loan.principal)} · {loan.model === 'open' ? `${loan.rate_pct}% per cycle` : `${loan.rate_pct}% per year`}</DialogDescription>
+          <DialogDescription className="flex flex-wrap items-center gap-1.5">
+            <Badge variant="outline" className={MODEL_BADGE_CLASS[loan.model]}>{MODEL_SHORT_LABEL[loan.model]}</Badge>
+            <span>Loan of {fmtMoney(loan.principal)} · {loan.model === 'open' ? `${loan.rate_pct}% per cycle` : `${loan.rate_pct}% per year`}</span>
+          </DialogDescription>
         </DialogHeader>
 
         <div className="rounded-lg bg-muted p-3 text-center">
@@ -418,7 +424,10 @@ function ReportDialog({ loan, inst, userId, methods, onClose, onDone }: { loan: 
       <DialogContent className="max-w-md max-h-[92vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Report loan payment</DialogTitle>
-          <DialogDescription>{inst.is_payoff ? 'Final payment that closes the loan.' : `Payment due ${fmtDay(inst.due_date, 'EEE, MMM d')}.`}</DialogDescription>
+          <DialogDescription className="flex flex-wrap items-center gap-1.5">
+            <Badge variant="outline" className={MODEL_BADGE_CLASS[loan.model]}>{MODEL_SHORT_LABEL[loan.model]}</Badge>
+            <span>{inst.is_payoff ? 'Final payment that closes the loan.' : `Payment due ${fmtDay(inst.due_date, 'EEE, MMM d')}.`}</span>
+          </DialogDescription>
         </DialogHeader>
         <div className="grid gap-4 py-2">
           <div className="rounded-lg bg-muted p-3 text-sm space-y-1">

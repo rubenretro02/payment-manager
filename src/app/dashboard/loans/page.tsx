@@ -20,7 +20,7 @@ import { UserPicker, type UserLike } from '@/components/UserPicker';
 import { ScreenshotImage } from '@/components/ScreenshotImage';
 import { getScreenshotSrc } from '@/lib/screenshots';
 import {
-  EXTRA_MODE_LABEL, FREQUENCY_LABEL, MODEL_LABEL, STATUS_LABEL, addCycle, allocatePayment, buildSchedule, daysBetween, fmtMoney,
+  EXTRA_MODE_LABEL, FREQUENCY_LABEL, MODEL_BADGE_CLASS, MODEL_EDGE_CLASS, MODEL_LABEL, MODEL_SHORT_LABEL, STATUS_LABEL, addCycle, allocatePayment, buildSchedule, daysBetween, fmtMoney,
   frenchInstallment, graceEnd, installmentDue, isLate, payoffQuote, periodRate, planPayAhead, round2, shortenedTerm, toLocalDate, todayStr,
   type ExtraMode, type LoanDisplayStatus, type LoanFrequency, type LoanInstallment, type LoanModel, type LoanSummary, type LoanView,
 } from '@/lib/loans';
@@ -239,9 +239,9 @@ export default function LoansPage() {
                     key={m}
                     type="button"
                     onClick={() => setForm({ ...form, model: m, rate_pct: m === 'open' ? '5' : '12.5' })}
-                    className={`rounded-lg border p-3 text-left text-sm ${form.model === m ? 'border-primary bg-primary/5 ring-1 ring-primary' : 'hover:bg-muted'}`}
+                    className={`rounded-lg border p-3 text-left text-sm ${MODEL_EDGE_CLASS[m]} ${form.model === m ? 'border-primary bg-primary/5 ring-1 ring-primary' : 'hover:bg-muted'}`}
                   >
-                    <p className="font-medium">{MODEL_LABEL[m]}</p>
+                    <p className="font-medium flex items-center gap-2"><Badge variant="outline" className={MODEL_BADGE_CLASS[m]}>{MODEL_SHORT_LABEL[m]}</Badge> {MODEL_LABEL[m]}</p>
                     <p className="text-xs text-muted-foreground mt-1">
                       {m === 'open'
                         ? 'Rate is % per cycle on what is still owed. Minimum each cycle = the interest; anything above it lowers the balance. No fixed end.'
@@ -357,13 +357,14 @@ function LoanRow({ loan, onOpen }: { loan: LoanView; onOpen: () => void }) {
   const cur = loan.current;
   const daysTo = cur ? daysBetween(today, cur.due_date) : null;
   return (
-    <Card className="cursor-pointer hover:border-primary/50 transition-colors" onClick={onOpen}>
+    <Card className={`cursor-pointer hover:border-primary/50 transition-colors ${MODEL_EDGE_CLASS[loan.model]}`} onClick={onOpen}>
       <CardContent className="p-4">
         <div className="flex flex-col lg:flex-row lg:items-center gap-3">
           <div className="flex-1 min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <p className="font-semibold truncate">{userName(loan)}</p>
               {loan.user?.telegram_username && <span className="text-xs text-muted-foreground">@{loan.user.telegram_username}</span>}
+              <Badge variant="outline" className={MODEL_BADGE_CLASS[loan.model]}>{MODEL_SHORT_LABEL[loan.model]}</Badge>
               <Badge variant="outline" className={STATUS_COLOR[loan.display_status]}>{STATUS_LABEL[loan.display_status]}</Badge>
               {cur?.status === 'submitted' && <Badge className="bg-purple-100 text-purple-800 hover:bg-purple-100">reported · confirm</Badge>}
               {cur?.is_payoff && <Badge variant="outline" className="border-blue-300 text-blue-800">early payoff</Badge>}
@@ -469,6 +470,7 @@ function ManageLoan({ loan, adminId, onChanged, onClose }: { loan: LoanView; adm
         <DialogTitle className="flex flex-wrap items-center gap-2">
           <HandCoins className="h-5 w-5" /> {userName(loan)}
           {loan.user?.telegram_username && <span className="text-sm font-normal text-muted-foreground">@{loan.user.telegram_username}</span>}
+          <Badge variant="outline" className={MODEL_BADGE_CLASS[loan.model]}>{MODEL_SHORT_LABEL[loan.model]}</Badge>
           <Badge variant="outline" className={STATUS_COLOR[loan.display_status]}>{STATUS_LABEL[loan.display_status]}</Badge>
         </DialogTitle>
         <DialogDescription>
