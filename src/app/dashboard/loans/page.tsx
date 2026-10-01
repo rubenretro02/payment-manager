@@ -48,7 +48,7 @@ const emptyForm = {
   model: 'open' as LoanModel,
   principal: '',
   rate_pct: '5',
-  frequency: 'biweekly' as LoanFrequency,
+  frequency: 'monthly' as LoanFrequency,
   installments: '4',
   first_due_date: '',
   grace_days: '3',
@@ -116,7 +116,7 @@ export default function LoansPage() {
 
   // ---- create ----
   const openCreate = () => {
-    setForm({ ...emptyForm, first_due_date: addCycle(todayStr(), 'biweekly') });
+    setForm({ ...emptyForm, first_due_date: addCycle(todayStr(), 'monthly') });
     setCreateOpen(true);
   };
   const preview = useMemo(() => {
