@@ -23,9 +23,15 @@ export interface AutoSettings {
   auto_max_fee_pct: number;
   /** Keep seeds in server memory after the session expires so sweeps run unattended */
   keep_unlocked: boolean;
+  /**
+   * Master switch. While paused, nothing sweeps on its own (unlock, deposit
+   * scan, watcher) so balances can be reviewed in peace. Explicit "Run now"
+   * buttons still work — that's a deliberate click, not automation.
+   */
+  auto_paused: boolean;
 }
 
-const DEFAULTS: AutoSettings = { auto_min_usd: 10, auto_max_fee_pct: 2, keep_unlocked: false };
+const DEFAULTS: AutoSettings = { auto_min_usd: 10, auto_max_fee_pct: 2, keep_unlocked: false, auto_paused: false };
 
 // Only the stablecoins every exchange credits on deposit. Bridged variants
 // (USDbC, USDC.e, DAI.e) sent to an exchange's USDC address are NOT credited
@@ -67,7 +73,7 @@ export async function getAutoSettings(): Promise<AutoSettings> {
   const { data } = await supabase
     .from('wallet_watch_state')
     .select('key, cursor')
-    .in('key', ['setting:auto_min_usd', 'setting:auto_max_fee_pct', 'setting:keep_unlocked']);
+    .in('key', ['setting:auto_min_usd', 'setting:auto_max_fee_pct', 'setting:keep_unlocked', 'setting:auto_paused']);
   const map = new Map((data || []).map((r) => [r.key as string, (r.cursor as string | null) ?? null]));
   const num = (k: string, d: number) => {
     const v = Number(map.get(k));
@@ -77,6 +83,7 @@ export async function getAutoSettings(): Promise<AutoSettings> {
     auto_min_usd: num('setting:auto_min_usd', DEFAULTS.auto_min_usd),
     auto_max_fee_pct: num('setting:auto_max_fee_pct', DEFAULTS.auto_max_fee_pct),
     keep_unlocked: map.get('setting:keep_unlocked') === 'on',
+    auto_paused: map.get('setting:auto_paused') === 'on',
   };
 }
 
@@ -87,6 +94,7 @@ export async function setAutoSettings(patch: Partial<AutoSettings>): Promise<Aut
   if (patch.auto_min_usd !== undefined) rows.push({ key: 'setting:auto_min_usd', cursor: String(Math.max(0, Number(patch.auto_min_usd) || 0)), updated_at: now });
   if (patch.auto_max_fee_pct !== undefined) rows.push({ key: 'setting:auto_max_fee_pct', cursor: String(Math.max(0, Number(patch.auto_max_fee_pct) || 0)), updated_at: now });
   if (patch.keep_unlocked !== undefined) rows.push({ key: 'setting:keep_unlocked', cursor: patch.keep_unlocked ? 'on' : 'off', updated_at: now });
+  if (patch.auto_paused !== undefined) rows.push({ key: 'setting:auto_paused', cursor: patch.auto_paused ? 'on' : 'off', updated_at: now });
   if (rows.length > 0) {
     const { error } = await supabase.from('wallet_watch_state').upsert(rows, { onConflict: 'key' });
     if (error) throw new Error(/wallet_watch_state|schema cache/i.test(error.message) ? 'Run migration-add-wallet-deposits.sql first' : error.message);
@@ -246,15 +254,32 @@ export interface RunResult {
   /** Another run was already in progress (likely refueling); nothing was done by this call. */
   busy: boolean;
   busy_for_s?: number;
+  /** Automation is paused and this was an automatic trigger — nothing ran. */
+  paused?: boolean;
 }
 
-/** Process the queue. Needs an unlocked session (seeds in memory); otherwise jobs wait. */
+/**
+ * Process the queue. Needs an unlocked session (seeds in memory); otherwise
+ * jobs wait. `trigger: 'manual'` is an explicit button press, which runs even
+ * while automation is paused.
+ */
 export async function runAutoTransfers(
   session: Session | null,
-  opts: { walletIds?: string[] } = {}
+  opts: { walletIds?: string[]; trigger?: 'auto' | 'manual' } = {}
 ): Promise<RunResult> {
   const result: RunResult = { processed: 0, done: 0, skipped: 0, failed: 0, waiting: 0, queued: 0, busy: false };
   const supabase = createAdminClient();
+
+  // Master switch: while paused, automatic triggers (unlock, deposit scan,
+  // watcher) do nothing at all — not even queue — so the admin can unlock and
+  // review balances without funds moving underneath them.
+  if (opts.trigger !== 'manual') {
+    const { auto_paused } = await getAutoSettings().catch(() => DEFAULTS);
+    if (auto_paused) {
+      result.paused = true;
+      return result;
+    }
+  }
 
   // Pick up balances that are already sitting in auto-transfer wallets.
   try {

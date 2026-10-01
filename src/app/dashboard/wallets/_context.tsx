@@ -28,6 +28,8 @@ interface WalletsCtx {
   loadAccounts: () => Promise<void>;
   loadBook: () => Promise<void>;
   loadSettings: () => Promise<void>;
+  /** Pause/resume every automatic sweep (manual "Run now" still works) */
+  setAutoPaused: (paused: boolean) => Promise<boolean>;
   balanceFor: (id: string) => WalletBalance | undefined;
   hasBalance: (id: string) => boolean;
   walletLabel: (address: string) => string;
@@ -35,7 +37,7 @@ interface WalletsCtx {
 
 const Ctx = createContext<WalletsCtx | null>(null);
 
-const DEFAULT_SETTINGS: WalletSettings = { gas_wallet_evm: null, gas_wallet_solana: null, auto_min_usd: 10, auto_max_fee_pct: 2, keep_unlocked: false, refuel_enabled: true, refuel_target_usd: 1, refuel_max_fee_usd: 0.25 };
+const DEFAULT_SETTINGS: WalletSettings = { gas_wallet_evm: null, gas_wallet_solana: null, auto_min_usd: 10, auto_max_fee_pct: 2, keep_unlocked: false, auto_paused: false, refuel_enabled: true, refuel_target_usd: 1, refuel_max_fee_usd: 0.25 };
 
 export function WalletsProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
@@ -114,6 +116,23 @@ export function WalletsProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  /** Master pause for automatic sweeps. Shared so every page shows the same state. */
+  async function setAutoPaused(paused: boolean): Promise<boolean> {
+    try {
+      const res = await vault.authFetch('/api/wallets/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ auto_paused: paused }),
+      });
+      const json = await res.json();
+      if (!json.success) return false;
+      setSettings({ ...DEFAULT_SETTINGS, ...(json.data as Partial<WalletSettings>) });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   useEffect(() => {
     if (unlocked) {
       loadWallets();
@@ -156,6 +175,7 @@ export function WalletsProvider({ children }: { children: ReactNode }) {
         loadAccounts,
         loadBook,
         loadSettings,
+        setAutoPaused,
         balanceFor,
         hasBalance,
         walletLabel,

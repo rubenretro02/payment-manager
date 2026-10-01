@@ -10,7 +10,7 @@ const locked = () =>
 async function all() {
   const [gas, auto, refuel] = await Promise.all([
     getGasSettings(),
-    getAutoSettings().catch(() => ({ auto_min_usd: 10, auto_max_fee_pct: 2, keep_unlocked: false })),
+    getAutoSettings().catch(() => ({ auto_min_usd: 10, auto_max_fee_pct: 2, keep_unlocked: false, auto_paused: false })),
     getRefuelSettings().catch(() => ({ refuel_enabled: true, refuel_target_usd: 1, refuel_max_fee_usd: 0.25 })),
   ]);
   return { ...gas, ...auto, ...refuel };
@@ -28,7 +28,7 @@ export async function GET(request: NextRequest) {
 
 /**
  * POST /api/wallets/settings
- *   { gas_wallet_evm?, gas_wallet_solana?, auto_min_usd?, auto_max_fee_pct?, keep_unlocked?,
+ *   { gas_wallet_evm?, gas_wallet_solana?, auto_min_usd?, auto_max_fee_pct?, keep_unlocked?, auto_paused?,
  *     refuel_enabled?, refuel_target_usd?, refuel_max_fee_usd? }
  */
 export async function POST(request: NextRequest) {
@@ -40,6 +40,7 @@ export async function POST(request: NextRequest) {
       auto_min_usd?: number;
       auto_max_fee_pct?: number;
       keep_unlocked?: boolean;
+      auto_paused?: boolean;
       refuel_enabled?: boolean;
       refuel_target_usd?: number;
       refuel_max_fee_usd?: number;
@@ -49,10 +50,11 @@ export async function POST(request: NextRequest) {
     if ('gas_wallet_solana' in body) gasPatch.gas_wallet_solana = body.gas_wallet_solana || null;
     if (Object.keys(gasPatch).length > 0) await setGasSettings(gasPatch);
 
-    const autoPatch: { auto_min_usd?: number; auto_max_fee_pct?: number; keep_unlocked?: boolean } = {};
+    const autoPatch: { auto_min_usd?: number; auto_max_fee_pct?: number; keep_unlocked?: boolean; auto_paused?: boolean } = {};
     if (body.auto_min_usd !== undefined) autoPatch.auto_min_usd = Number(body.auto_min_usd);
     if (body.auto_max_fee_pct !== undefined) autoPatch.auto_max_fee_pct = Number(body.auto_max_fee_pct);
     if (body.keep_unlocked !== undefined) autoPatch.keep_unlocked = !!body.keep_unlocked;
+    if (body.auto_paused !== undefined) autoPatch.auto_paused = !!body.auto_paused;
     if (Object.keys(autoPatch).length > 0) await setAutoSettings(autoPatch);
 
     const refuelPatch: { refuel_enabled?: boolean; refuel_target_usd?: number; refuel_max_fee_usd?: number } = {};

@@ -23,7 +23,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Fuel, Zap, KeyRound, Sparkles, Crosshair, Eye, ScanSearch, Loader2, Plus, AlertTriangle, ShieldAlert, Droplets, RefreshCw } from 'lucide-react';
+import { Fuel, Zap, KeyRound, Sparkles, Crosshair, Eye, ScanSearch, Loader2, Plus, AlertTriangle, ShieldAlert, Droplets, RefreshCw, Pause, Play } from 'lucide-react';
 import { toast } from 'sonner';
 import { WalletPicker } from '@/components/wallets/WalletPicker';
 import { NETWORKS, getNetwork, shortAddress } from '@/lib/wallets/networks';
@@ -33,7 +33,7 @@ import { fmtAmount, type DiscoverResult, type FuelStatus, type LocateResult, typ
 const jsonHeaders = { 'Content-Type': 'application/json' };
 
 export default function WalletSettingsPage() {
-  const { vault, unlocked, seeds, wallets, settings, loadSettings, loadWallets, loadBalances, balanceFor } = useWallets();
+  const { vault, unlocked, seeds, wallets, settings, loadSettings, loadWallets, loadBalances, balanceFor, setAutoPaused } = useWallets();
 
   // Gas tank + automation rules
   const [draft, setDraft] = useState(settings);
@@ -394,6 +394,32 @@ export default function WalletSettingsPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4">
+          {/* Master switch — saves on the spot, no Save needed, so it can be
+              flipped the moment you want the money to stop moving. */}
+          <div className={`flex items-start justify-between gap-3 rounded-lg border p-3 ${draft.auto_paused ? 'border-amber-300 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/40' : ''}`}>
+            <div>
+              <Label className="flex items-center gap-2">
+                {draft.auto_paused ? <Pause className="h-3.5 w-3.5 text-amber-600" /> : <Play className="h-3.5 w-3.5 text-emerald-600" />}
+                Automatic transfers {draft.auto_paused ? 'paused' : 'active'}
+              </Label>
+              <p className="text-xs text-muted-foreground mt-1">
+                Paused: nothing is swept on unlock, after a deposit scan or by the watcher, so you can review balances in peace. The per-wallet toggles keep their setting and the Run now buttons still work. Saved immediately.
+              </p>
+            </div>
+            <Switch
+              checked={!draft.auto_paused}
+              onCheckedChange={async (v) => {
+                setDraft({ ...draft, auto_paused: !v });
+                const ok = await setAutoPaused(!v);
+                if (!ok) {
+                  setDraft({ ...draft, auto_paused: v });
+                  toast.error('Could not change the setting');
+                } else {
+                  toast.success(v ? 'Automatic transfers back on' : 'Automatic transfers paused');
+                }
+              }}
+            />
+          </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="grid gap-2">
               <Label>Minimum amount to sweep (USD)</Label>

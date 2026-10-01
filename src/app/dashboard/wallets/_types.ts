@@ -44,6 +44,8 @@ export interface WalletSettings {
   auto_min_usd: number;
   auto_max_fee_pct: number;
   keep_unlocked: boolean;
+  /** Master switch: while true nothing sweeps on its own (Run now still works) */
+  auto_paused: boolean;
   /** Gas account: move gas across networks automatically (via Relay) */
   refuel_enabled: boolean;
   refuel_target_usd: number;

@@ -28,7 +28,11 @@ export async function POST(request: NextRequest) {
   try {
     const body = (await request.json().catch(() => ({}))) as { retry_id?: string; wallet_id?: string };
     if (body.retry_id) await retryAutoJob(body.retry_id);
-    const result = await runAutoTransfers(session, body.wallet_id ? { walletIds: [body.wallet_id] } : {});
+    // Explicit button press: runs even while automation is paused.
+    const result = await runAutoTransfers(session, {
+      trigger: 'manual',
+      ...(body.wallet_id ? { walletIds: [body.wallet_id] } : {}),
+    });
     return NextResponse.json({ success: true, data: result });
   } catch (error) {
     return NextResponse.json({ success: false, error: error instanceof Error ? error.message : 'Failed' }, { status: 500 });

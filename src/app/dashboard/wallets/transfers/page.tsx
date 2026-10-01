@@ -12,7 +12,7 @@ import { useWallets } from '../_context';
 import { fmtAmount, one, txUrl, type AutoJob, type TransferRow } from '../_types';
 
 export default function TransfersPage() {
-  const { vault, unlocked, loadBalances } = useWallets();
+  const { vault, unlocked, loadBalances, settings } = useWallets();
   const [transfers, setTransfers] = useState<TransferRow[]>([]);
   const [jobs, setJobs] = useState<AutoJob[]>([]);
   const [loading, setLoading] = useState(false);
@@ -78,9 +78,16 @@ export default function TransfersPage() {
         <CardHeader className="pb-3">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
             <div>
-              <CardTitle className="text-lg flex items-center gap-2"><Zap className="h-5 w-5 text-emerald-600" /> Automatic transfers</CardTitle>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <Zap className="h-5 w-5 text-emerald-600" /> Automatic transfers
+                {settings.auto_paused && (
+                  <Badge variant="outline" className="border-amber-400 text-amber-800 dark:text-amber-300">paused</Badge>
+                )}
+              </CardTitle>
               <CardDescription>
-                Sweeps queued when a stablecoin lands on a wallet with auto-transfer on. They run after each deposit scan and when you unlock the vault; skipped ones tell you why.
+                {settings.auto_paused
+                  ? 'Paused: nothing is swept on unlock, after a deposit scan or by the watcher. Run queue now still sends when you ask it to.'
+                  : 'Sweeps queued when a stablecoin lands on a wallet with auto-transfer on. They run after each deposit scan and when you unlock the vault; skipped ones tell you why.'}
               </CardDescription>
             </div>
             <div className="flex gap-2 shrink-0">
