@@ -621,6 +621,23 @@ export default function WalletsOverviewPage() {
                               only on {autoTarget.networks.map((n) => getNetwork(n)?.label || n).join(', ')}
                             </span>
                           )}
+                          {w.auto_transfer && autoTarget && (() => {
+                            // Stablecoins sitting on a network the destination doesn't accept
+                            // will never be swept — say so on the row instead of silently waiting.
+                            const stuck = (balanceFor(w.id)?.balances || []).filter(
+                              (b) => !b.native && !b.spam && b.verified !== false && ['USDC', 'USDT'].includes(b.symbol.toUpperCase()) && b.amount >= 1 && !autoTarget.networks.includes(b.network)
+                            );
+                            if (stuck.length === 0) return null;
+                            return (
+                              <span className="basis-full text-[11px] text-amber-800 font-medium flex items-start gap-1">
+                                <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
+                                <span>
+                                  {stuck.map((b) => `${fmtAmount(b.amount)} ${b.symbol} on ${getNetwork(b.network)?.label || b.network}`).join(' · ')} can&apos;t be swept: {autoTarget.name} accepts {autoTarget.networks.map((n) => getNetwork(n)?.label || n).join(', ')} only.
+                                  If {autoTarget.name}&apos;s deposit address is the same on that network, enable it in Address book; otherwise send manually.
+                                </span>
+                              </span>
+                            );
+                          })()}
                           {w.auto_transfer && (
                             <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" disabled={autoBusy === w.id} onClick={() => runAutoNow(w)} title="Check the balance and sweep now">
                               {autoBusy === w.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Zap className="h-3 w-3 mr-1" />} Run now

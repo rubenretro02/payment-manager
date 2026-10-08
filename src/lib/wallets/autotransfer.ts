@@ -133,6 +133,7 @@ export async function enqueueFromDeposits(deposits: DepositLike[]): Promise<numb
     byKey.set(key, { id: w.id as string, auto_transfer_book_id: (w.auto_transfer_book_id as string | null) ?? null });
   }
   if (byKey.size === 0) return 0;
+  const book = await listBook().catch(() => [] as BookEntry[]);
 
   let queued = 0;
   for (const d of stable) {
@@ -148,6 +149,13 @@ export async function enqueueFromDeposits(deposits: DepositLike[]): Promise<numb
       .in('status', ['pending', 'gas'])
       .limit(1);
     if (existing && existing.length > 0) continue;
+
+    // A deposit on a network the destination doesn't accept can never be
+    // swept there. Record it as skipped WITH the reason right away, so the
+    // admin sees why without waiting for a run (which also needs the vault).
+    const family = familyOf(d.network);
+    const target = book.find((b) => b.id === w.auto_transfer_book_id) || book.find((b) => b.family === family && b.is_default);
+    const blocked = target && !target.networks.includes(d.network);
     const { error: insErr } = await supabase.from('wallet_auto_transfers').insert({
       wallet_id: w.id,
       deposit_id: d.id || null,
@@ -155,9 +163,13 @@ export async function enqueueFromDeposits(deposits: DepositLike[]): Promise<numb
       token_symbol: d.token_symbol,
       token_contract: d.token_contract,
       book_id: w.auto_transfer_book_id,
-      status: 'pending',
+      status: blocked ? 'skipped' : 'pending',
+      reason: blocked
+        ? `"${target.name}" does not accept deposits on ${getNetwork(d.network as NetworkKey)?.label || d.network}. If its deposit address is the same on that network, enable it in Address book and run again; otherwise send manually.`
+        : null,
+      processed_at: blocked ? new Date().toISOString() : null,
     });
-    if (!insErr) queued++;
+    if (!insErr && !blocked) queued++;
   }
   return queued;
 }
