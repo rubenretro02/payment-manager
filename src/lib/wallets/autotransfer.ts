@@ -12,7 +12,7 @@ import { STABLE_SYMBOLS, familyOf, getNetwork, type NetworkKey } from './network
 import { fetchBalances, getPrices } from './balances';
 import { listBook, type BookEntry } from './book';
 import { getGasSettings, previewSend, executeSend, gaslessCapable, previewGasless, executeGasless, fmtNative } from './send';
-import { ensureFuel, type RefuelResult } from './refuel';
+import { ensureFuel, topUpReserve, type RefuelResult } from './refuel';
 import { getWallet, listWalletTokens, type WalletRow } from './store';
 import { setKeepUnlocked, type Session } from './vault';
 
@@ -350,6 +350,7 @@ export async function runAutoTransfers(
     const [settings, gas, book] = await Promise.all([getAutoSettings(), getGasSettings(), listBook()]);
     const priceIds = [...new Set([...EVM_CHAINS.map((c) => c.coingeckoId), SOLANA_COINGECKO_ID])];
     const prices = await getPrices(priceIds);
+    const sweptNetworks = new Set<NetworkKey>();
 
     for (const raw of jobs as AutoJob[]) {
       result.processed++;
@@ -428,6 +429,7 @@ export async function runAutoTransfers(
             const sent = await executeGasless(session, req, gasWalletId);
             await setJob(raw.id, { status: 'done', tx_hash: sent.hash, amount: gp.amount, book_id: target.id, reason: `gasless — fee paid by the gas tank${refuelNote}` });
             result.done++;
+            sweptNetworks.add(raw.network as NetworkKey);
             console.log(`[auto-transfer] gasless ${gp.amount} ${gp.token_symbol} on ${raw.network} from ${wallet.name || wallet.address} → ${target.name} (${sent.hash})`);
             continue;
           }
@@ -481,6 +483,7 @@ export async function runAutoTransfers(
         const sent = await executeSend(session, { ...req, amount: preview.amount });
         await setJob(raw.id, { status: 'done', tx_hash: sent.hash, amount: preview.amount, book_id: target.id, reason: null });
         result.done++;
+        sweptNetworks.add(raw.network as NetworkKey);
         console.log(`[auto-transfer] ${preview.amount} ${preview.token_symbol} on ${raw.network} from ${wallet.name || wallet.address} → ${target.name} (${sent.hash})`);
       } catch (e) {
         const reason = e instanceof Error ? e.message.split('\n')[0] : 'failed';
@@ -488,6 +491,13 @@ export async function runAutoTransfers(
         result.failed++;
         console.error(`[auto-transfer] job ${raw.id} failed: ${reason}`);
       }
+    }
+
+    // Keep the tank stocked where money actually flows: after sweeping on a
+    // network, top its gas back up in the background so the NEXT sweep there
+    // is instant instead of waiting on a bridge. Never blocks this run.
+    for (const net of sweptNetworks) {
+      void topUpReserve(session, net).catch((e) => console.error(`[auto-transfer] reserve top-up on ${net} failed:`, e instanceof Error ? e.message : e));
     }
   } finally {
     running = false;

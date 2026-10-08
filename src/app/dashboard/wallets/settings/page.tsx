@@ -303,7 +303,8 @@ export default function WalletSettingsPage() {
         <CardHeader className="pb-3">
           <CardTitle className="text-lg flex items-center gap-2"><Droplets className="h-5 w-5 text-sky-600" /> Gas account</CardTitle>
           <CardDescription>
-            Like Rabby&apos;s gas account: fill the tank on <strong>any</strong> network and stop thinking about it. When a sweep or a send needs gas on a network where the tank is empty, the app moves about ${draft.refuel_target_usd} of that network&apos;s coin there by itself — from ETH or USDC the tank holds anywhere else — through Relay (a few seconds, typically 2–6¢), then continues. Sei is the one network Relay doesn&apos;t cover.
+            Like Rabby&apos;s gas account: fill the tank on <strong>any</strong> network and stop thinking about it. When a sweep or a send needs gas on a network where the tank is empty, the app moves about ${draft.refuel_target_usd} of that network&apos;s coin there by itself — from ETH or USDC the tank holds anywhere else — through Relay, then continues. After each sweep it tops the tank back up on that network in the background, so the next one is instant. Sei is the one network Relay doesn&apos;t cover.
+            <span className="block mt-1"><strong>Tip:</strong> keep $5–10 of ETH on <strong>Base</strong> in the tank. Bridging from Base takes seconds; from Ethereum it waits for a mainnet confirmation (minutes).</span>
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4">

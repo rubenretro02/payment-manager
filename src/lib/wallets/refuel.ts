@@ -21,7 +21,7 @@ import { Connection, PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { createAdminClient } from '@/lib/supabase/server';
 import { EVM_CHAINS, evmChainDef, evmTransport, solanaRpcUrl, SOLANA_COINGECKO_ID } from './chains';
 import { getNetwork, type NetworkKey } from './networks';
-import { fetchBalances, type TokenBalance } from './balances';
+import { fetchBalances, getPrices, type TokenBalance } from './balances';
 import { SendError, fmtNative, getGasSettings } from './send';
 import { getWallet, type WalletRow } from './store';
 import { deriveEvmAccountAtPath, seedMnemonic, type Session } from './vault';
@@ -500,6 +500,37 @@ export async function refuelNetwork(
     }
   }
   return { ok: false, refueled: false, reason: `could not refuel ${label} — ${lastReason}` };
+}
+
+const reserveInFlight = new Set<string>();
+
+/**
+ * Pre-stock: keep the tank at (about) the refuel target on a network where
+ * money just moved, so the next sweep there doesn't wait for a bridge. Runs
+ * in the background after a sweep; a no-op when the tank is already fine or
+ * a top-up for that network is already underway.
+ */
+export async function topUpReserve(session: Session, network: NetworkKey): Promise<void> {
+  if (network === 'sei' || reserveInFlight.has(network)) return;
+  const settings = await getRefuelSettings();
+  if (!settings.refuel_enabled) return;
+  const tanks = await tankWallets();
+  const target = network === 'solana' ? tanks.solana : tanks.evm;
+  if (!target) return;
+  const priceId = network === 'solana' ? SOLANA_COINGECKO_ID : evmChainDef(network)?.coingeckoId;
+  if (!priceId) return;
+  const [balance, prices] = await Promise.all([destNativeBalance(network, target.address), getPrices([priceId])]);
+  const price = prices[priceId];
+  if (balance < 0 || !price) return;
+  const haveUsd = balance * price;
+  if (haveUsd >= settings.refuel_target_usd * 0.6) return;
+  reserveInFlight.add(network);
+  try {
+    const r = await refuelNetwork(session, network, { amountUsd: Math.max(0.2, settings.refuel_target_usd - haveUsd) });
+    console.log(`[refuel] reserve top-up on ${network}: ${r.ok ? `+${r.delivered} ${r.symbol}` : r.reason}`);
+  } finally {
+    reserveInFlight.delete(network);
+  }
 }
 
 /**
