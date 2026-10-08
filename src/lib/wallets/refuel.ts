@@ -329,10 +329,20 @@ async function logRefuel(row: Record<string, unknown>): Promise<void> {
 export async function refuelNetwork(
   session: Session,
   dest: NetworkKey,
-  opts: { amountUsd?: number; minNative?: number; force?: boolean } = {}
+  opts: { amountUsd?: number; minNative?: number; force?: boolean; onProgress?: (note: string) => void | Promise<void> } = {}
 ): Promise<RefuelResult> {
   const settings = await getRefuelSettings();
   const label = getNetwork(dest)?.label || dest;
+  // Progress notes go to the caller (the auto-transfer job's reason) so a
+  // slow or stuck refuel shows WHERE it is instead of a silent "refueling…".
+  const note = async (s: string) => {
+    console.log(`[refuel → ${dest}] ${s}`);
+    try {
+      await opts.onProgress?.(s);
+    } catch {
+      /* progress is best effort */
+    }
+  };
   if (!opts.force && !settings.refuel_enabled) return { ok: false, refueled: false, reason: 'auto-refuel is off (Wallets → Settings → Gas account)' };
   if (!refuelSupported(dest)) return { ok: false, refueled: false, reason: `${label} cannot be refueled automatically (not on Relay) — send ${getNetwork(dest)?.nativeSymbol || 'gas'} there by hand` };
 
@@ -342,6 +352,7 @@ export async function refuelNetwork(
   if (!source || !target) return { ok: false, refueled: false, reason: `no ${dest === 'solana' ? 'Solana' : 'EVM'} gas-tank wallet set` };
   if (source.source !== 'seed' || !source.derivation_path) return { ok: false, refueled: false, reason: 'the EVM gas tank must be a seed wallet' };
 
+  await note('reading the gas tank balances');
   const balances = await fetchBalances([{ id: source.id, address: source.address, chain_family: 'evm' }], new Map());
   const held = balances.wallets.find((b) => b.wallet_id === source.id)?.balances || [];
   const prices = balances.prices;
@@ -366,6 +377,7 @@ export async function refuelNetwork(
   const account = deriveEvmAccountAtPath(mnemonic, source.derivation_path);
 
   let lastReason = '';
+  await note(`will bridge ≈$${wantUsd.toFixed(2)} from ${sources.slice(0, 3).map((s) => `${s.symbol} on ${getNetwork(s.network)?.label || s.network}`).join(', then ')}`);
   const destBefore = await destNativeBalance(dest, target.address);
   for (const src of sources.slice(0, 3)) {
     const def = evmChainDef(src.network)!;
@@ -374,6 +386,7 @@ export async function refuelNetwork(
     let requestId: string | null = null;
     try {
       const amountUnits = parseUnits((wantUsd / src.price).toFixed(src.decimals), src.decimals);
+      await note(`getting a Relay quote from ${originLabel}`);
       const quote = await relayQuote({
         user: account.address,
         recipient: target.address,
@@ -397,6 +410,7 @@ export async function refuelNetwork(
         if (step.kind !== 'transaction') continue;
         for (const item of step.items) {
           if (item.data.chainId !== RELAY_CHAIN_IDS[src.network]) throw new SendError(`Relay step on unexpected chain ${item.data.chainId}`, 502);
+          await note(`sending the deposit transaction on ${originLabel}`);
           const hash = await walletClient.sendTransaction({
             to: item.data.to,
             data: item.data.data,
@@ -404,6 +418,7 @@ export async function refuelNetwork(
             gas: item.data.gas ? BigInt(item.data.gas) : undefined,
           });
           lastHash = hash;
+          await note(`sent ${hash.slice(0, 12)}… on ${originLabel}, waiting for its confirmation`);
           // Mainnet can take a few minutes to include a cheap transaction and
           // public RPCs sometimes lag; a receipt timeout is NOT a failure —
           // Relay tracks the deposit itself and we verify the destination
@@ -423,6 +438,7 @@ export async function refuelNetwork(
 
       const delivered = Number(quote.details.currencyOut.amountFormatted);
       const outSymbol = quote.details.currencyOut.currency.symbol;
+      await note(`deposit on ${originLabel} done, waiting for Relay to deliver ${delivered} ${outSymbol} on ${label}`);
       let status = requestId ? await relayWait(requestId, 180_000) : 'timeout';
       if (status !== 'success' && status !== 'failure' && status !== 'refund') {
         // Status endpoint silent: did the money land anyway?
@@ -462,6 +478,7 @@ export async function refuelNetwork(
     } catch (e) {
       lastReason = `${originLabel}: ${e instanceof Error ? e.message.split('\n')[0] : 'failed'}`;
       console.error(`[refuel] from ${src.network} failed: ${lastReason}`);
+      await note(`${lastReason} — trying the next source`);
       if (lastHash) {
         // Money left the tank — keep a record with the hash even though the
         // refuel didn't complete as far as we could tell.
@@ -489,7 +506,13 @@ export async function refuelNetwork(
  * Make sure the gas tank can pay `neededNative` on `network`. Refuels only
  * when short; callers re-run their preview afterwards.
  */
-export async function ensureFuel(session: Session, network: NetworkKey, neededNative: number, currentNative: number): Promise<RefuelResult> {
+export async function ensureFuel(
+  session: Session,
+  network: NetworkKey,
+  neededNative: number,
+  currentNative: number,
+  opts: { onProgress?: (note: string) => void | Promise<void> } = {}
+): Promise<RefuelResult> {
   if (currentNative >= neededNative) return { ok: true, refueled: false };
-  return refuelNetwork(session, network, { minNative: neededNative - currentNative });
+  return refuelNetwork(session, network, { minNative: neededNative - currentNative, onProgress: opts.onProgress });
 }

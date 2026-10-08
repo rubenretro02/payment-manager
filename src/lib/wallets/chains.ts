@@ -116,7 +116,8 @@ export const EVM_CHAINS: EvmChainDef[] = [
   },
   {
     key: 'avalanche', chain: avalanche, coingeckoId: 'avalanche-2', rpcEnv: 'RPC_URL_AVALANCHE',
-    rpcUrls: ['https://api.avax.network/ext/bc/C/rpc', 'https://avalanche-c-chain-rpc.publicnode.com', 'https://avalanche.drpc.org'],
+    // api.avax.network's public endpoint now answers with an HTML page (Oct 2026) — dropped.
+    rpcUrls: ['https://avalanche-c-chain-rpc.publicnode.com', 'https://avalanche.drpc.org', 'https://1rpc.io/avax/c'],
     tokens: [
       { symbol: 'USDC', address: '0xb97ef9ef8734c71904d8002f8b6bc66dd9c48a6e', decimals: 6, eip3009: true },
       { symbol: 'USDT', address: '0x9702230a8ea53601f5cd2dc00fdbc13d4df4a8c7', decimals: 6 },

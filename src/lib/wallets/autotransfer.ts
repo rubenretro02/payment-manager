@@ -12,7 +12,7 @@ import { STABLE_SYMBOLS, familyOf, getNetwork, type NetworkKey } from './network
 import { fetchBalances, getPrices } from './balances';
 import { listBook, type BookEntry } from './book';
 import { getGasSettings, previewSend, executeSend, gaslessCapable, previewGasless, executeGasless, fmtNative } from './send';
-import { ensureFuel } from './refuel';
+import { ensureFuel, type RefuelResult } from './refuel';
 import { getWallet, listWalletTokens, type WalletRow } from './store';
 import { setKeepUnlocked, type Session } from './vault';
 
@@ -249,6 +249,31 @@ function nativePriceFor(network: string, prices: Record<string, number>): number
   return typeof p === 'number' ? p : null;
 }
 
+// A refuel that hasn't finished in this long gives up for THIS run (the
+// underlying bridge keeps going if an origin transaction was already sent;
+// the next run finds the gas there). Keeps a run from stalling for ages.
+const REFUEL_BUDGET_MS = 5 * 60 * 1000;
+
+/** Refuel the gas tank for a job, writing each step into the job's reason. */
+async function refuelForJob(session: Session, jobId: string, network: NetworkKey, needed: number, current: number): Promise<RefuelResult> {
+  const label = getNetwork(network)?.label || network;
+  const progress = (note: string) =>
+    setJob(jobId, { status: 'gas', reason: `refueling the gas tank on ${label} [${new Date().toISOString().slice(11, 19)} UTC]: ${note}` });
+  await progress('starting');
+  const budget = new Promise<RefuelResult>((resolve) =>
+    setTimeout(
+      () =>
+        resolve({
+          ok: false,
+          refueled: false,
+          reason: `refuel took more than ${REFUEL_BUDGET_MS / 60_000} minutes. If a deposit transaction was sent (see Transfers), Relay still delivers it — run again in a few minutes. Otherwise send some ${getNetwork(network)?.nativeSymbol || 'gas'} to the gas tank on ${label} by hand.`,
+        }),
+      REFUEL_BUDGET_MS
+    )
+  );
+  return Promise.race([ensureFuel(session, network, needed, current, { onProgress: progress }), budget]);
+}
+
 let running = false;
 let runningSince = 0;
 // A run can legitimately take a few minutes (a cross-network refuel waits
@@ -387,8 +412,7 @@ export async function runAutoTransfers(
             if (!gp.relayer_ok) {
               // Gas account: bring gas onto this network from wherever the tank has money.
               // Show it while it happens — a mainnet origin takes a minute or two.
-              await setJob(raw.id, { status: 'gas', reason: `refueling the gas tank on ${getNetwork(raw.network as NetworkKey)?.label || raw.network} via Relay…` });
-              const fuel = await ensureFuel(session, raw.network as NetworkKey, gp.fee_native * 3, gp.relayer_native_balance);
+              const fuel = await refuelForJob(session, raw.id, raw.network as NetworkKey, gp.fee_native * 3, gp.relayer_native_balance);
               if (fuel.refueled) {
                 gp = await previewGasless(session, req, gasWalletId);
                 refuelNote = ` (refueled ${fuel.delivered?.toFixed(6)} ${fuel.symbol} from ${fuel.source})`;
@@ -432,8 +456,7 @@ export async function runAutoTransfers(
           let refuelNote = '';
           if (gasPreview.insufficient_token || gasPreview.needs_gas) {
             // Gas account: bring gas onto this network from wherever the tank has money.
-            await setJob(raw.id, { status: 'gas', reason: `refueling the gas tank on ${getNetwork(raw.network as NetworkKey)?.label || raw.network} via Relay…` });
-            const fuel = await ensureFuel(session, raw.network as NetworkKey, preview.suggested_topup + gasPreview.fee_native * 2, gasPreview.native_balance);
+            const fuel = await refuelForJob(session, raw.id, raw.network as NetworkKey, preview.suggested_topup + gasPreview.fee_native * 2, gasPreview.native_balance);
             if (fuel.refueled) gasPreview = await previewSend(session, gasReq);
             else if (fuel.reason) refuelNote = ` Auto-refuel: ${fuel.reason}.`;
           }
