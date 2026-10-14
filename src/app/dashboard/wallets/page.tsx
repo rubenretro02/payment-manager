@@ -55,11 +55,13 @@ import {
   Send,
   Fuel,
   Zap,
+  QrCode,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import { useTelegram } from '@/components/providers/TelegramProvider';
 import { SendDialog } from '@/components/wallets/SendDialog';
+import { AddressQrDialog } from '@/components/wallets/AddressQrDialog';
 import { AccountPicker } from '@/components/wallets/AccountPicker';
 import { NETWORKS, getNetwork, explorerAddressUrl, shortAddress, acceptedNetworks } from '@/lib/wallets/networks';
 import type { Wallet } from '@/lib/types';
@@ -100,6 +102,7 @@ export default function WalletsOverviewPage() {
   const [txNetwork, setTxNetwork] = useState('all');
   const [showTxSpam, setShowTxSpam] = useState(false);
   const [autoBusy, setAutoBusy] = useState<string | null>(null);
+  const [qrWallet, setQrWallet] = useState<Wallet | null>(null);
 
   useEffect(() => {
     const onScroll = () => setShowTop(window.scrollY > 500);
@@ -563,6 +566,9 @@ export default function WalletsOverviewPage() {
                             <ExternalLink className="h-4 w-4" />
                           </a>
                         )}
+                        <button type="button" onClick={(e) => { e.stopPropagation(); setQrWallet(w); }} className="text-muted-foreground hover:text-foreground" title="Show QR code">
+                          <QrCode className="h-4 w-4" />
+                        </button>
                       </div>
                       {w.chain_family === 'evm' && (
                         <p className="text-[11px] text-muted-foreground">Same address on: {acceptedNetworks(w.network).map((n) => n.label).join(' · ')}</p>
@@ -768,6 +774,11 @@ export default function WalletsOverviewPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* QR of a wallet address */}
+      {qrWallet && (
+        <AddressQrDialog open onClose={() => setQrWallet(null)} address={qrWallet.address} name={qrWallet.name} network={qrWallet.network} family={qrWallet.chain_family} />
+      )}
 
       {/* Send */}
       <SendDialog
