@@ -252,13 +252,22 @@ function nativePriceFor(network: string, prices: Record<string, number>): number
 // A refuel that hasn't finished in this long gives up for THIS run (the
 // underlying bridge keeps going if an origin transaction was already sent;
 // the next run finds the gas there). Keeps a run from stalling for ages.
-const REFUEL_BUDGET_MS = 5 * 60 * 1000;
+// A mainnet-sourced refuel legitimately takes a while (deposit confirmation
+// + Relay delivery), so the budget is generous; the message keeps the last
+// step so a cut-off run still says where it got to.
+const REFUEL_BUDGET_MS = 8 * 60 * 1000;
 
 /** Refuel the gas tank for a job, writing each step into the job's reason. */
 async function refuelForJob(session: Session, jobId: string, network: NetworkKey, needed: number, current: number): Promise<RefuelResult> {
   const label = getNetwork(network)?.label || network;
-  const progress = (note: string) =>
-    setJob(jobId, { status: 'gas', reason: `refueling the gas tank on ${label} [${new Date().toISOString().slice(11, 19)} UTC]: ${note}` });
+  const startedAt = Date.now();
+  let lastNote = 'starting';
+  let lastAt = new Date().toISOString().slice(11, 19);
+  const progress = (note: string) => {
+    lastNote = note;
+    lastAt = new Date().toISOString().slice(11, 19);
+    return setJob(jobId, { status: 'gas', reason: `refueling the gas tank on ${label} [${lastAt} UTC, +${Math.round((Date.now() - startedAt) / 1000)}s]: ${note}` });
+  };
   await progress('starting');
   const budget = new Promise<RefuelResult>((resolve) =>
     setTimeout(
@@ -266,7 +275,7 @@ async function refuelForJob(session: Session, jobId: string, network: NetworkKey
         resolve({
           ok: false,
           refueled: false,
-          reason: `refuel took more than ${REFUEL_BUDGET_MS / 60_000} minutes. If a deposit transaction was sent (see Transfers), Relay still delivers it — run again in a few minutes. Otherwise send some ${getNetwork(network)?.nativeSymbol || 'gas'} to the gas tank on ${label} by hand.`,
+          reason: `refuel gave up after ${REFUEL_BUDGET_MS / 60_000} minutes — last step at ${lastAt} UTC: "${lastNote}". If a deposit transaction was sent (see Transfers), Relay still delivers it — run again in a few minutes. Otherwise send some ${getNetwork(network)?.nativeSymbol || 'gas'} to the gas tank on ${label} by hand.`,
         }),
       REFUEL_BUDGET_MS
     )
