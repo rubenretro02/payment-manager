@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sendTelegramMessage } from '@/lib/telegram';
+import { consumeLinkToken } from '@/lib/telegram-link';
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || '';
@@ -57,7 +58,14 @@ export async function POST(request: NextRequest) {
 
       // Handle commands
       if (text.startsWith('/start')) {
-        await sendWelcomeMessage(chatId, user.first_name);
+        // "/start link_<token>" comes from the admin's invite link / QR:
+        // link this Telegram account to the user record that owns the token.
+        const payload = text.split(/\s+/)[1] || '';
+        if (payload.startsWith('link_')) {
+          await handleLinkStart(chatId, user, payload.slice(5));
+        } else {
+          await sendWelcomeMessage(chatId, user.first_name);
+        }
       } else if (text === '/mypayments') {
         await sendMyPayments(chatId, user.id);
       } else if (text === '/report') {
@@ -93,6 +101,38 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('Webhook error:', error);
     return NextResponse.json({ ok: true }); // Always return 200 to Telegram
+  }
+}
+
+async function handleLinkStart(chatId: number, tg: { id: number; first_name: string; last_name?: string; username?: string }, token: string) {
+  const openApp = { reply_markup: { inline_keyboard: [[{ text: '📱 Open App', web_app: { url: APP_URL } }]] } };
+  try {
+    const result = await consumeLinkToken(token, tg);
+    switch (result.status) {
+      case 'linked':
+      case 'already': {
+        const who = result.user.email ? `<b>${result.user.email}</b>` : `<b>${result.user.telegram_first_name || 'your account'}</b>`;
+        await sendTelegramMessage(
+          BOT_TOKEN,
+          chatId,
+          `✅ <b>Done, ${tg.first_name}!</b>\n\nThis Telegram is now linked to ${who}.\n\nOpen the app to see your accounts and report payments 👇`,
+          { parse_mode: 'HTML', ...openApp }
+        );
+        return;
+      }
+      case 'expired':
+        await sendTelegramMessage(BOT_TOKEN, chatId, '⌛ This invite link has expired. Ask the admin for a new one.');
+        return;
+      case 'conflict':
+        await sendTelegramMessage(BOT_TOKEN, chatId, `⚠️ This Telegram is already linked to another account (${result.otherName}). Please contact the admin.`);
+        return;
+      default:
+        await sendTelegramMessage(BOT_TOKEN, chatId, '❌ This invite link is not valid. Ask the admin for a new one.');
+        return;
+    }
+  } catch (e) {
+    console.error('[webhook] link start failed:', e);
+    await sendTelegramMessage(BOT_TOKEN, chatId, '❌ Could not link your account right now. Please try again in a minute or contact the admin.');
   }
 }
 

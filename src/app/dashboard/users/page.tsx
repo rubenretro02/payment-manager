@@ -69,6 +69,7 @@ import {
   MessageCircle,
 } from 'lucide-react';
 import { TelegramHandle } from '@/components/TelegramHandle';
+import { TelegramLinkPanel } from '@/components/TelegramLinkPanel';
 import { format } from 'date-fns';
 import { useAuth } from '@/hooks/useAuth';
 import type { User } from '@/lib/types';
@@ -844,6 +845,7 @@ export default function UsersPage() {
                   <div>
                     <p className="text-xs text-muted-foreground">Telegram Username</p>
                     <TelegramHandle username={selectedUser.telegram_username} className="font-medium" />
+                    {!selectedUser.telegram_id && <p className="text-[11px] text-amber-700 mt-0.5">Not linked to Telegram yet — use Edit → “Get link & QR” to invite them.</p>}
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
@@ -950,12 +952,9 @@ export default function UsersPage() {
               </div>
             </div>
 
-            {/* Hint about Telegram linking */}
-            {!selectedUser?.telegram_id && (
-              <div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/30 p-3 text-xs text-blue-700 dark:text-blue-400">
-                💡 <strong>To link this user with Telegram:</strong> set their Telegram username above.
-                When they open the bot, the system will auto-link this account and notify you. They will keep their email login too.
-              </div>
+            {/* Telegram linking: invite link + QR (username above is the fallback) */}
+            {selectedUser && !selectedUser.telegram_id && (
+              <TelegramLinkPanel userId={selectedUser.id} userName={editForm.telegram_first_name || selectedUser.telegram_first_name} phone={editForm.phone || selectedUser.phone} />
             )}
 
             <div className="grid grid-cols-2 gap-4">
