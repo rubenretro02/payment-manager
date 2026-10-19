@@ -296,7 +296,9 @@ export default function AccountsPage() {
   };
 
   // Filter users who can be assigned (IBOs and users)
-  const assignableUsers = users.filter(u => u.role === 'ibo' || u.role === 'user');
+  // Anyone who isn't an admin can hold accounts — users, IBOs and partners
+  // (RedCallRD is a partner with a dozen assigned accounts).
+  const assignableUsers = users.filter(u => u.role !== 'admin');
 
   // Partners an account can be shared with (owner)
   const partnerUsers = users.filter(u => u.role === 'partner');

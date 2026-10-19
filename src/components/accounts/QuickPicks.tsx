@@ -88,7 +88,8 @@ async function loadAssignableUsers(): Promise<UserLike[]> {
     usersPromise = fetch('/api/users')
       .then((r) => r.json())
       .then((j) => {
-        const list = ((j.success ? j.data : []) as (UserLike & { role?: string })[]).filter((u) => u.role === 'user' || u.role === 'ibo');
+        // Users, IBOs and partners can all hold accounts; only admins are excluded.
+        const list = ((j.success ? j.data : []) as (UserLike & { role?: string })[]).filter((u) => u.role !== 'admin');
         usersCache = list;
         return list;
       })
