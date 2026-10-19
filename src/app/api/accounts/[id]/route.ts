@@ -112,6 +112,17 @@ export async function PATCH(
     if ('owner_id' in body) {
       updateData.owner_id = body.owner_id || null; // null = admin-owned (unshare)
     }
+    // Quick actions (no full edit form): assign / unassign a user, change status.
+    if ('user_id' in body) {
+      updateData.user_id = body.user_id || null;
+    }
+    const STATUSES = ['production', 'nesting', 'active', 'drop', 'not_in_project'];
+    if (typeof body.status === 'string') {
+      if (!STATUSES.includes(body.status)) {
+        return NextResponse.json({ success: false, error: 'Invalid status' }, { status: 400 });
+      }
+      updateData.status = body.status;
+    }
 
     if (Object.keys(updateData).length === 0) {
       return NextResponse.json(
@@ -121,6 +132,16 @@ export async function PATCH(
     }
 
     const supabase = createAdminClient();
+
+    // Same floor logic as the full edit: entering production/nesting resets
+    // the overdue floor so an old account doesn't show months of backlog.
+    if (typeof updateData.status === 'string') {
+      const { data: existing } = await supabase.from('accounts').select('status').eq('id', id).single();
+      const wasActive = existing?.status === 'production' || existing?.status === 'nesting';
+      const isActive = updateData.status === 'production' || updateData.status === 'nesting';
+      if (isActive && !wasActive) updateData.payment_active_since = new Date().toISOString();
+    }
+
     const { data, error } = await supabase
       .from('accounts')
       .update(updateData)

@@ -40,6 +40,7 @@ import {
 } from 'lucide-react';
 import { format, startOfDay, startOfWeek, startOfMonth, startOfYear, isAfter, isBefore, endOfDay } from 'date-fns';
 import { CycleInfo } from '@/components/CycleInfo';
+import { AssignQuickPick, StatusQuickPick } from '@/components/accounts/QuickPicks';
 import { useAuth } from '@/hooks/useAuth';
 import type { Payment } from '@/lib/types';
 import { DateRangePicker } from '@/components/ui/date-range-picker';
@@ -1443,6 +1444,17 @@ export default function PaymentsPage() {
                   )}
                 </span>
               </div>
+
+              {/* Account quick actions: status + assignment, without leaving Payments */}
+              {canModerate && selectedPayment.account && (
+                <div className="rounded-lg bg-muted p-3 text-sm flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-muted-foreground">Account:</span>
+                  <span className="flex flex-wrap items-center gap-2 justify-end">
+                    <StatusQuickPick accountId={selectedPayment.account.id} status={selectedPayment.account.status} size="xs" onChanged={() => fetchPayments()} />
+                    <AssignQuickPick compact accountId={selectedPayment.account.id} accountName={selectedPayment.account.full_name} userId={selectedPayment.account.user_id} onChanged={() => fetchPayments()} />
+                  </span>
+                </div>
+              )}
 
               {/* Status Badge */}
               <div className="flex justify-center">

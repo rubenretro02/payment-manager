@@ -48,6 +48,7 @@ import type { Payment } from '@/lib/types';
 import { applyDeal, describeTiers, type Deal } from '@/lib/deals';
 import { ScreenshotImage } from '@/components/ScreenshotImage';
 import { CycleInfo } from '@/components/CycleInfo';
+import { AssignQuickPick, StatusQuickPick } from '@/components/accounts/QuickPicks';
 import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { getScreenshotSrc } from '@/lib/screenshots';
 import { ImageLightbox } from '@/components/ImageLightbox';
@@ -646,11 +647,8 @@ export default function DuePaymentsPage() {
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 flex-wrap">
                             <p className="font-medium truncate">{item.account_name}</p>
-                            {accountStatusConfig[item.account_status] && (
-                              <Badge variant="outline" className={`shrink-0 text-xs border ${accountStatusConfig[item.account_status].color}`}>
-                                {accountStatusConfig[item.account_status].label}
-                              </Badge>
-                            )}
+                            {/* Click to change the account's status right here */}
+                            <StatusQuickPick accountId={item.account_id} status={item.account_status} size="xs" onChanged={() => fetchData()} />
                             <Badge variant="outline" className="shrink-0 text-xs">
                               {item.platform_name}
                             </Badge>
@@ -661,20 +659,13 @@ export default function DuePaymentsPage() {
                             )}
                           </div>
                           <div className="flex items-center gap-2 text-sm text-muted-foreground flex-wrap">
-                            {item.user_id ? (
+                            {/* Click to assign / reassign right here */}
+                            <AssignQuickPick compact accountId={item.account_id} accountName={item.account_name} userId={item.user_id} userName={item.user_name} onChanged={() => fetchData()} />
+                            {item.user_id && item.user_username && (
                               <>
-                                <span>{item.user_name || 'User'}</span>
-                                {item.user_username && (
-                                  <>
-                                    <span>•</span>
-                                    <span>@{item.user_username}</span>
-                                  </>
-                                )}
+                                <span>•</span>
+                                <span>@{item.user_username}</span>
                               </>
-                            ) : (
-                              <Badge variant="outline" className="text-xs bg-amber-50 border-amber-300 text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
-                                ⚠ Unassigned — assign a user first
-                              </Badge>
                             )}
                             <span>•</span>
                             <span className="capitalize">{item.payment_frequency}</span>

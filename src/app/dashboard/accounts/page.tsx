@@ -64,6 +64,7 @@ import {
   Send,
 } from 'lucide-react';
 import { UserPicker } from '@/components/UserPicker';
+import { AssignQuickPick, StatusQuickPick } from '@/components/accounts/QuickPicks';
 import { applyDeal, describeTiers, type Deal } from '@/lib/deals';
 import { Textarea } from '@/components/ui/textarea';
 import { format } from 'date-fns';
@@ -1407,23 +1408,14 @@ export default function AccountsPage() {
                         )}
                       </TableCell>
                       <TableCell>
-                        {account.user ? (
-                          <div className="flex items-center gap-2">
-                            <Avatar className="h-7 w-7">
-                              <AvatarFallback className="bg-primary/10 text-primary text-xs">
-                                {getInitials(account.user.telegram_first_name)}
-                              </AvatarFallback>
-                            </Avatar>
-                            <div>
-                              <p className="font-medium text-sm">{account.user.telegram_first_name}</p>
-                              <p className="text-xs text-muted-foreground">
-                                {account.user.role === 'ibo' ? 'IBO' : 'User'}
-                              </p>
-                            </div>
-                          </div>
-                        ) : (
-                          <span className="text-muted-foreground text-sm">Unassigned</span>
-                        )}
+                        {/* Click to (re)assign without opening Edit */}
+                        <AssignQuickPick
+                          accountId={account.id}
+                          accountName={account.full_name}
+                          userId={account.user_id}
+                          userName={account.user?.telegram_first_name}
+                          onChanged={() => fetchData()}
+                        />
                         {account.owner_id && (
                           <p className="text-xs text-muted-foreground mt-1">
                             Owner: {users.find(u => u.id === account.owner_id)?.telegram_first_name || '—'}
@@ -1448,10 +1440,8 @@ export default function AccountsPage() {
                       </TableCell>
                       <TableCell>
                         <div className="flex flex-wrap items-center gap-1">
-                          <Badge className={statusColors[account.status] || statusColors.not_in_project}>
-                            <StatusIcon className="h-3 w-3 mr-1" />
-                            {statusLabels[account.status] || account.status}
-                          </Badge>
+                          {/* Click the badge to change status without opening Edit */}
+                          <StatusQuickPick accountId={account.id} status={account.status} onChanged={() => fetchData()} />
                           {(account.status === 'production' || account.status === 'nesting') && !account.wallet_address && (
                             <Badge
                               variant="outline"
