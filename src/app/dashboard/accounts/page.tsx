@@ -65,6 +65,7 @@ import {
 } from 'lucide-react';
 import { UserPicker } from '@/components/UserPicker';
 import { AssignQuickPick, StatusQuickPick } from '@/components/accounts/QuickPicks';
+import { UserFilterDropdown } from '@/components/UserFilterDropdown';
 import { applyDeal, describeTiers, type Deal } from '@/lib/deals';
 import { Textarea } from '@/components/ui/textarea';
 import { format } from 'date-fns';
@@ -142,6 +143,7 @@ export default function AccountsPage() {
   const [filterPlatform, setFilterPlatform] = useState('all');
   const [filterProject, setFilterProject] = useState('all');
   const [filterStatus, setFilterStatus] = useState('all');
+  const [filterUser, setFilterUser] = useState('all'); // 'all' | 'unassigned' | user id
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [isAssignDialogOpen, setIsAssignDialogOpen] = useState(false);
@@ -257,7 +259,8 @@ export default function AccountsPage() {
       account.project?.display_name?.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesPlatform = filterPlatform === 'all' || account.platform?.id === filterPlatform;
     const matchesProject = filterProject === 'all' || account.project?.id === filterProject || (filterProject === 'none' && !account.project_id);
-    return matchesSearch && matchesPlatform && matchesProject;
+    const matchesUser = filterUser === 'all' || (filterUser === 'unassigned' ? !account.user_id : account.user_id === filterUser);
+    return matchesSearch && matchesPlatform && matchesProject && matchesUser;
   });
 
   // Then apply status filter for the final list
@@ -266,7 +269,7 @@ export default function AccountsPage() {
   });
 
   // Check if any filter is active (for showing filtered vs total stats)
-  const hasActiveFilter = searchQuery || filterPlatform !== 'all' || filterProject !== 'all';
+  const hasActiveFilter = searchQuery || filterPlatform !== 'all' || filterProject !== 'all' || filterUser !== 'all';
 
   // Stats based on search-filtered accounts (so clicking cards filters within the search)
   const stats = {
@@ -1019,7 +1022,7 @@ export default function AccountsPage() {
           className={`cursor-pointer transition-all hover:border-primary/50 active:scale-[0.98] ${
             filterStatus === 'all' && !hasActiveFilter ? 'ring-2 ring-primary border-primary' : ''
           }`}
-          onClick={() => { setFilterStatus('all'); setSearchQuery(''); setFilterPlatform('all'); setFilterProject('all'); }}
+          onClick={() => { setFilterStatus('all'); setSearchQuery(''); setFilterPlatform('all'); setFilterProject('all'); setFilterUser('all'); }}
         >
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
@@ -1230,6 +1233,8 @@ export default function AccountsPage() {
                   <SelectItem value="not_in_project">No Project</SelectItem>
                 </SelectContent>
               </Select>
+              {/* Assigned-user filter: dropdown with its own search box */}
+              <UserFilterDropdown users={assignableUsers} value={filterUser} onChange={setFilterUser} />
             </div>
           </div>
         </CardContent>
