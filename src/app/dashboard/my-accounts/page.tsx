@@ -1728,7 +1728,8 @@ export default function MyAccountsPage() {
                 when account has its own wallet (account-specific orange box covers it) */}
             {selectedPaymentMethod && (() => {
               const methodType = (selectedPaymentMethod.type || '').toLowerCase();
-              const isCryptoMethod = methodType.includes('crypto') || methodType.includes('wallet') || methodType.includes('binance');
+              // On-chain methods only — Binance Pay keeps showing its own details (the Pay ID).
+              const isCryptoMethod = methodType.includes('crypto') || methodType.includes('wallet') || methodType.includes('usdc') || methodType.includes('usdt');
               const accountHasWallet = !!selectedAccount?.wallet_address;
               const hasDetails = !!(selectedPaymentMethod.details || '').trim();
 
@@ -1777,16 +1778,17 @@ export default function MyAccountsPage() {
               );
             })()}
 
-            {/* Account-specific Crypto Wallet — only shown when user picked a crypto method */}
+            {/* Account-specific Crypto Wallet — only when the user picked an
+                ON-CHAIN method. "Binance" is Binance Pay (an ID, not a chain),
+                so it must NOT show the wallet address. */}
             {selectedAccount?.wallet_address && (() => {
               const methodType = (selectedPaymentMethod?.type || '').toLowerCase();
-              const isCryptoMethod =
+              const isOnChain =
                 methodType.includes('crypto') ||
                 methodType.includes('wallet') ||
-                methodType.includes('binance') ||
                 methodType.includes('usdc') ||
                 methodType.includes('usdt');
-              if (!isCryptoMethod) return null;
+              if (!isOnChain) return null;
               return (
                 <div className="rounded-xl border-2 border-purple-400 dark:border-purple-700 bg-purple-50 dark:bg-purple-950/30 p-4">
                   <div className="flex items-center gap-2 mb-3">
