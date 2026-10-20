@@ -57,6 +57,10 @@ import { enUS } from 'date-fns/locale';
 import { useAuth } from '@/hooks/useAuth';
 import type { Account, Payment, PaymentFrequency } from '@/lib/types';
 import { applyDeal, describeTiers } from '@/lib/deals';
+// In-app toasts instead of window.alert(): inside Telegram Desktop a native
+// alert steals keyboard focus from the mini-app until it is reopened, which
+// left the report form unable to take typed input after the first report.
+import { toast } from 'sonner';
 import {
   formatPaymentFrequency,
   formatPaymentSchedule,
@@ -755,13 +759,13 @@ export default function MyAccountsPage() {
 
   const handleSubmitPayment = async () => {
     if (!selectedAccount || !paymentForm.platform_amount || !paymentForm.amount_sent) {
-      alert('Please fill all required fields');
+      toast.error('Please fill all required fields');
       return;
     }
 
     // Company screenshot is always required (verifies what the platform paid)
     if (!companyProofImage) {
-      alert('Please upload the Company Payment screenshot');
+      toast.error('Please upload the Company Payment screenshot');
       return;
     }
 
@@ -772,7 +776,7 @@ export default function MyAccountsPage() {
     // 1-cent tolerance for floating-point precision
     const hasMismatch = Math.abs(sentAmt - expectedOwed) >= 0.01;
     if (hasMismatch && !paymentForm.notes.trim()) {
-      alert('You sent a different amount than owed. Please explain the reason in the Notes field.');
+      toast.error('You sent a different amount than owed. Please explain the reason in the Notes field.');
       return;
     }
 
@@ -781,13 +785,13 @@ export default function MyAccountsPage() {
     // Both screenshots are mandatory now: company-payment proof AND
     // payment-sent proof — even for crypto/auto-verify reports.
     if (!paymentProofImage) {
-      alert('Please upload the Payment Sent screenshot');
+      toast.error('Please upload the Payment Sent screenshot');
       return;
     }
 
     // Check if images are still uploading
     if (companyProofImage.uploading || paymentProofImage?.uploading) {
-      alert('Please wait for images to finish uploading');
+      toast.error('Please wait for images to finish uploading');
       return;
     }
 
@@ -857,23 +861,23 @@ export default function MyAccountsPage() {
         }
         setIsPaymentDialogOpen(false);
         resetForm();
-        alert(
-          data.duplicate
-            ? 'This payment was already reported a moment ago. No duplicate was created.'
-            : 'Payment submitted successfully! Admin will review it. You will receive a notification when it is confirmed.'
-        );
+        if (data.duplicate) {
+          toast.info('This payment was already reported a moment ago. No duplicate was created.', { duration: 6000 });
+        } else {
+          toast.success('Payment report submitted! Admin will review it and you will get a notification when it is confirmed.', { duration: 6000 });
+        }
         fetchData();
       } else {
         // Show the server's error so the user (and admin) knows what failed
         const msg = data.error || data.message || 'Failed to submit payment';
         console.error('Payment error:', data);
-        alert(`Error submitting payment:\n\n${msg}\n\nPlease screenshot this message and send it to admin if it keeps happening.`);
+        toast.error(`Error submitting payment: ${msg}`, { description: 'Screenshot this message and send it to the admin if it keeps happening.', duration: 10000 });
       }
     } catch (error) {
       // Surface the network/runtime error instead of a generic 'try again'
       const msg = error instanceof Error ? error.message : 'Unknown error';
       console.error('Error submitting payment:', error);
-      alert(`Could not submit payment.\n\nDetails: ${msg}\n\nThis usually means a slow connection or the screenshot was too large. Try again, or take a smaller screenshot.`);
+      toast.error(`Could not submit payment: ${msg}`, { description: 'Usually a slow connection or a screenshot that is too large. Try again, or take a smaller screenshot.', duration: 10000 });
     } finally {
       setIsSubmitting(false);
     }
@@ -2146,7 +2150,7 @@ export default function MyAccountsPage() {
               variant="destructive"
               onClick={async () => {
                 if (!noPaymentForm.reason.trim()) {
-                  alert('Please provide an explanation');
+                  toast.error('Please provide an explanation');
                   return;
                 }
 
@@ -2189,18 +2193,15 @@ export default function MyAccountsPage() {
                     setIsNoPaymentDialogOpen(false);
                     setNoPaymentForm({ reason: '' });
                     setSelectedCycleStr(null);
-                    alert(
-                      data.duplicate
-                        ? 'This issue was already reported a moment ago. No duplicate was created.'
-                        : 'Issue reported successfully! Admin will review it.'
-                    );
+                    if (data.duplicate) toast.info('This issue was already reported a moment ago. No duplicate was created.', { duration: 6000 });
+                    else toast.success('Issue reported. Admin will review it.', { duration: 6000 });
                     fetchData();
                   } else {
-                    alert('Error: ' + (data.error || 'Failed to report issue'));
+                    toast.error(data.error || 'Failed to report issue');
                   }
                 } catch (error) {
                   console.error('Error reporting issue:', error);
-                  alert('Error reporting issue. Please try again.');
+                  toast.error('Error reporting issue. Please try again.');
                 } finally {
                   setIsSubmitting(false);
                 }

@@ -447,14 +447,14 @@ export default function PaymentsPage() {
       const res = await fetch('/api/admin/backfill-for-cycle-date', { method: 'POST' });
       const data = await res.json();
       if (!data.success) {
-        alert('Backfill failed: ' + (data.error || 'unknown error'));
+        toast.error('Backfill failed: ' + (data.error || 'unknown error'));
         return;
       }
-      alert(`Backfill complete. Updated ${data.updated} / ${data.total} payments (skipped ${data.skipped}).`);
+      toast.success(`Backfill complete. Updated ${data.updated} / ${data.total} payments (skipped ${data.skipped}).`);
       await fetchPayments();
     } catch (e) {
       console.error('Backfill error:', e);
-      alert('Backfill failed: ' + (e instanceof Error ? e.message : 'unknown error'));
+      toast.error('Backfill failed: ' + (e instanceof Error ? e.message : 'unknown error'));
     } finally {
       setBackfillSubmitting(false);
     }
@@ -496,7 +496,7 @@ export default function PaymentsPage() {
       });
       const data = await res.json();
       if (!data.success) {
-        alert('Error: ' + (data.error || 'Failed to update payment'));
+        toast.error(data.error || 'Failed to update payment');
         return;
       }
       setEditOpen(false);
@@ -504,7 +504,7 @@ export default function PaymentsPage() {
       await fetchPayments();
     } catch (e) {
       console.error('Error updating payment:', e);
-      alert('Error updating payment');
+      toast.error('Error updating payment');
     } finally {
       setEditSubmitting(false);
     }
@@ -519,7 +519,7 @@ export default function PaymentsPage() {
       });
       const data = await res.json();
       if (!data.success) {
-        alert('Error: ' + (data.error || 'Failed to delete payment'));
+        toast.error(data.error || 'Failed to delete payment');
         return;
       }
       setDeleteOpen(false);
@@ -528,7 +528,7 @@ export default function PaymentsPage() {
       await fetchPayments();
     } catch (e) {
       console.error('Error deleting payment:', e);
-      alert('Error deleting payment');
+      toast.error('Error deleting payment');
     } finally {
       setDeleteSubmitting(false);
     }
@@ -582,12 +582,12 @@ export default function PaymentsPage() {
         fetchPayments();
       } else {
         rollbackLocalPatch(target);
-        alert('Error: ' + (data.error || 'Failed to confirm payment'));
+        toast.error(data.error || 'Failed to confirm payment');
       }
     } catch (error) {
       console.error('Error confirming payment:', error);
       rollbackLocalPatch(target);
-      alert('Error confirming payment');
+      toast.error('Error confirming payment');
     } finally {
       inFlightRef.current.delete(target.id);
       setIsSubmitting(false);
@@ -618,36 +618,39 @@ export default function PaymentsPage() {
       if (data.success) {
         fetchPayments();
 
-        // Offer to send WhatsApp explaining the rejection (only if user has phone)
+        // Offer to send WhatsApp explaining the rejection (only if user has
+        // phone). A toast with an action instead of confirm(): a native dialog
+        // inside Telegram Desktop steals keyboard focus from the mini-app.
         const userPhone = target.user?.phone;
         if (userPhone) {
-          const wantsWhatsApp = confirm(
-            `Payment rejected. Send WhatsApp to ${target.user?.telegram_first_name || 'user'} explaining the reason?`
-          );
-          if (wantsWhatsApp) {
-            const appUrl = typeof window !== 'undefined' ? window.location.origin : 'https://reportpayment.blackgoatt.com';
-            const accountName = target.account?.full_name || 'your account';
-            const platform = target.account?.platform?.display_name || '';
-            const message =
-              `Hi ${target.user?.telegram_first_name || ''},\n\n` +
-              `❌ Your payment was rejected:\n\n` +
-              `📋 Account: ${accountName}\n` +
-              (platform ? `🏢 Platform: ${platform}\n` : '') +
-              `💰 Amount: $${Number(target.amount_paid || 0).toFixed(2)}\n\n` +
-              `📝 Reason: ${reason}\n\n` +
-              `Please review and resubmit the payment:\n${appUrl}`;
-            const cleanPhone = userPhone.replace(/\D/g, '');
-            window.open(`https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`, '_blank');
-          }
+          const appUrl = typeof window !== 'undefined' ? window.location.origin : 'https://reportpayment.blackgoatt.com';
+          const accountName = target.account?.full_name || 'your account';
+          const platform = target.account?.platform?.display_name || '';
+          const message =
+            `Hi ${target.user?.telegram_first_name || ''},\n\n` +
+            `❌ Your payment was rejected:\n\n` +
+            `📋 Account: ${accountName}\n` +
+            (platform ? `🏢 Platform: ${platform}\n` : '') +
+            `💰 Amount: $${Number(target.amount_paid || 0).toFixed(2)}\n\n` +
+            `📝 Reason: ${reason}\n\n` +
+            `Please review and resubmit the payment:\n${appUrl}`;
+          const cleanPhone = userPhone.replace(/\D/g, '');
+          toast('Payment rejected', {
+            description: `Send a WhatsApp to ${target.user?.telegram_first_name || 'the user'} explaining the reason?`,
+            duration: 12000,
+            action: { label: 'Open WhatsApp', onClick: () => window.open(`https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`, '_blank') },
+          });
+        } else {
+          toast.success('Payment rejected');
         }
       } else {
         rollbackLocalPatch(target);
-        alert('Error: ' + (data.error || 'Failed to reject payment'));
+        toast.error(data.error || 'Failed to reject payment');
       }
     } catch (error) {
       console.error('Error rejecting payment:', error);
       rollbackLocalPatch(target);
-      alert('Error rejecting payment');
+      toast.error('Error rejecting payment');
     } finally {
       inFlightRef.current.delete(target.id);
       setIsSubmitting(false);
